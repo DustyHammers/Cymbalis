@@ -1,0 +1,144 @@
+name: Build macOS (VST3 + AU)
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths-ignore: ['docs/**', '**.md']
+  pull_request:
+    paths-ignore: ['docs/**', '**.md']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write   # needed to attach zips to a GitHub Release on v* tags
+
+env:
+  BUILD_TYPE: Release
+  PRODUCT: Cymbalis
+  AU_TYPE: aumu
+  AU_SUBTYPE: Cymb
+  AU_MANUFACTURER: Dham
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # JUCE 7.0.12 predates the macOS 15 SDK; build against Xcode 15.x (macOS 14 SDK).
+      - name: Select Xcode 15
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_15*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE"; fi
+          xcodebuild -version
+
+      - name: Install Ninja
+        run: brew list ninja >/dev/null 2>&1 || brew install ninja
+
+      - name: Cache JUCE source
+        uses: actions/cache@v4
+        with:
+          path: .deps
+          key: deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Compiler cache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-${{ env.BUILD_TYPE }}
+
+      - name: Configure (universal arm64 + x86_64)
+        run: >
+          cmake -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=${BUILD_TYPE}
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          -DFETCHCONTENT_BASE_DIR="${GITHUB_WORKSPACE}/.deps"
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU --parallel
+
+      - name: Locate bundles
+        run: |
+          ART="build/${PRODUCT}_artefacts/${BUILD_TYPE}"
+          echo "VST3=$ART/VST3/${PRODUCT}.vst3" >> "$GITHUB_ENV"
+          echo "AU=$ART/AU/${PRODUCT}.component" >> "$GITHUB_ENV"
+          ls -la "$ART/VST3" "$ART/AU"
+
+      - name: Check both architectures are present
+        run: |
+          for B in "$VST3" "$AU"; do
+            BIN="$B/Contents/MacOS/${PRODUCT}"
+            ARCHS=$(lipo -archs "$BIN")
+            echo "$BIN -> $ARCHS"
+            [[ "$ARCHS" == *arm64* && "$ARCHS" == *x86_64* ]] || { echo "::error::$BIN is not universal"; exit 1; }
+          done
+
+      - name: Check x86_64 slice has no AVX instructions
+        run: |
+          COUNT=$(otool -arch x86_64 -tv "$VST3/Contents/MacOS/${PRODUCT}" | grep -cE '%[yz]mm' || true)
+          echo "AVX/AVX-512 register uses in x86_64 slice: $COUNT"
+          [ "$COUNT" -eq 0 ] || { echo "::error::AVX found in x86_64 slice (Rosetta 2 crash risk)"; exit 1; }
+
+      - name: Ad-hoc code sign
+        run: |
+          for B in "$VST3" "$AU"; do
+            codesign --force --deep --sign - "$B"
+            codesign --verify --deep --strict --verbose=2 "$B"
+          done
+
+      - name: Validate VST3 (pluginval)
+        run: |
+          curl -sSL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
+          unzip -q pluginval.zip
+          ./pluginval.app/Contents/MacOS/pluginval \
+            --strictness-level 5 \
+            --validate-in-process \
+            --skip-gui-tests \
+            --timeout-ms 300000 \
+            --validate "$VST3"
+
+      - name: Validate AU (auval, native + Rosetta)
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "$AU" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          sleep 2
+          auval -a | grep -i "$AU_MANUFACTURER" || true
+          auval -strict -v $AU_TYPE $AU_SUBTYPE $AU_MANUFACTURER
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            echo "--- x86_64 slice under Rosetta ---"
+            arch -x86_64 auval -strict -v $AU_TYPE $AU_SUBTYPE $AU_MANUFACTURER
+          else
+            echo "Rosetta not installed on this runner; skipping x86_64 auval"
+          fi
+
+      - name: Package
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then TAG="${GITHUB_REF_NAME}"; else TAG="$SHA"; fi
+          mkdir -p dist
+          ditto -c -k --keepParent "$VST3" "dist/${PRODUCT}-VST3-macOS-${TAG}.zip"
+          ditto -c -k --keepParent "$AU"   "dist/${PRODUCT}-AU-macOS-${TAG}.zip"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          ls -la dist
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PRODUCT }}-macOS-${{ env.TAG }}
+          path: dist/*.zip
+          retention-days: 30
+
+      - name: Publish GitHub Release (v* tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip

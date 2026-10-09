@@ -1,0 +1,8 @@
+build/
+build-*/
+.deps/
+dist/
+.DS_Store
+*.xcodeproj/
+.vscode/
+.idea/
