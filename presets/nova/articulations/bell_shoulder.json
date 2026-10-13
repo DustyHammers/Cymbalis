@@ -1,0 +1,11 @@
+{
+  "description": "Nova bell — stick shoulder. VP: bell_weight-corrected shoulder_v2 built from actual Nova Bell V2.txt SPEAR. Onset: 1425-2851Hz +2.4x, 5702-11404Hz 0.52x, 11404+Hz +1.20x (partial VHF compensation), tau=300ms.",
+  "data_files": {
+    "bell_vel_participation": "data/nova_bell_vp_shoulder_v2_corrected.json"
+  },
+  "parameters": {
+    "stick_gain": 0.0,
+    "bow_onset_band_gains": [1.0, 1.0, 1.0, 1.0, 1.0, 2.40, 1.35, 0.52, 1.20],
+    "bow_onset_tau_ms": 300.0
+  }
+}

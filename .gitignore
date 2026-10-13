@@ -6,3 +6,8 @@ dist/
 *.xcodeproj/
 .vscode/
 .idea/
+presets/**/*.txt
+prototype/.venv/
+__pycache__/
+renders/
+*.wav

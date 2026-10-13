@@ -1,0 +1,11 @@
+{
+  "description": "Nova bell — stick tip. VP: bell_weight-corrected tip_v2. Onset: SPEAR S/T ratio on spectral character bands only (body modes handled by VP correction). Tip: HF (5702-11404Hz) +1.85x, 1425-2851Hz 0.45x, tau=120ms.",
+  "data_files": {
+    "bell_vel_participation": "data/nova_bell_vp_tip_corrected.json"
+  },
+  "parameters": {
+    "stick_gain": 0.0,
+    "bow_onset_band_gains": [1.0, 1.0, 1.0, 1.0, 1.0, 0.45, 0.75, 1.85, 0.85],
+    "bow_onset_tau_ms": 120.0
+  }
+}
