@@ -1,0 +1,12 @@
+{
+  "description": "Nova tip — full position range (bow through bell). Overrides both bow and bell vel_participation to maintain tip character at any position. Bow: V1-V3 cap VP. Bell: bell_weight-corrected tip VP from Nova Bell V1.txt SPEAR.",
+  "data_files": {
+    "vel_participation":      "data/nova_vel_participation_tip.json",
+    "bell_vel_participation": "data/nova_bell_vp_tip_corrected.json"
+  },
+  "parameters": {
+    "stick_gain": 0.0,
+    "bow_onset_band_gains": [1.20, 1.20, 1.03, 0.95, 0.91, 0.90, 0.90, 1.08, 1.20],
+    "bow_onset_tau_ms": 80.0
+  }
+}

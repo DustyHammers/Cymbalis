@@ -1,0 +1,11 @@
+{
+  "description": "Nova bow — stick shoulder. V4/V5 SPEAR only, no V3 floor. vel_norms=[0.9905,0.9905,1.0,1.0,1.0]. Stage 2A ring fix applied. Neutral onset. V8 baseline.",
+  "data_files": {
+    "vel_participation": "data/nova_vel_participation_shoulder_correct.json"
+  },
+  "parameters": {
+    "stick_gain": 0.0,
+    "bow_onset_band_gains": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+    "bow_onset_tau_ms": 80.0
+  }
+}

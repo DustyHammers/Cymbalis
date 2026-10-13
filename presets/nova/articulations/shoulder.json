@@ -1,0 +1,12 @@
+{
+  "description": "Nova shoulder — full position range (bow through bell). Overrides both bow and bell vel_participation to maintain shoulder character at any position. Bow: V3-V5 floor VP. Bell: bell_weight-corrected shoulder VP from Nova Bell V2.txt SPEAR.",
+  "data_files": {
+    "vel_participation":      "data/nova_vel_participation_shoulder.json",
+    "bell_vel_participation": "data/nova_bell_vp_shoulder_v2_corrected.json"
+  },
+  "parameters": {
+    "stick_gain": 0.0,
+    "bow_onset_band_gains": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+    "bow_onset_tau_ms": 80.0
+  }
+}

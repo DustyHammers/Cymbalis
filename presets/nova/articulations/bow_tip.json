@@ -1,0 +1,11 @@
+{
+  "description": "Nova bow — stick tip. V1-V3 SPEAR, 4.0x vel_curve ceiling, Stage 2A ring fix (3800-4200Hz T60<200ms zeroed). Onset: HF boost at attack (80ms decay). V8 baseline.",
+  "data_files": {
+    "vel_participation": "data/nova_vel_participation_tip_s2a_ceil.json"
+  },
+  "parameters": {
+    "stick_gain": 0.0,
+    "bow_onset_band_gains": [1.20, 1.20, 1.03, 0.95, 0.91, 0.90, 0.90, 1.08, 1.20],
+    "bow_onset_tau_ms": 80.0
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "label": "Nova_Bow_BL_Split",
+  "description": "Bow tip: CEIL baseline (4.0x ceiling, S2A ring fix). Bow shoulder: V4/V5 only per build_nova_vp.py, vel_norms fixed [0.9905,0.9905,1.0,1.0,1.0], S2A ring fix. No V3 contamination.",
+  "parent_tip": "Nova_Bow_CEIL_BL",
+  "parent_shoulder": "Nova_Bow_S2A_BL",
+  "timestamp": "2026-08-19T13:11:33.757977",
+  "strikes": "pos=0.5, vel=[0.3,0.65,0.9], t=[1.0,6.0,11.0]s, dur=15.0s, stereo PCM24 44100Hz",
+  "md5s": {
+    "engine": "bcd9e8d8af079b415a53d9968952a1bc",
+    "preset": "e2025486455f50371ea0fc097482a61f",
+    "vp_shoulder_fixed": "b35e81435c5fa52165c8c7758326a988",
+    "art_shoulder_correct": "378ba0cc1d05ca252f35891c325f8da4",
+    "render_shoulder_fixed": "b321ddb1f50137caa7a40b1a853ada3f",
+    "vp_tip_ceil": "1d143acc1baf05397f436b5472f28d8e",
+    "art_tip_ceil": "f7bc976ee5ed87a51f4952f58fa3bb21",
+    "render_tip_ceil": "91ae9a6856c0f58ab4244b90cb078f73"
+  }
+}
