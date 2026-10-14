@@ -125,9 +125,9 @@ target_link_libraries(Cymbalis
 )
 
 # ---------------------------------------------------------------------------
-# cymbalis_snapshot: renders the editor to PNG (CI uploads 1536x1024 and 960x640)
+# CymbalisSnapshot: renders the editor to PNG (CI uploads 1536x1024 and 960x640)
 # ---------------------------------------------------------------------------
-juce_add_console_app(CymbalisSnapshot PRODUCT_NAME "cymbalis_snapshot")
+juce_add_console_app(CymbalisSnapshot)
 target_sources(CymbalisSnapshot PRIVATE tools/cymbalis_snapshot/main.cpp ${CYMBALIS_PLUGIN_SOURCES})
 target_include_directories(CymbalisSnapshot PRIVATE plugin)
 target_compile_definitions(CymbalisSnapshot PRIVATE

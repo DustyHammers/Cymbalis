@@ -1,6 +1,6 @@
-// cymbalis_snapshot — renders the plugin editor to PNG files.
+// CymbalisSnapshot — renders the plugin editor to PNG files.
 //
-//   cymbalis_snapshot OUT_DIR [PREFIX]
+//   CymbalisSnapshot OUT_DIR [PREFIX]
 //
 // Writes OUT_DIR/PREFIX-1536x1024.png and OUT_DIR/PREFIX-960x640.png (PREFIX defaults to
 // "Cymbalis-editor"), the largest and smallest editor sizes, with every parameter and
@@ -18,7 +18,7 @@ int main (int argc, char** argv)
 {
     if (argc < 2)
     {
-        std::fprintf (stderr, "usage: cymbalis_snapshot OUT_DIR [PREFIX]\n");
+        std::fprintf (stderr, "usage: CymbalisSnapshot OUT_DIR [PREFIX]\n");
         return 2;
     }
     juce::ScopedJuceInitialiser_GUI gui;
