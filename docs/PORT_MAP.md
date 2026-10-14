@@ -424,3 +424,32 @@ The weights fade out linearly towards `pos = 0.5`. Calibration uses them too.
 3. When the strike-phase RNG stream restarts (f.11).
 4. Whether the real-time path should reproduce the one-sample holes and the dropped or truncated close strikes (f.6, f.7). Reproducing them needs up to 4 samples of look-ahead.
 5. Overlays: Python gives each overlay its own engine, with its own modal state and calibration scalar. Should the plugin keep one engine per overlay, or share the modal state between them?
+
+---
+
+## Live-engine decisions
+
+Kris decided the five questions above as follows. These decisions override anything earlier in this document that conflicts with them.
+
+1. **NL is off in the plugin** (`nl_amount = 0`). The plugin's reference sound is Python with the overrides `{'nl_amount': 0.0}`. Stage 10 of section e is therefore not ported, and f.1 does not apply to the plugin.
+2. **The engine clock and the strike-phase random sequence start when the plugin loads.** The clock is the time base for wander (f.5). Neither the clock nor the sequence restarts on playback. Python's `render()` creates a fresh RNG and starts at t = 0 on every call. A comparison therefore treats each Python render as one plugin load: a freshly loaded engine renders the same sequence from sample 0.
+3. **Every strike plays, at its exact sample.** Python's dropped close strikes and one-sample holes (f.6, f.7) are not reproduced. Comparison sequences use only strike times where Python has neither:
+   - every gap is longer than 1e-4 s;
+   - `int(a·SR) + int((b − a)·SR) == int(b·SR)` at every segment boundary;
+   - every strike time is a whole number of samples.
+4. **One shared cymbal.** All five slots ring the same modal state. Each slot's overlay data is applied to that slot's own strikes. The overlay data is the velocity tables and the onset gains, plus the slot's calibration level. For a sequence that uses only one slot, this matches Python, which gives each overlay its own engine. Python has no reference for sequences that mix slots.
+5. **Slots:**
+
+| Slot | Overlay | Position |
+|---|---|---|
+| BELL | `bell_shoulder` | 1.0 |
+| BOW | `bow_tip` | 0.5 |
+| EDGE | no overlay | 0.0 |
+| BELL2 | `bell_tip` | 1.0 |
+| BOW2 | `bow_shoulder` | 0.5 |
+
+### Implementation notes for these decisions
+
+- **Calibration is applied when the strike is injected.** Python multiplies the whole output by one scalar at the end. With NL off, every remaining mechanism is linear in amplitude, so the two give the same result to within rounding.
+- **The skip threshold is scaled to match.** Python skips a mode for a segment when `|z| < 1e-9` in its uncalibrated units (line 859). The C++ state holds calibrated amplitudes, so it uses `1e-9 × calibration` of the slot that struck most recently. For a single-slot sequence this is the same test as Python's.
+- **The comparison pipeline** is `tools/bake_preset.py`, `tools/render_reference.py`, `cymbalis_render`, `tools/compare_ab.py` and `tools/run_ab.py`. The sequences are in `tests/sequences/`.

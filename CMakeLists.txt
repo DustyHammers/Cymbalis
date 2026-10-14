@@ -8,6 +8,20 @@ project(Cymbalis VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# OFF builds only the DSP engine and its console tools, without fetching JUCE
+# (used by the A/B render job).
+option(CYMBALIS_BUILD_PLUGIN "Build the JUCE plugin (VST3/AU)" ON)
+
+# ---------------------------------------------------------------------------
+# DSP engine (C++ port of the Python V19 engine) and the A/B console renderer
+# ---------------------------------------------------------------------------
+add_subdirectory(plugin/dsp)
+add_subdirectory(tools/cymbalis_render)
+
+if(NOT CYMBALIS_BUILD_PLUGIN)
+    return()
+endif()
+
 # ---------------------------------------------------------------------------
 # JUCE (pinned)
 # ---------------------------------------------------------------------------

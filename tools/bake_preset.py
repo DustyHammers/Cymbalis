@@ -1,0 +1,459 @@
+#!/usr/bin/env python3
+"""
+bake_preset.py — export everything the C++ engine needs from the Python V19 engine.
+
+Loads the engine through prototype/load_preset.py once per slot (each slot's
+overlay, all with the same overrides) and writes one JSON file:
+
+  * shared per-mode arrays, written once. These must be bit-identical across the
+    five slot engines; the script fails loudly if they are not;
+  * per-slot data: velocity tables, onset gains, calibration scalar, position,
+    and the effective parameter values the engine uses;
+  * initial PCG64 states of every RNG stream, plus check values;
+  * constants: sample rate, ln(1000), 2*pi, the mode-skip threshold, and the
+    right-channel high-pass SOS;
+  * the format version and the MD5s of every source file that went into it.
+    Locked files are checked against docs/BASELINE_MANIFEST.md.
+
+Every numeric array is written as {"shape", "fnv1a64", "data"}. The checksum is
+FNV-1a 64 over the little-endian float64 bytes of the values, so the C++ loader
+can prove that it parsed every value exactly.
+
+Usage:
+    python tools/bake_preset.py --overrides-from tests/sequences/edge_3hits_15s.json --out bake.json
+    python tools/bake_preset.py --overrides '{"nl_amount": 0.0}' --out bake.json
+"""
+import argparse
+import hashlib
+import json
+import os
+import platform
+import re
+import sys
+
+import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import ab_common as ab  # noqa: E402
+
+BAKE_FORMAT = 'cymbalis-bake'
+BAKE_FORMAT_VERSION = 1
+AMP_SKIP_THRESHOLD = 1e-9          # multi_strike_engine_v19.py line 859: `if A < 1e-9: continue`
+BOW_ONSET_EDGES = [50, 89, 178, 356, 713, 1425, 2851, 5702, 11404, 22050]   # lines 431-432
+
+
+class BakeError(SystemExit):
+    pass
+
+
+# ---------------------------------------------------------------------------
+# array encoding
+# ---------------------------------------------------------------------------
+def fnv_hex(arr):
+    data = np.ascontiguousarray(np.asarray(arr, dtype='<f8')).tobytes()
+    return '0x%016x' % ab.fnv1a64_bytes(data)
+
+
+def enc(arr, integer=False):
+    a = np.asarray(arr)
+    if a.dtype == bool:
+        a = a.astype(np.int64)
+        integer = True
+    if not np.all(np.isfinite(a.astype(np.float64))):
+        raise BakeError('non-finite value in baked array')
+    flat = a.reshape(-1)
+    data = [int(x) for x in flat] if integer else [float(x) for x in flat.astype(np.float64)]
+    return {'shape': list(a.shape), 'fnv1a64': fnv_hex(a.astype(np.float64)), 'data': data}
+
+
+def enc_opt(arr, integer=False):
+    return None if arr is None else enc(arr, integer)
+
+
+# ---------------------------------------------------------------------------
+# JSON writer: indented structure, numeric lists on one line
+# ---------------------------------------------------------------------------
+def dump_json(obj, indent=0):
+    pad = '  ' * indent
+    if isinstance(obj, dict):
+        if not obj:
+            return '{}'
+        items = [f'{pad}  {json.dumps(k)}: {dump_json(v, indent + 1)}' for k, v in obj.items()]
+        return '{\n' + ',\n'.join(items) + '\n' + pad + '}'
+    if isinstance(obj, list):
+        if all(isinstance(x, (int, float, bool)) or x is None for x in obj):
+            return '[' + ','.join(json.dumps(x, allow_nan=False) for x in obj) + ']'
+        items = [f'{pad}  {dump_json(v, indent + 1)}' for v in obj]
+        return '[\n' + ',\n'.join(items) + '\n' + pad + ']'
+    return json.dumps(obj, allow_nan=False)
+
+
+# ---------------------------------------------------------------------------
+# engine extraction
+# ---------------------------------------------------------------------------
+def engine_globals(eng):
+    """Module globals of the loaded engine (load_preset does not register the module)."""
+    return type(eng).render.__globals__
+
+
+def shared_arrays(eng):
+    """Arrays that depend only on the fingerprint, the base preset and the overrides."""
+    sp = eng._spear
+    body_mask = sp.births < float(eng._params.get('birth_gate_s', 0.30))
+    out = {
+        'mode_id': (sp.ids[body_mask], True),
+        'freq_hz': (eng._bF, False),
+        't60_s': (eng._bT, False),
+        'drift_hz': (eng._bD, False),
+        'exc_norm': (eng._exc_norm, False),
+        'edge_weight': (eng._edge_weight, False),
+        'bell_weight': (eng._bell_weight, False),
+        'pick_l': (eng._pick_L, False),
+        'pick_r': (eng._pick_R, False),
+        'lfo_rate_hz': (eng._lfo_rates, False),
+        'lfo_phase': (eng._lfo_phases, False),
+        'nl_lf_mask': (eng._nl_lf_mask, True),
+        'nl_mf_mask': (eng._nl_mf_mask, True),
+        'nl_hf_mask': (eng._nl_hf_mask, True),
+        'lf_sigmoid': (eng._lf_sigmoid, False),
+        'mf_bandpass': (eng._mf_bandpass, False),
+    }
+    if eng._beo_pk_t is not None:
+        bow_pk, edge_pk, edge_vs = eng._beo_pk_t
+        if edge_vs is not None:
+            raise BakeError('velocity-bracketed edge pk_t (Bettis format) is not supported by this bake format')
+        out['pk_t_bow_s'] = (bow_pk, False)
+        out['pk_t_edge_s'] = (edge_pk, False)
+    else:
+        out['pk_t_bow_s'] = (None, False)
+        out['pk_t_edge_s'] = (None, False)
+    if eng._vel_tilt is not None:
+        vt_vels, vt_fracs, vt_ref, vt_mband, nvb = eng._vel_tilt
+        out['vel_tilt_velocities'] = (vt_vels, False)
+        out['vel_tilt_fractions'] = (vt_fracs, False)
+        out['vel_tilt_reference'] = (vt_ref, False)
+        out['vel_tilt_mode_band'] = (vt_mband, True)
+    else:
+        for k in ('vel_tilt_velocities', 'vel_tilt_fractions', 'vel_tilt_reference', 'vel_tilt_mode_band'):
+            out[k] = (None, False)
+    # Bow-onset band of each mode, computed exactly as lines 436-438. The engine
+    # only stores it when an overlay has active gains; checked against it below.
+    edges = np.array(BOW_ONSET_EDGES, dtype=np.float64)
+    mband = np.searchsorted(edges[1:], eng._bF).clip(0, len(BOW_ONSET_EDGES) - 2).astype(np.int32)
+    if eng._bow_onset_mode_band is not None and not np.array_equal(mband, eng._bow_onset_mode_band):
+        raise BakeError('bow-onset mode band recomputation differs from the engine')
+    out['bow_onset_mode_band'] = (mband, True)
+    return out
+
+
+def scalar_shared(eng):
+    g = engine_globals(eng)
+    p = eng._params
+    return {
+        'sample_rate': int(g['SR']),
+        'log1000': float(g['LOG1000']),
+        'two_pi': float(2. * np.pi),
+        'seed': int(p['seed']),
+        'n_body': int(len(eng._bF)),
+        'band_env_birth_frac': float(eng._beo_birth_frac),
+    }
+
+
+def effective_params(eng):
+    """Effective values of every switch the C++ stage gate needs, mirroring the
+    p.get(...) defaults in multi_strike_engine_v19.py."""
+    p = eng._params
+    gains = eng._bow_onset_band_gains
+    return {
+        'articulation': str(p['articulation']),
+        'seed': int(p['seed']),
+        'vel_participation': eng._vel_curves is not None,
+        'bell_vel_participation': eng._bell_vel_curves is not None,
+        'vel_gain_power': float(p.get('vel_gain_power', 1.0)),
+        'contact_tau_ms': float(p.get('contact_tau_ms', 0.0)),
+        'edge_level_boost': float(p.get('edge_level_boost', 1.0)),
+        'hammering_tilt': float(p.get('hammering_tilt', 0.0)),
+        'tip_contact_ms': float(p.get('tip_contact_ms', 0.0)),
+        'shld_contact_ms': float(p.get('shld_contact_ms', 1.2)),
+        'permode_contact': bool(p.get('permode_contact', False)),
+        'tip_tau0': float(p.get('tip_tau0', 3.0)),
+        'tip_tau_max': float(p.get('tip_tau_max', 10.0)),
+        'shld_tau0': float(p.get('shld_tau0', 10.0)),
+        'shld_tau_max': float(p.get('shld_tau_max', 35.0)),
+        'sigma_ratio': float(p.get('sigma_ratio', 0.35)),
+        'release_gain': float(p.get('release_gain', 0.0)),
+        'wander_depth': float(p['wander_depth']),
+        'wander_rate_hz': float(p['wander_rate_hz']),
+        'edge_wander_depth': float(p.get('edge_wander_depth', 0.0)),
+        'edge_wander_rate': float(p.get('edge_wander_rate', 0.0)),
+        'rate_jitter': float(p.get('rate_jitter', 0.0)),
+        'lf_sens_depth': float(eng._lf_depth),
+        'lf_sens_tau': float(eng._lf_tau),
+        'lf_min_scale': float(eng._lf_min),
+        'lf_max_scale': float(eng._lf_max),
+        'lf_edge_weight': float(eng._lf_w_edge),
+        'lf_bow_weight': float(eng._lf_w_bow),
+        'lf_bell_weight': float(eng._lf_w_bell),
+        'lf_cutoff_hz': float(eng._lf_cutoff_hz),
+        'lf_wander_rate_boost': float(p.get('lf_wander_rate_boost', 0.0)),
+        'mf_sens_depth': float(eng._mf_depth),
+        'mf_sens_tau': float(eng._mf_tau),
+        'mf_min_scale': float(eng._mf_min),
+        'mf_max_scale': float(eng._mf_max),
+        'mf_edge_weight': float(eng._mf_w_edge),
+        'mf_bow_weight': float(eng._mf_w_bow),
+        'mf_bell_weight': float(eng._mf_w_bell),
+        'mf_lo_hz': float(eng._mf_lo_hz),
+        'mf_hi_hz': float(eng._mf_hi_hz),
+        'vel_len_tilt': float(p.get('vel_len_tilt', 0.0)),
+        'vel_len_tilt_ref': float(p.get('vel_len_tilt_ref', 0.787)),
+        'band_env_onset': eng._beo_pk_t is not None,
+        'band_env_birth_frac': float(eng._beo_birth_frac),
+        'vel_tilt': eng._vel_tilt is not None,
+        'bow_onset_gains_active': gains is not None,
+        'nl_amount': float(eng._nl_amount),
+        'hf_bloom_modes': int(eng._hf_n),
+        'hf_bloom_gain': float(p['hf_bloom_gain']),
+        'sparkle_clusters': int(len(eng._clusters)),
+        'sparkle_depth': float(p['sparkle_depth']),
+        'stick_gain': float(p['stick_gain']),
+        'atk_noise': float(p['atk_noise']),
+        'edge_band_env': eng._edge_benv is not None,
+        'edge_npz': eng._edge_npz is not None,
+    }
+
+
+def json_safe(v):
+    if isinstance(v, (bool, int, str)) or v is None:
+        return v
+    if isinstance(v, float):
+        return v if np.isfinite(v) else repr(v)
+    if isinstance(v, (list, tuple)):
+        return [json_safe(x) for x in v]
+    if isinstance(v, dict):
+        return {str(k): json_safe(x) for k, x in v.items()}
+    if isinstance(v, (np.floating, np.integer, np.bool_)):
+        return json_safe(v.item())
+    return repr(v)
+
+
+def repo_rel(path):
+    try:
+        return os.path.relpath(path, ab.REPO)
+    except ValueError:
+        return path
+
+
+def slot_block(eng, name, overlay, position):
+    p = eng._params
+    raw_params = {k: (repo_rel(v) if k.endswith('_path') and isinstance(v, str) else v) for k, v in p.items()}
+    gains = eng._bow_onset_band_gains
+    return {
+        'name': name,
+        'overlay': overlay,
+        'overlay_file': None if overlay is None else repo_rel(ab.overlay_path(overlay)),
+        'position': float(position),
+        'calib_scalar': float(eng._calib_scalar),
+        'bow_vp': {'vel_norms': enc(eng._vel_norms), 'curves': enc(eng._vel_curves)},
+        'bell_vp': (None if eng._bell_vel_curves is None else
+                    {'vel_norms': enc(eng._bell_vel_norms), 'curves': enc(eng._bell_vel_curves)}),
+        'onset_gains': enc_opt(gains),
+        'onset_tau_s': float(eng._bow_onset_tau),
+        'effective': effective_params(eng),
+        'params': json_safe(raw_params),
+    }
+
+
+# ---------------------------------------------------------------------------
+# RNG streams
+# ---------------------------------------------------------------------------
+def rng_stream(seed, n_raw_check=8):
+    g = np.random.default_rng(seed)
+    st = g.bit_generator.state
+    if st['bit_generator'] != 'PCG64':
+        raise BakeError(f'numpy default_rng is {st["bit_generator"]}, expected PCG64')
+    raw = np.random.default_rng(seed).bit_generator.random_raw(n_raw_check)
+    return {
+        'seed': int(seed),
+        'state': '0x%032x' % st['state']['state'],
+        'inc': '0x%032x' % st['state']['inc'],
+        'first_raw_u64': ['0x%016x' % int(x) for x in raw],
+    }
+
+
+def rng_block(seed, n_body):
+    phases_head = np.random.default_rng(seed).uniform(0., 2. * np.pi, n_body)[:8]
+    return {
+        'algorithm': 'numpy PCG64 (XSL-RR 128/64), SeedSequence-seeded; states are post-seeding',
+        'streams': {
+            # __init__ line 205: pick vectors; render() line 504: strike phases (same seed)
+            'pick': rng_stream(seed),
+            'render': rng_stream(seed),
+            # __init__ line 209
+            'wander': rng_stream(seed + 0xA2A2A2),
+            # _compute_calib_scalar line 462 (calibration is baked, listed for completeness)
+            'calibration': rng_stream(42),
+        },
+        'render_phase_uniform': {'low': 0.0, 'high': float(2. * np.pi), 'per_strike': int(n_body)},
+        'render_phase_head': [float(x) for x in phases_head],
+    }
+
+
+# ---------------------------------------------------------------------------
+# provenance
+# ---------------------------------------------------------------------------
+def md5(path):
+    h = hashlib.md5()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def manifest_md5s():
+    path = os.path.join(ab.REPO, 'docs', 'BASELINE_MANIFEST.md')
+    table = {}
+    with open(path) as f:
+        for line in f:
+            m = re.match(r'\|\s*`([^`]+)`\s*\|\s*`([0-9a-f]{32})`\s*\|', line)
+            if m and '/' in m.group(1):
+                table[m.group(1)] = m.group(2)
+    return table
+
+
+def source_files(slots):
+    with open(ab.PRESET) as f:
+        preset = json.load(f)
+    base = os.path.dirname(ab.PRESET)
+    files = [os.path.join(ab.PROTOTYPE, 'engine', n) for n in sorted(os.listdir(os.path.join(ab.PROTOTYPE, 'engine')))
+             if n.endswith('.py')]
+    files.append(os.path.join(ab.PROTOTYPE, 'load_preset.py'))
+    files.append(ab.PRESET)
+    data = set(preset['data_files'].values())
+    for k in ('band_env_onset_path', 'vel_tilt_path', 'edge_band_env_path', 'edge_npz_path'):
+        if k in preset['parameters']:
+            data.add(preset['parameters'][k])
+    for _, overlay, _ in slots:
+        if overlay is None:
+            continue
+        files.append(ab.overlay_path(overlay))
+        with open(ab.overlay_path(overlay)) as f:
+            data.update(json.load(f).get('data_files', {}).values())
+    files += [os.path.join(base, d) for d in sorted(data)]
+    return files
+
+
+def provenance(slots, allow_mismatch):
+    manifest = manifest_md5s()
+    out = {}
+    bad = []
+    for path in source_files(slots):
+        rel = repo_rel(path)
+        digest = md5(path)
+        locked = manifest.get(rel)
+        out[rel] = {'md5': digest, 'manifest_md5': locked,
+                    'matches_manifest': None if locked is None else digest == locked}
+        if locked is not None and digest != locked:
+            bad.append(rel)
+    if bad and not allow_mismatch:
+        raise BakeError('FAIL: locked files differ from docs/BASELINE_MANIFEST.md: ' + ', '.join(bad))
+    return out
+
+
+# ---------------------------------------------------------------------------
+def same(a, b):
+    if a is None or b is None:
+        return a is None and b is None
+    a = np.asarray(a)
+    b = np.asarray(b)
+    return a.shape == b.shape and a.dtype == b.dtype and np.array_equal(a, b)
+
+
+def bake(overrides, slots=ab.SLOTS, allow_manifest_mismatch=False):
+    from scipy.signal import butter, sosfilt
+    import scipy
+
+    engines = []
+    for name, overlay, pos in slots:
+        eng, _ = ab.load_python_engine(overlay, overrides)
+        engines.append((name, overlay, pos, eng))
+
+    ref_name, _, _, ref_eng = engines[0]
+    ref_arrays = shared_arrays(ref_eng)
+    ref_scalars = scalar_shared(ref_eng)
+    for name, _, _, eng in engines[1:]:
+        arrays = shared_arrays(eng)
+        for key, (val, _) in arrays.items():
+            if not same(val, ref_arrays[key][0]):
+                n_diff = ('shape/None mismatch' if val is None or ref_arrays[key][0] is None
+                          or np.shape(val) != np.shape(ref_arrays[key][0])
+                          else f'{int(np.sum(np.asarray(val) != np.asarray(ref_arrays[key][0])))} elements differ')
+                raise BakeError(f'FAIL: shared array {key!r} differs between slots {ref_name} and {name} ({n_diff})')
+        if scalar_shared(eng) != ref_scalars:
+            raise BakeError(f'FAIL: shared scalars differ between slots {ref_name} and {name}: '
+                            f'{scalar_shared(eng)} vs {ref_scalars}')
+
+    g = engine_globals(ref_eng)
+    sr = int(g['SR'])
+    sos = butter(2, 120 / (sr / 2), btype='high', output='sos')
+    probe = np.random.default_rng(1).standard_normal(4096)
+    if not np.array_equal(g['_hp'](probe, 120), sosfilt(sos, probe)):
+        raise BakeError('FAIL: baked high-pass SOS does not reproduce dsp_filters._hp exactly')
+
+    shared = {k: (None if v is None else enc(v, integer)) for k, (v, integer) in ref_arrays.items()}
+    shared['bow_onset_band_edges_hz'] = enc(np.array(BOW_ONSET_EDGES, dtype=np.float64))
+
+    return {
+        'format': BAKE_FORMAT,
+        'format_version': BAKE_FORMAT_VERSION,
+        'generator': 'tools/bake_preset.py',
+        'created_utc': ab.utc_stamp(),
+        'python': {'version': platform.python_version(), 'numpy': np.__version__,
+                   'scipy': scipy.__version__, 'platform': platform.platform()},
+        'preset': repo_rel(ab.PRESET),
+        'overrides': json_safe(dict(overrides)),
+        'sample_rate': sr,
+        'constants': {
+            'log1000': ref_scalars['log1000'],
+            'two_pi': ref_scalars['two_pi'],
+            'amp_skip_threshold': AMP_SKIP_THRESHOLD,
+            'segment_skip_s': 1e-4,
+        },
+        'n_modes': ref_scalars['n_body'],
+        'hp_right': {'cutoff_hz': 120.0, 'order': 2, 'sos': enc(sos)},
+        'shared': shared,
+        'rng': rng_block(ref_scalars['seed'], ref_scalars['n_body']),
+        'slots': [slot_block(eng, name, overlay, pos) for name, overlay, pos, eng in engines],
+        'sources': provenance([(n, o, p) for n, o, p, _ in engines], allow_manifest_mismatch),
+    }
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument('--overrides', help='overrides as a JSON object')
+    src.add_argument('--overrides-from', help='take the overrides from a sequence JSON file')
+    ap.add_argument('--out', required=True, help='output bake JSON path')
+    ap.add_argument('--allow-manifest-mismatch', action='store_true',
+                    help='record, but do not fail on, locked files whose MD5 differs from the manifest')
+    args = ap.parse_args()
+
+    if args.overrides_from:
+        overrides = ab.load_sequence(args.overrides_from)['overrides']
+    else:
+        overrides = json.loads(args.overrides)
+        if not isinstance(overrides, dict):
+            raise SystemExit('--overrides must be a JSON object')
+
+    data = bake(overrides, allow_manifest_mismatch=args.allow_manifest_mismatch)
+    os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
+    with open(args.out, 'w') as f:
+        f.write(dump_json(data) + '\n')
+    print(f'baked {len(data["slots"])} slots, {data["n_modes"]} modes -> {args.out} '
+          f'({os.path.getsize(args.out) / 1e6:.1f} MB)')
+    for s in data['slots']:
+        print(f'  {s["name"]:6s} overlay={str(s["overlay"]):14s} pos={s["position"]:.1f} calib={s["calib_scalar"]!r}')
+
+
+if __name__ == '__main__':
+    main()
