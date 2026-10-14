@@ -6,7 +6,8 @@
 //   2  modal free ring and state advance, slot calibration, right-channel 120 Hz high-pass
 //   3  per-mode Gaussian contact
 //   4  LFO wander (phase modulation in the free ring, absolute engine time)
-// Not implemented: everything after stage 4. Bakes that need it are rejected by loadBake().
+//   5  LF accumulator -> wander rate
+// Not implemented: everything after stage 5. Bakes that need it are rejected by loadBake().
 // NL (stage 10) is off in the plugin.
 //
 // Live-engine decisions (docs/PORT_MAP.md):
@@ -123,6 +124,7 @@ private:
     // Per-strike engine state that Python keeps on the engine object.
     double wanderScale_ = 1.0;     // _wander_scale
     double wanderRateScale_ = 1.0; // _wander_rate_scale
+    double lfS_ = 0.0, lfTLast_ = 0.0, lfScaleNow_ = 1.0; // _lf_S, _lf_t_last, _lf_scale_now
 
     // Free-phase constants per mode, fixed for the segment: -(D/lr) and (2*pi)*lr of the wander.
     std::vector<double> segNegDlr_, segWlr_;

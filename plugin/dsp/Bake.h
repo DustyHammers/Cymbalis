@@ -43,6 +43,12 @@ struct EngineParams
     // Stage 4: LFO wander (lines 864-867, 1114-1119)
     double wanderDepth = 0.0;
     double edgeWanderDepth = 0.0, edgeWanderRate = 0.0;
+
+    // Stage 5: LF accumulator (render() lines 652-672). Only the wander-rate boost is
+    // audible in boost mode (lf_max_scale > 1); suppress mode is rejected by the gate.
+    double lfDepth = 0.0, lfTau = 5.0, lfMin = 0.3, lfMax = 1.0;
+    double lfWEdge = 1.0, lfWBow = 0.5, lfWBell = 0.1;
+    double lfWanderRateBoost = 0.0;
 };
 
 struct SlotData

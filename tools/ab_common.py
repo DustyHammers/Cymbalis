@@ -76,11 +76,13 @@ def check_python_timing(seq, path, sr=44100):
         raise SystemExit(f'{path}: strikes must be in time order')
     dur = float(seq['duration_s'])
     for t in times:
-        if not (0.0 < t < dur):
-            raise SystemExit(f'{path}: strike time {t} outside (0, duration)')
+        if not (0.0 <= t < dur):
+            raise SystemExit(f'{path}: strike time {t} outside [0, duration)')
         if abs(t * sr - round(t * sr)) > 1e-9 or int(t * sr) != round(t * sr):
             raise SystemExit(f'{path}: strike time {t} is not a whole sample in Python (int(t*SR) != round(t*SR))')
-    bounds = [0.0] + times + [dur]
+    # A strike at exactly t = 0 is fine: Python skips the empty gap [0, 0) and no
+    # contact is pending, so nothing is dropped.
+    bounds = ([0.0] if times and times[0] > 0.0 else []) + times + [dur]
     for a, b in zip(bounds[:-1], bounds[1:]):
         if b - a <= 1e-4:
             raise SystemExit(f'{path}: gap {a}..{b} is <= 1e-4 s; Python would skip it (f.7)')

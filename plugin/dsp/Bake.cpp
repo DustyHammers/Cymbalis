@@ -368,6 +368,14 @@ std::shared_ptr<const BakeData> loadBake(const std::string& path)
         ep.wanderDepth = eff(e0, "wander_depth");
         ep.edgeWanderDepth = eff(e0, "edge_wander_depth");
         ep.edgeWanderRate = eff(e0, "edge_wander_rate");
+        ep.lfDepth = eff(e0, "lf_sens_depth");
+        ep.lfTau = eff(e0, "lf_sens_tau");
+        ep.lfMin = eff(e0, "lf_min_scale");
+        ep.lfMax = eff(e0, "lf_max_scale");
+        ep.lfWEdge = eff(e0, "lf_edge_weight");
+        ep.lfWBow = eff(e0, "lf_bow_weight");
+        ep.lfWBell = eff(e0, "lf_bell_weight");
+        ep.lfWanderRateBoost = eff(e0, "lf_wander_rate_boost");
         rep.push_back("params ok    engine-wide parameters identical across slots");
 
         // ---- slots

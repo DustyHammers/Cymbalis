@@ -419,9 +419,27 @@ void Engine::applyStrike(int slotIndex, double velocity, int64_t strikeSample)
 
     ++strikesApplied_;
     lastSlot_ = slotIndex;
+    const double strikeTime = static_cast<double>(strikeSample) / sr_; // ev.time
+
+    // render() lines 652-672: LF accumulator. `_lf_t_last > 0` treats a previous strike at
+    // exactly t = 0 as "no previous strike", so the next strike sees dt = 0 (PORT_MAP f.8).
+    // In boost mode (lf_max_scale > 1) its only audible effect is the wander-rate boost.
+    if (p.lfDepth > 0.0)
+    {
+        const double dt = lfTLast_ > 0.0 ? strikeTime - lfTLast_ : 0.0;
+        lfS_ *= std::exp(-dt / p.lfTau);
+        lfScaleNow_ = p.lfMax > 1.0 ? std::min(1.0 + lfS_ * p.lfDepth, p.lfMax)
+                                    : std::max(1.0 - lfS_ * p.lfDepth, p.lfMin);
+        const double rawPos = s.position; // float(ev.position)
+        const double w = rawPos <= 0.25 ? p.lfWEdge : (rawPos >= 0.75 ? p.lfWBell : p.lfWBow);
+        lfS_ += velocity * w;
+        lfTLast_ = strikeTime;
+        if (p.lfWanderRateBoost > 0.0)
+            wanderRateScale_ = std::max(wanderRateScale_, 1.0 + lfS_ * p.lfWanderRateBoost);
+    }
 
     // A new segment starts at the strike (render() lines 606-613).
-    segStartTime_ = static_cast<double>(strikeSample) / sr_;
+    segStartTime_ = strikeTime;
     segContactSamples_ = 0;
     freeStarted_ = false;
     freePos_ = 0;
