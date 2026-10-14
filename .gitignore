@@ -11,3 +11,6 @@ prototype/.venv/
 __pycache__/
 renders/
 *.wav
+ab-out/
+ab-out_f64/
+ab-f64/

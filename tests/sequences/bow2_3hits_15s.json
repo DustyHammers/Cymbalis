@@ -1,0 +1,23 @@
+{
+  "format_version": 1,
+  "name": "bow2_3hits_15s",
+  "slot": "BOW2",
+  "description": "BOW2: hits at 1, 6, 11 s, velocities 0.30, 0.65, 0.90, 15 s. PORT_MAP stages 0-2 (ALL_OFF).",
+  "duration_s": 15.0,
+  "strikes": [
+    [1.0, 0.3],
+    [6.0, 0.65],
+    [11.0, 0.9]
+  ],
+  "overrides": {
+    "tip_contact_ms": 0.0,
+    "wander_depth": 0.0,
+    "lf_wander_rate_boost": 0.0,
+    "vel_len_tilt": 0.0,
+    "mf_sens_depth": 0.0,
+    "band_env_birth_frac": 1.0,
+    "bow_onset_band_gains": null,
+    "nl_amount": 0.0
+  },
+  "cpp_block_sizes": [512]
+}

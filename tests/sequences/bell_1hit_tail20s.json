@@ -1,0 +1,21 @@
+{
+  "format_version": 1,
+  "name": "bell_1hit_tail20s",
+  "slot": "BELL",
+  "description": "BELL: one hit at 1.0 s, velocity 1.0, then a 20 s tail. PORT_MAP stages 0-2 (ALL_OFF).",
+  "duration_s": 21.0,
+  "strikes": [
+    [1.0, 1.0]
+  ],
+  "overrides": {
+    "tip_contact_ms": 0.0,
+    "wander_depth": 0.0,
+    "lf_wander_rate_boost": 0.0,
+    "vel_len_tilt": 0.0,
+    "mf_sens_depth": 0.0,
+    "band_env_birth_frac": 1.0,
+    "bow_onset_band_gains": null,
+    "nl_amount": 0.0
+  },
+  "cpp_block_sizes": [512, 64, 1013]
+}

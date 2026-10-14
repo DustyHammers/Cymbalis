@@ -63,7 +63,7 @@ jobs:
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
-        run: cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU --parallel
+        run: cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU cymbalis_render --parallel
 
       - name: Locate bundles
         run: |
@@ -142,3 +142,59 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.zip
+
+  # Python V19 reference vs C++ engine, render by render (docs/PORT_MAP.md).
+  # A/B FAILs are reported in the artifact and the job summary; they do not fail the job.
+  ab-renders:
+    needs: build
+    runs-on: macos-14
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 15
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_15*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE"; fi
+          xcodebuild -version
+
+      - name: Install Ninja
+        run: brew list ninja >/dev/null 2>&1 || brew install ninja
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python reference dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r prototype/requirements.txt
+          python -c "import numpy, scipy, soundfile; print('numpy', numpy.__version__, '| scipy', scipy.__version__, '| soundfile', soundfile.__version__)"
+
+      - name: Artifact name
+        run: echo "AB_NAME=${PRODUCT}-AB-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+
+      # Engine and console renderer only (no JUCE), native architecture.
+      - name: Build cymbalis_render
+        run: |
+          cmake -B build-ab -G Ninja -DCMAKE_BUILD_TYPE=Release -DCYMBALIS_BUILD_PLUGIN=OFF
+          cmake --build build-ab --target cymbalis_render --parallel
+
+      - name: Bake, render (Python and C++), compare
+        run: >
+          python tools/run_ab.py
+          --cpp build-ab/tools/cymbalis_render/cymbalis_render
+          --out ab-out
+          --f64-dir ab-f64
+
+      - name: Upload A/B artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.AB_NAME }}
+          path: ab-out/
+          retention-days: 14
+          if-no-files-found: warn
