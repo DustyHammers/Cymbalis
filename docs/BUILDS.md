@@ -10,7 +10,24 @@ Every push to `main` runs **Actions → Build macOS (VST3 + AU)**. It produces:
 - Validation with pluginval (VST3) and auval (AU, native and under Rosetta)
 - Ad-hoc code signing
 
-Download the zips from the run's **Artifacts** section. Pushing a `v*` tag also creates a GitHub Release with the zips attached.
+The run's **Artifacts** section has one artifact, `Cymbalis-macOS-<shortsha>`, with:
+
+- `Cymbalis-VST3-macOS-<shortsha>.zip` and `Cymbalis-AU-macOS-<shortsha>.zip`
+- `Cymbalis-editor-<shortsha>-1536x1024.png` and `Cymbalis-editor-<shortsha>-960x640.png`, snapshots of the editor at its largest and smallest sizes
+
+The job summary also shows the CPU cost of the engine on the runner (`cymbalis_bench`, every slot playing). Pushing a `v*` tag also creates a GitHub Release with the zips attached.
+
+## Playing it
+
+The plugin is an instrument. Note-ons on MIDI channel 16 (selectable in the editor) strike the slots: BELL C3 (60), BELL2 C#3 (61), BOW D3 (62), BOW2 D#3 (63); EDGE has no note until one is assigned. Note-off and sustain are ignored. `docs/UI_SPEC.md` describes the controls.
+
+## The compiled-in preset
+
+The plugin plays `resources/presets/nova_ride.bake.json`, the Nova Ride preset baked from the Python engine with NL off. After a change to the Python engine or the preset, regenerate it:
+
+```
+python tools/bake_preset.py --overrides '{"nl_amount": 0.0}' --out resources/presets/nova_ride.bake.json
+```
 
 ## Installing a CI build
 
