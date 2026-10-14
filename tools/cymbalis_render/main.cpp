@@ -2,6 +2,12 @@
 //
 //   cymbalis_render --bake BAKE.json --sequence SEQ.json [--block-size 512]
 //                   [--out OUT.f32.wav] [--out64 OUT.f64.wav] [--info INFO.json] [--quiet]
+//                   [--python-contact-truncation]
+//
+// --python-contact-truncation selects the Python-matching contact path: a new strike cuts
+// short a contact that is still running. Without it, the live-engine behaviour applies and
+// every strike plays in full. The two only differ for strikes less than one contact length
+// apart (EngineConfig).
 //
 // The sequence's strikes go to the engine block by block, each at its sample
 // offset within its block, the way a host delivers MIDI. Without --out, the
@@ -125,7 +131,8 @@ int usage()
 {
     std::fprintf(stderr,
                  "usage: cymbalis_render --bake BAKE.json --sequence SEQ.json [--block-size N]\n"
-                 "                       [--out OUT.f32.wav] [--out64 OUT.f64.wav] [--info INFO.json] [--quiet]\n");
+                 "                       [--out OUT.f32.wav] [--out64 OUT.f64.wav] [--info INFO.json] [--quiet]\n"
+                 "                       [--python-contact-truncation]\n");
     return 2;
 }
 
@@ -136,6 +143,7 @@ int main(int argc, char** argv)
     std::string bakePath, seqPath, out32, out64, infoPath;
     int blockSize = 512;
     bool quiet = false;
+    cymbalis::EngineConfig config;
     for (int i = 1; i < argc; ++i)
     {
         const std::string a = argv[i];
@@ -152,6 +160,7 @@ int main(int argc, char** argv)
             else if (a == "--out64") out64 = next();
             else if (a == "--info") infoPath = next();
             else if (a == "--quiet") quiet = true;
+            else if (a == "--python-contact-truncation") config.truncateContactsLikePython = true;
             else return usage();
         }
         catch (const std::exception& e)
@@ -182,7 +191,7 @@ int main(int argc, char** argv)
             throw std::runtime_error("sequence overrides " + cymbalis::json::toString(seq.at("overrides")) +
                                      " differ from the bake's " + cymbalis::json::toString(bake->overrides));
 
-        cymbalis::Engine engine(bake);
+        cymbalis::Engine engine(bake, config);
         const int slot = engine.slotIndex(slotName);
         if (slot < 0) throw std::runtime_error("slot '" + slotName + "' is not in the bake");
 

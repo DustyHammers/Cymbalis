@@ -117,6 +117,9 @@ def shared_arrays(eng):
         'nl_hf_mask': (eng._nl_hf_mask, True),
         'lf_sigmoid': (eng._lf_sigmoid, False),
         'mf_bandpass': (eng._mf_bandpass, False),
+        # Per-sample mode step of the contact phase (__init__ lines 277-278).
+        'mode_step_re': (eng._mode_step.real, False),
+        'mode_step_im': (eng._mode_step.imag, False),
     }
     if eng._beo_pk_t is not None:
         bow_pk, edge_pk, edge_vs = eng._beo_pk_t
@@ -221,6 +224,22 @@ def effective_params(eng):
         'edge_band_env': eng._edge_benv is not None,
         'edge_npz': eng._edge_npz is not None,
     }
+
+
+def python_contact_force(eng, SE, position):
+    """The per-mode contact force matrix Python builds for a strike at this position
+    (_apply_strike lines 1067-1093), as a check value for the C++ computation. Mutates
+    the engine, so it runs after everything else has been extracted."""
+    p = eng._params
+    if not (float(p.get('tip_contact_ms', 0.0)) > 0.0 and p.get('permode_contact', False)):
+        return None
+    eng.reset()
+    eng._apply_strike(SE(0.0, 1.0, position), np.random.default_rng(0))
+    kind, force, _ = eng._active_contact
+    if kind != 'permode':
+        raise BakeError(f'expected a permode contact, got {kind!r}')
+    eng.reset()
+    return force
 
 
 def json_safe(v):
@@ -374,8 +393,10 @@ def bake(overrides, slots=ab.SLOTS, allow_manifest_mismatch=False):
     import scipy
 
     engines = []
+    strike_event = None
     for name, overlay, pos in slots:
-        eng, _ = ab.load_python_engine(overlay, overrides)
+        eng, SE = ab.load_python_engine(overlay, overrides)
+        strike_event = SE
         engines.append((name, overlay, pos, eng))
 
     ref_name, _, _, ref_eng = engines[0]
@@ -403,6 +424,10 @@ def bake(overrides, slots=ab.SLOTS, allow_manifest_mismatch=False):
     shared = {k: (None if v is None else enc(v, integer)) for k, (v, integer) in ref_arrays.items()}
     shared['bow_onset_band_edges_hz'] = enc(np.array(BOW_ONSET_EDGES, dtype=np.float64))
 
+    slot_blocks = [slot_block(eng, name, overlay, pos) for name, overlay, pos, eng in engines]
+    for blk, (name, overlay, pos, eng) in zip(slot_blocks, engines):
+        blk['contact_force_python'] = enc_opt(python_contact_force(eng, strike_event, pos))
+
     return {
         'format': BAKE_FORMAT,
         'format_version': BAKE_FORMAT_VERSION,
@@ -423,7 +448,7 @@ def bake(overrides, slots=ab.SLOTS, allow_manifest_mismatch=False):
         'hp_right': {'cutoff_hz': 120.0, 'order': 2, 'sos': enc(sos)},
         'shared': shared,
         'rng': rng_block(ref_scalars['seed'], ref_scalars['n_body']),
-        'slots': [slot_block(eng, name, overlay, pos) for name, overlay, pos, eng in engines],
+        'slots': slot_blocks,
         'sources': provenance([(n, o, p) for n, o, p, _ in engines], allow_manifest_mismatch),
     }
 

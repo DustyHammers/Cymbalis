@@ -10,6 +10,7 @@ namespace cymbalis
 namespace
 {
 constexpr size_t kMaxPendingStrikes = 1024;
+constexpr size_t kContactPool = 64;
 
 double clamp01(double x) { return std::min(std::max(x, 0.0), 1.0); }
 
@@ -25,8 +26,9 @@ double numpyScalarPower(double x, double p)
 }
 } // namespace
 
-Engine::Engine(std::shared_ptr<const BakeData> bake)
+Engine::Engine(std::shared_ptr<const BakeData> bake, EngineConfig config)
     : bake_(std::move(bake)),
+      config_(config),
       n_(bake_->numModes),
       sr_(bake_->sampleRate),
       negLog1000_(-bake_->log1000)
@@ -40,12 +42,22 @@ Engine::Engine(std::shared_ptr<const BakeData> bake)
     segA_.assign(n, 0.0);
     segPhi_.assign(n, 0.0);
     active_.reserve(n);
+    if (bake_->params.contactPermode)
+    {
+        contactPool_.resize(kContactPool);
+        for (auto& c : contactPool_)
+        {
+            c.cr.assign(n, 0.0);
+            c.ci.assign(n, 0.0);
+        }
+    }
     rng_ = bake_->renderStream; // plugin load: the strike-phase sequence starts here
     pending_.reserve(kMaxPendingStrikes);
     scratchPhase_.resize(n);
     scratchVel_.resize(n);
     scratchBellVel_.resize(n);
     scratchPosW_.resize(n);
+    startFreePhase(); // the segment before the first strike: silent
 }
 
 bool Engine::strike(int slot, double velocity, int64_t sampleOffset)
@@ -73,13 +85,13 @@ void Engine::process(double* left, double* right, int numSamples)
         const int at = static_cast<int>(pending_[applied].offset);
         if (at > pos)
         {
-            renderSpan(left + pos, right + pos, at - pos);
+            render(left + pos, right + pos, at - pos);
             pos = at;
         }
-        applyStrike(pending_[applied].slot, pending_[applied].velocity);
+        applyStrike(pending_[applied].slot, pending_[applied].velocity, static_cast<int64_t>(clock_) + at);
     }
     if (pos < numSamples)
-        renderSpan(left + pos, right + pos, numSamples - pos);
+        render(left + pos, right + pos, numSamples - pos);
 
     pending_.erase(pending_.begin(), pending_.begin() + static_cast<std::ptrdiff_t>(applied));
     for (auto& p : pending_)
@@ -103,9 +115,81 @@ void Engine::process(double* left, double* right, int numSamples)
     clock_ += static_cast<uint64_t>(numSamples);
 }
 
-// _render_segment free ring (lines 857-922), stage 0-2 subset: every factor after the
-// cosine is exactly 1, and wander is exactly +-0.
-void Engine::renderSpan(double* left, double* right, int n)
+void Engine::render(double* left, double* right, int n)
+{
+    int pos = 0;
+    while (pos < n)
+    {
+        if (activeContacts_ > 0)
+        {
+            renderContactSample(left + pos, right + pos);
+            ++pos;
+        }
+        else
+        {
+            renderFree(left + pos, right + pos, n - pos);
+            pos = n;
+        }
+    }
+}
+
+// _render_segment lines 731-735, one sample: state += force[:, k] * coupling; the output is
+// Re(state) . pick over every mode (no wander, ramp or other output factor); then the
+// state advances one sample with the undamped mode step.
+void Engine::renderContactSample(double* left, double* right)
+{
+    const BakeData& b = *bake_;
+    const size_t n = size_t(n_);
+    for (int c = 0; c < activeContacts_; ++c)
+    {
+        const Contact& ct = contactPool_[size_t(c)];
+        const SlotData& s = b.slots[size_t(ct.slot)];
+        const double* force = s.contactForce.data();
+        const size_t len = size_t(s.contactLen);
+        for (size_t i = 0; i < n; ++i)
+        {
+            const double f = force[i * len + size_t(ct.k)];
+            zr_[i] += f * ct.cr[i];
+            zi_[i] += f * ct.ci[i];
+        }
+    }
+    double sumL = 0.0, sumR = 0.0;
+    for (size_t i = 0; i < n; ++i)
+    {
+        sumL += zr_[i] * b.pickL[i];
+        sumR += zr_[i] * b.pickR[i];
+    }
+    left[0] = sumL;
+    right[0] = sumR;
+    for (size_t i = 0; i < n; ++i)
+    {
+        const double mr = b.modeStepRe[i], mi = b.modeStepIm[i];
+        const double r = zr_[i] * mr - zi_[i] * mi;
+        const double im = zr_[i] * mi + zi_[i] * mr;
+        zr_[i] = r;
+        zi_[i] = im;
+    }
+
+    // Retire finished contacts, keeping the rest in order.
+    int kept = 0;
+    for (int c = 0; c < activeContacts_; ++c)
+    {
+        Contact& ct = contactPool_[size_t(c)];
+        if (++ct.k < ct.len)
+        {
+            if (kept != c) std::swap(contactPool_[size_t(kept)], ct);
+            ++kept;
+        }
+    }
+    activeContacts_ = kept;
+    ++segContactSamples_;
+    if (activeContacts_ == 0)
+        startFreePhase();
+}
+
+// _render_segment free ring (lines 841-922), stages 0-3: every factor after the cosine is
+// exactly 1, and wander is exactly +-0.
+void Engine::renderFree(double* left, double* right, int n)
 {
     std::fill(left, left + n, 0.0);
     std::fill(right, right + n, 0.0);
@@ -122,17 +206,17 @@ void Engine::renderSpan(double* left, double* right, int n)
         const double pr = pickR[i];
         for (int j = 0; j < n; ++j)
         {
-            const double t = static_cast<double>(segPos_ + j) / sr_;   // np.arange(n)/SR
+            const double t = static_cast<double>(freePos_ + j) / sr_;  // np.arange(n_free)/SR
             const double decay = std::exp((negLog1000_ * t) / T);       // np.exp(-LOG1000*t_local/t60)
             const double wave = (A * decay) * std::cos((w * t) + phi0); // A*decay*np.cos(2.*np.pi*f*t_local+phi_0)
             left[j] += pl * wave;
             right[j] += pr * wave;
         }
     }
-    segPos_ += n;
+    freePos_ += n;
 }
 
-// Lines 924-926: state *= exp(1j*2pi*f*d) * exp(-LOG1000*d/T60), d = segment samples / SR.
+// Lines 924-926: state *= exp(1j*2pi*f*d) * exp(-LOG1000*d/T60), d = free-phase samples / SR.
 void Engine::advanceState(int64_t samples)
 {
     if (samples <= 0) return;
@@ -181,20 +265,25 @@ void Engine::velocityParticipation(const VelocityTable& t, double v, std::vector
     }
 }
 
-// _apply_strike (lines 961-1066), stage 1 subset, followed by the start of a new segment.
-void Engine::applyStrike(int slotIndex, double velocity)
+// One strike: the end of the previous segment, _apply_strike (lines 961-1130), and the
+// start of a new segment.
+void Engine::applyStrike(int slotIndex, double velocity, int64_t strikeSample)
 {
     const SlotData& s = bake_->slots[size_t(slotIndex)];
     const BakeData& b = *bake_;
+    const EngineParams& p = b.params;
+    const size_t n = size_t(n_);
 
-    // The previous segment ends here: advance the state by its length.
-    advanceState(segPos_);
-    segPos_ = 0;
+    // The previous segment ends here: advance the state over its free phase (lines 924-926).
+    if (freeStarted_)
+        advanceState(freePos_);
+    if (config_.truncateContactsLikePython)
+        activeContacts_ = 0; // Python drops whatever force a running contact had left
 
     // Line 1035: one uniform(0, 2pi, n) draw per strike, before anything else.
     const double range = b.phaseHigh - b.phaseLow;
-    for (int i = 0; i < n_; ++i)
-        scratchPhase_[size_t(i)] = rng_.uniform(b.phaseLow, range);
+    for (size_t i = 0; i < n; ++i)
+        scratchPhase_[i] = rng_.uniform(b.phaseLow, range);
 
     // Lines 963-977: bow velocity participation.
     const double v = clamp01(velocity);
@@ -206,14 +295,14 @@ void Engine::applyStrike(int slotIndex, double velocity)
     if (pos <= 0.5)
     {
         const double tBlend = pos / 0.5;
-        for (int i = 0; i < n_; ++i)
-            scratchPosW_[size_t(i)] = b.edgeWeight[size_t(i)] + tBlend * (1.0 - b.edgeWeight[size_t(i)]);
+        for (size_t i = 0; i < n; ++i)
+            scratchPosW_[i] = b.edgeWeight[i] + tBlend * (1.0 - b.edgeWeight[i]);
     }
     else
     {
         const double bellFrac = clamp01((pos - 0.5) / 0.5);
-        for (int i = 0; i < n_; ++i)
-            scratchPosW_[size_t(i)] = (1.0 - bellFrac) * 1.0 + bellFrac * b.bellWeight[size_t(i)];
+        for (size_t i = 0; i < n; ++i)
+            scratchPosW_[i] = (1.0 - bellFrac) * 1.0 + bellFrac * b.bellWeight[i];
     }
 
     // Lines 1001-1015: blend toward the bell velocity table above the bow.
@@ -221,40 +310,85 @@ void Engine::applyStrike(int slotIndex, double velocity)
     {
         const double bellFracV = clamp01((pos - 0.5) / 0.5);
         velocityParticipation(s.bellVp, v, scratchBellVel_);
-        for (int i = 0; i < n_; ++i)
-            scratchVel_[size_t(i)] = (1.0 - bellFracV) * scratchVel_[size_t(i)] + bellFracV * scratchBellVel_[size_t(i)];
+        for (size_t i = 0; i < n; ++i)
+            scratchVel_[i] = (1.0 - bellFracV) * scratchVel_[i] + bellFracV * scratchBellVel_[i];
     }
 
     // Lines 1020-1022: edge level boost (1.0 for Nova, so skipped there).
     if (s.edgeLevelBoost > 1.0 && edgeFrac > 0.0)
     {
         const double g = 1.0 + (s.edgeLevelBoost - 1.0) * velocity * edgeFrac;
-        for (int i = 0; i < n_; ++i)
-            scratchPosW_[size_t(i)] = scratchPosW_[size_t(i)] * g;
+        for (size_t i = 0; i < n; ++i)
+            scratchPosW_[i] = scratchPosW_[i] * g;
     }
 
-    // Lines 1033-1035 and 1065: coupling = exc_norm * vel**p * stick(=1) * pos_weight * exp(1j*phase),
-    // added to the state. The slot's calibration level scales its own strike.
+    // Lines 1033-1035: coupling = exc_norm * vel**p * stick(=1) * pos_weight * exp(1j*phase).
+    // The slot's calibration level scales its own strike.
     const double calib = s.calibScalar;
-    for (int i = 0; i < n_; ++i)
+    Contact* contact = nullptr;
+    if (p.contactPermode)
     {
-        const size_t k = size_t(i);
-        const double m = (b.excNorm[k] * numpyScalarPower(scratchVel_[k], s.velGainPower)) * scratchPosW_[k];
-        const std::complex<double> e = std::exp(std::complex<double>(0.0, scratchPhase_[k]));
-        const double cr = m * e.real();
-        const double ci = m * e.imag();
-        zr_[k] += cr * calib;
-        zi_[k] += ci * calib;
+        // Lines 1067-1093: the coupling enters through the force matrix over the next
+        // contactLen samples. If the pool is full, the oldest contact's remaining force is
+        // applied at once so that it still plays in full.
+        if (activeContacts_ == static_cast<int>(contactPool_.size()))
+        {
+            Contact& old = contactPool_[0];
+            const SlotData& os = b.slots[size_t(old.slot)];
+            const size_t len = size_t(os.contactLen);
+            for (size_t i = 0; i < n; ++i)
+            {
+                double rest = 0.0;
+                for (size_t k = size_t(old.k); k < len; ++k)
+                    rest += os.contactForce[i * len + k];
+                zr_[i] += rest * old.cr[i];
+                zi_[i] += rest * old.ci[i];
+            }
+            std::rotate(contactPool_.begin(), contactPool_.begin() + 1, contactPool_.begin() + activeContacts_);
+            --activeContacts_;
+        }
+        contact = &contactPool_[size_t(activeContacts_++)];
+        contact->slot = slotIndex;
+        contact->k = 0;
+        contact->len = s.contactLen;
+    }
+    for (size_t i = 0; i < n; ++i)
+    {
+        const double m = (b.excNorm[i] * numpyScalarPower(scratchVel_[i], s.velGainPower)) * scratchPosW_[i];
+        const std::complex<double> e = std::exp(std::complex<double>(0.0, scratchPhase_[i]));
+        const double cr = (m * e.real()) * calib;
+        const double ci = (m * e.imag()) * calib;
+        if (contact != nullptr)
+        {
+            contact->cr[i] = cr;
+            contact->ci[i] = ci;
+        }
+        else
+        {
+            zr_[i] += cr; // line 1065: instantaneous injection
+            zi_[i] += ci;
+        }
     }
     ++strikesApplied_;
+    lastSlot_ = slotIndex;
 
-    // Python skips a mode for the whole segment when |z| < 1e-9 in uncalibrated units (line 859).
-    // Here the state is calibrated, so the threshold is scaled by the striking slot's calibration.
-    startSegment(b.ampSkipThreshold * calib);
+    // A new segment starts at the strike (render() lines 606-613).
+    segStartTime_ = static_cast<double>(strikeSample) / sr_;
+    segContactSamples_ = 0;
+    freeStarted_ = false;
+    freePos_ = 0;
+    if (activeContacts_ == 0)
+        startFreePhase();
 }
 
-void Engine::startSegment(double skipThreshold)
+// Start of the free phase (line 858): amplitude and phase of every mode. Python skips a
+// mode for the rest of the segment when |z| < 1e-9 in uncalibrated units (line 859). Here
+// the state is calibrated, so the threshold is scaled by the calibration of the slot that
+// struck most recently.
+void Engine::startFreePhase()
 {
+    const double threshold =
+        bake_->ampSkipThreshold * (lastSlot_ >= 0 ? bake_->slots[size_t(lastSlot_)].calibScalar : 1.0);
     active_.clear();
     for (int i = 0; i < n_; ++i)
     {
@@ -262,10 +396,11 @@ void Engine::startSegment(double skipThreshold)
         const double A = std::hypot(zr_[k], zi_[k]); // abs(z)
         segA_[k] = A;
         segPhi_[k] = std::atan2(zi_[k], zr_[k]);     // np.angle(z)
-        if (!(A < skipThreshold))
+        if (!(A < threshold))
             active_.push_back(i);
     }
-    segPos_ = 0;
+    freeStarted_ = true;
+    freePos_ = 0;
 }
 
 } // namespace cymbalis

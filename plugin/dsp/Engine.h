@@ -1,23 +1,26 @@
 // Engine.h — Cymbalis modal engine, C++ port of the Python V19 reference.
 //
-// Implemented: PORT_MAP stages 0-2, the linear core.
+// Implemented (docs/PORT_MAP.md, section e):
 //   0  baked data and an exact numpy PCG64 / uniform() / choice() (Bake.h)
 //   1  strike coupling: velocity tables, position weights, random phases
-//   2  modal free ring and state advance, slot calibration, 120 Hz high-pass on
-//      the right channel
-// Not implemented yet: everything after stage 2. Bakes that need it are
-// rejected by loadBake().
+//   2  modal free ring and state advance, slot calibration, right-channel 120 Hz high-pass
+//   3  per-mode Gaussian contact
+// Not implemented: everything after stage 3. Bakes that need it are rejected by loadBake().
+// NL (stage 10) is off in the plugin.
 //
 // Live-engine decisions (docs/PORT_MAP.md):
-//   - The engine clock and the strike-phase random sequence start at
-//     construction (plugin load) and never restart.
-//   - Every strike plays at its exact sample.
-//   - One shared modal state for all slots. Each slot's calibration level is
-//     applied to its own strikes.
+//   - The engine clock and the strike-phase random sequence start at construction
+//     (plugin load) and never restart.
+//   - Every strike plays at its exact sample. A strike never cuts short a contact that is
+//     still running (EngineConfig::truncateContactsLikePython = false).
+//   - One modal state is shared by all slots. Each slot's calibration level is applied to
+//     its own strikes.
 //
-// The arithmetic follows multi_strike_engine_v19.py operation for operation:
-// evaluation order, the analytic free ring per segment, and the per-segment
-// skip threshold. Build with FP contraction off (see CMakeLists.txt).
+// The engine follows Python's segment structure. A segment runs from one strike to the
+// next. It starts with a contact phase, rendered sample by sample (_render_segment lines
+// 725-736), followed by the analytic free ring (lines 841-926). The arithmetic follows
+// multi_strike_engine_v19.py operation for operation, so build with FP contraction off
+// (see CMakeLists.txt).
 #pragma once
 
 #include "Bake.h"
@@ -31,10 +34,21 @@
 namespace cymbalis
 {
 
+struct EngineConfig
+{
+    // false (live engine): a strike that arrives while an earlier contact is still running
+    // lets that contact finish; the contact phase lasts until every running contact is done.
+    // true (Python-matching path): a new strike discards the rest of a running contact, as
+    // in Python (N_contact = min(len, N), then _active_contact = None).
+    // The two differ only when strikes come less than one contact length apart. The A/B
+    // sequences never do that.
+    bool truncateContactsLikePython = false;
+};
+
 class Engine
 {
 public:
-    explicit Engine(std::shared_ptr<const BakeData> bake);
+    explicit Engine(std::shared_ptr<const BakeData> bake, EngineConfig config = {});
 
     const BakeData& bake() const noexcept { return *bake_; }
     int slotIndex(const std::string& name) const { return bake_->slotIndex(name); }
@@ -51,7 +65,7 @@ public:
     uint64_t clock() const noexcept { return clock_; }
     // Strikes applied since construction.
     uint64_t strikesApplied() const noexcept { return strikesApplied_; }
-    // Modes rendered in the current segment.
+    // Modes rendered in the current free phase.
     int activeModes() const noexcept { return static_cast<int>(active_.size()); }
 
 private:
@@ -63,25 +77,46 @@ private:
         uint64_t order;
     };
 
-    void renderSpan(double* left, double* right, int n);
+    // A running contact: this strike's calibrated coupling, fed in through the slot's
+    // force matrix one sample at a time.
+    struct Contact
+    {
+        int slot = 0;
+        int k = 0;   // next force sample
+        int len = 0; // force samples in total
+        std::vector<double> cr, ci;
+    };
+
+    void render(double* left, double* right, int n);
+    void renderContactSample(double* left, double* right);
+    void renderFree(double* left, double* right, int n);
     void advanceState(int64_t samples);
-    void applyStrike(int slot, double velocity);
-    void startSegment(double skipThreshold);
+    void applyStrike(int slot, double velocity, int64_t strikeSample);
+    void startFreePhase();
     void velocityParticipation(const VelocityTable& t, double v, std::vector<double>& out) const;
 
     std::shared_ptr<const BakeData> bake_;
+    const EngineConfig config_;
     const int n_;
     const double sr_;
     const double negLog1000_;
 
     // Modal state (calibrated amplitudes), real and imaginary parts.
     std::vector<double> zr_, zi_;
-    // Per-mode constants.
     std::vector<double> omega_; // (2*pi) * f, as Python's `2.*np.pi*f`
-    // Current segment: amplitude and phase at segment start, modes to render.
-    std::vector<double> segA_, segPhi_;
-    std::vector<int> active_;
-    int64_t segPos_ = 0; // samples rendered in the current segment
+
+    // Running contacts. A pool sized at construction; activeContacts_ are in use, oldest first.
+    std::vector<Contact> contactPool_;
+    int activeContacts_ = 0;
+
+    // Current segment (Python's _render_segment call).
+    double segStartTime_ = 0.0;   // t_abs: the strike time, in seconds
+    int segContactSamples_ = 0;   // n_contact
+    bool freeStarted_ = false;    // free phase reached
+    int64_t freePos_ = 0;         // free-phase samples rendered (n_free so far)
+    std::vector<double> segA_, segPhi_; // amplitude and phase at the start of the free phase
+    std::vector<int> active_;           // modes rendered in the free phase (|z| >= threshold)
+    int lastSlot_ = -1;                 // slot of the most recent strike
 
     Pcg64 rng_;
     uint64_t clock_ = 0;

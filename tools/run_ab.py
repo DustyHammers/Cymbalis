@@ -73,6 +73,25 @@ def rel(path, base):
     return os.path.relpath(path, base).replace(os.sep, '/')
 
 
+# PORT_MAP section e stages, in report order.
+STAGES = [
+    ('0-2', 'linear core: data, PCG64, strike coupling, free ring, calibration, high-pass'),
+    ('3', 'per-mode contact'),
+    ('4', 'wander'),
+    ('5', 'LF accumulator -> wander rate'),
+    ('6', 'vel_len_tilt'),
+    ('7', 'MF accumulator'),
+    ('8', 'edge onset ramp + velocity tilt'),
+    ('9', 'onset gains'),
+    ('full', 'full engine, overrides {"nl_amount": 0.0} only: the plugin reference sound'),
+]
+STAGE_ORDER = {k: i for i, (k, _) in enumerate(STAGES)}
+
+
+def stage_title(stage):
+    return dict(STAGES).get(stage, '')
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--cpp', required=True, help='path to the cymbalis_render binary')
@@ -167,7 +186,8 @@ def main():
     for j in [j for j in done if j['kind'] == 'cpp']:
         s = j['seq']
         ref = py_by_name[s['name']]
-        row = dict(sequence=s['name'], slot=s['slot'], block_size=j['bs'], cpp_seconds=j['seconds'],
+        row = dict(sequence=s['name'], slot=s['slot'], stage=s.get('stage', '?'), block_size=j['bs'],
+                   cpp_seconds=j['seconds'],
                    py_seconds=ref['seconds'], py_wav=ref['f32'], cpp_wav=j['f32'], error=j['error'],
                    cpp_log=j['log'])
         if j['returncode'] == 0:
@@ -187,7 +207,7 @@ def main():
         else:
             row.update(result='FAIL', f64=None, f32=None)
         rows.append(row)
-    rows.sort(key=lambda r: (r['sequence'], r['block_size']))
+    rows.sort(key=lambda r: (STAGE_ORDER.get(r['stage'], 99), r['sequence'], r['block_size']))
 
     # ---- 4. block-size consistency of the C++ renders
     consistency = []
@@ -216,20 +236,30 @@ def main():
                    f'{os.environ.get("GITHUB_REPOSITORY")}/actions/runs/{os.environ["GITHUB_RUN_ID"]}')
     overrides_sets = sorted(bakes.keys())
 
-    table = ['| Sequence | Slot | Block | max \\|diff\\| (f64) | Null peak dB | Null RMS dB | Offset | '
+    def make_table(stage_rows):
+        t = ['| Sequence | Slot | Block | max \\|diff\\| (f64) | Null peak dB | Null RMS dB | Offset | '
              'Max band Δ dB | Result | max \\|diff\\| (f32 files) |',
              '|---|---|---:|---:|---:|---:|---:|---:|:---:|---:|']
-    for r in rows:
-        if r['f64'] is None:
-            table.append(f'| {r["sequence"]} | {r["slot"]} | {r["block_size"]} | — | — | — | — | — | '
+        for r in stage_rows:
+            if r['f64'] is None:
+                t.append(f'| {r["sequence"]} | {r["slot"]} | {r["block_size"]} | — | — | — | — | — | '
                          f'**FAIL** (C++ error: {r["error"]}) | — |')
-            continue
-        a, b = r['f64'], r['f32']
-        table.append(
-            f'| [{r["sequence"]}]({rel(r["report_md"], out)}) | {r["slot"]} | {r["block_size"]} | '
-            f'{fmt_e(a["max_abs_diff"])} | {fmt_db(a["null_peak_db_re_ref_peak"])} | '
-            f'{fmt_db(a["null_rms_db_re_ref_peak"])} | {a["sample_offset"]} | '
-            f'{a["bands"]["max_abs_delta_db"]:.2g} | **{r["result"]}** | {fmt_e(b["max_abs_diff"])} |')
+                continue
+            a, b = r['f64'], r['f32']
+            t.append(
+                f'| [{r["sequence"]}]({rel(r["report_md"], out)}) | {r["slot"]} | {r["block_size"]} | '
+                f'{fmt_e(a["max_abs_diff"])} | {fmt_db(a["null_peak_db_re_ref_peak"])} | '
+                f'{fmt_db(a["null_rms_db_re_ref_peak"])} | {a["sample_offset"]} | '
+                f'{a["bands"]["max_abs_delta_db"]:.2g} | **{r["result"]}** | {fmt_e(b["max_abs_diff"])} |')
+        return t
+
+    stages_present = sorted({r['stage'] for r in rows}, key=lambda st: STAGE_ORDER.get(st, 99))
+    table = []
+    for st in stages_present:
+        st_rows = [r for r in rows if r['stage'] == st]
+        st_pass = sum(r['result'] == 'PASS' for r in st_rows)
+        table += [f'### Stage {st}: {stage_title(st)} ({st_pass}/{len(st_rows)} PASS)', '',
+                  *make_table(st_rows), '']
 
     idx = [
         '# Cymbalis A/B: Python V19 reference vs C++ engine', '',
@@ -237,12 +267,11 @@ def main():
         f'- Run: {run_url}' if run_url else '- Run: local',
         f'- Created: {ab.utc_stamp()}',
         f'- Platform: {platform.platform()}; Python {platform.python_version()}, numpy {np.__version__}',
-        '- C++ engine: PORT_MAP stages 0–2 (data, exact PCG64, strike coupling, modal free ring, calibration, '
-        'right-channel high-pass)',
-        '- Overrides: ' + '; '.join(f'`{k}`' for k in overrides_sets),
+        '- Stages compared: ' + ', '.join(stages_present) + ' (docs/PORT_MAP.md, section e)',
+        f'- Bakes: {len(overrides_sets)} (one per distinct overrides set, listed under "Bake")',
         f'- Gate: max |diff| ≤ {args.threshold:g} on the float64 renders. **{n_pass}/{len(rows)} PASS.**',
         '',
-        '## Results', '', *table, '',
+        '## Results', '', *table,
         'Notes:',
         '',
         '- **Null peak / Null RMS:** peak and RMS of (C++ − Python), in dB relative to the Python peak.',

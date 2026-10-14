@@ -30,6 +30,17 @@ struct VelocityTable
     int numVel = 0;
 };
 
+// Engine-wide effective parameters: the base preset plus the bake's overrides. They are
+// the same for every slot (loadBake checks this), so the engine stores them once.
+struct EngineParams
+{
+    // Stage 3: per-mode contact (_apply_strike lines 1067-1093)
+    bool contactPermode = false; // tip_contact_ms > 0 and permode_contact
+    double tipTau0 = 3.0, tipTauMax = 10.0;
+    double shldTau0 = 10.0, shldTauMax = 35.0;
+    double sigmaRatio = 0.35;
+};
+
 struct SlotData
 {
     std::string name;
@@ -41,6 +52,11 @@ struct SlotData
     VelocityTable bellVp;
     double velGainPower = 1.0;
     double edgeLevelBoost = 1.0;
+
+    // Stage 3: contact force matrix for this slot's position, numModes x contactLen,
+    // row-major. Each row is DC-normalised. Empty when contact is off.
+    std::vector<double> contactForce;
+    int contactLen = 0;
 };
 
 struct BakeData
@@ -58,6 +74,11 @@ struct BakeData
     std::vector<double> pickL, pickR, lfoRateHz, lfoPhase;
 
     double hpSos[6] = {}; // b0 b1 b2 a0 a1 a2, right channel only
+
+    // Per-sample mode step of the contact phase: exp(1j*2pi*f/SR) * exp(-ln1000/(T60*SR)).
+    std::vector<double> modeStepRe, modeStepIm;
+
+    EngineParams params;
 
     Pcg64 renderStream;  // strike phases: state when the plugin loads
     double phaseLow = 0.0, phaseHigh = 0.0;

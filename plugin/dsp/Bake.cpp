@@ -1,5 +1,6 @@
 #include "Bake.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -126,7 +127,10 @@ std::vector<std::string> unsupportedMechanisms(const json::Value& e)
     if (e.at("articulation").string() != "stick") out.push_back("brush articulation");
     if (!e.at("vel_participation").boolean()) out.push_back("hertz_vel_scale (no velocity participation table)");
     if (eff(e, "contact_tau_ms") > 0.0) out.push_back("contact sinc stick profile (contact_tau_ms)");
-    if (eff(e, "tip_contact_ms") > 0.0) out.push_back("contact force (tip_contact_ms > 0, PORT_MAP stage 3)");
+    if (eff(e, "tip_contact_ms") > 0.0 && !e.at("permode_contact").boolean())
+        out.push_back("Gaussian contact force (tip_contact_ms > 0 without permode_contact)");
+    if (eff(e, "release_gain") > 0.0 && eff(e, "tip_contact_ms") > 0.0 && !e.at("permode_contact").boolean())
+        out.push_back("contact release pulse");
     if (eff(e, "wander_depth") != 0.0) out.push_back("LFO wander (wander_depth != 0, stage 4)");
     if (eff(e, "rate_jitter") > 0.0) out.push_back("wander rate jitter (draws extra random numbers)");
     if (eff(e, "lf_sens_depth") > 0.0 && eff(e, "lf_max_scale") <= 1.0)
@@ -144,6 +148,75 @@ std::vector<std::string> unsupportedMechanisms(const json::Value& e)
     if (e.at("edge_band_env").boolean()) out.push_back("edge band envelope");
     if (e.at("edge_npz").boolean()) out.push_back("NPZ edge velw");
     return out;
+}
+
+double clamp01(double x) { return std::min(std::max(x, 0.0), 1.0); }
+
+// numpy's pairwise summation (pairwise_sum in loops_utils.h), as used by add.reduce
+// along a contiguous axis. A row sum is the additive identity (0) plus this sum.
+double numpyPairwiseSum(const double* a, size_t n)
+{
+    if (n < 8)
+    {
+        double res = 0.0;
+        for (size_t i = 0; i < n; ++i)
+            res += a[i];
+        return res;
+    }
+    if (n <= 128)
+    {
+        double r[8];
+        for (int j = 0; j < 8; ++j)
+            r[j] = a[j];
+        size_t i = 8;
+        for (; i < n - (n % 8); i += 8)
+            for (int j = 0; j < 8; ++j)
+                r[j] += a[i + size_t(j)];
+        double res = ((r[0] + r[1]) + (r[2] + r[3])) + ((r[4] + r[5]) + (r[6] + r[7]));
+        for (; i < n; ++i)
+            res += a[i];
+        return res;
+    }
+    size_t n2 = n / 2;
+    n2 -= n2 % 8;
+    return numpyPairwiseSum(a, n2) + numpyPairwiseSum(a + n2, n - n2);
+}
+
+// _apply_strike lines 1073-1091: per-mode Gaussian force envelopes, DC-normalised per mode.
+std::vector<double> computeContactForce(const std::vector<double>& freq, double position, const EngineParams& p,
+                                        int& lenOut)
+{
+    const size_t n = freq.size();
+    const double pos = clamp01(position);
+    const double edgeFrac = clamp01(1.0 - pos / 0.5);
+    const double tau0 = p.tipTau0 + edgeFrac * (p.shldTau0 - p.tipTau0);
+    const double tauM = p.tipTauMax + edgeFrac * (p.shldTauMax - p.tipTauMax);
+    const double fMax = *std::max_element(freq.begin(), freq.end());
+    std::vector<double> tau(n), sig(n);
+    double sigMax = -1.0;
+    for (size_t i = 0; i < n; ++i)
+    {
+        const double fNorm = std::sqrt(freq[i] / (fMax + 1e-9));
+        tau[i] = tauM - (tauM - tau0) * fNorm;
+        sig[i] = std::max(tau[i] * p.sigmaRatio, 1.0);
+        sigMax = std::max(sigMax, sig[i]);
+    }
+    const int len = static_cast<int>(tauM + 3.0 * sigMax) + 1;
+    std::vector<double> f(n * size_t(len));
+    for (size_t i = 0; i < n; ++i)
+    {
+        double* row = f.data() + i * size_t(len);
+        for (int k = 0; k < len; ++k)
+        {
+            const double x = (static_cast<double>(k) - tau[i]) / sig[i];
+            row[k] = std::exp(-0.5 * (x * x));
+        }
+        const double denom = (0.0 + numpyPairwiseSum(row, size_t(len))) + 1e-9;
+        for (int k = 0; k < len; ++k)
+            row[k] = row[k] / denom;
+    }
+    lenOut = len;
+    return f;
 }
 
 Pcg64 readStream(const json::Value& s, const std::string& name, std::vector<std::string>& report)
@@ -263,14 +336,40 @@ std::shared_ptr<const BakeData> loadBake(const std::string& path)
         if (!sh.at("vel_tilt_fractions").isNull())
             readArray(sh.at("vel_tilt_fractions"), "shared.vel_tilt_fractions", {0, 0}, rep);
 
+        b.modeStepRe = readArray(sh.at("mode_step_re"), "shared.mode_step_re", {n}, rep);
+        b.modeStepIm = readArray(sh.at("mode_step_im"), "shared.mode_step_im", {n}, rep);
+
         const auto sos = readArray(root.at("hp_right").at("sos"), "hp_right.sos", {1, 6}, rep);
         for (int i = 0; i < 6; ++i)
             b.hpSos[i] = sos[size_t(i)];
         if (b.hpSos[3] != 1.0)
             throw BakeError("hp_right.sos: a0 must be 1");
 
+        // ---- engine-wide parameters: every slot must agree (only overlays differ per slot)
+        const auto& slotArr = root.at("slots").array();
+        if (slotArr.empty())
+            throw BakeError("bake has no slots");
+        const json::Value& e0 = slotArr.at(0).at("effective");
+        for (const auto& s : slotArr)
+            for (const auto& kv : e0.object())
+            {
+                if (kv.first == "bow_onset_gains_active") continue; // overlay-specific
+                const json::Value* other = s.at("effective").find(kv.first);
+                if (other == nullptr || !json::equal(kv.second, *other))
+                    throw BakeError("engine-wide parameter '" + kv.first + "' differs between slots " +
+                                    slotArr.at(0).at("name").string() + " and " + s.at("name").string());
+            }
+        EngineParams& ep = b.params;
+        ep.contactPermode = eff(e0, "tip_contact_ms") > 0.0 && e0.at("permode_contact").boolean();
+        ep.tipTau0 = eff(e0, "tip_tau0");
+        ep.tipTauMax = eff(e0, "tip_tau_max");
+        ep.shldTau0 = eff(e0, "shld_tau0");
+        ep.shldTauMax = eff(e0, "shld_tau_max");
+        ep.sigmaRatio = eff(e0, "sigma_ratio");
+        rep.push_back("params ok    engine-wide parameters identical across slots");
+
         // ---- slots
-        for (const auto& s : root.at("slots").array())
+        for (const auto& s : slotArr)
         {
             SlotData slot;
             slot.name = s.at("name").string();
@@ -295,11 +394,28 @@ std::shared_ptr<const BakeData> loadBake(const std::string& path)
                     msg += "\n  - " + m;
                 throw BakeError(msg);
             }
-            rep.push_back("stage gate   slot " + slot.name + ": only stage 0-2 mechanisms active");
+            rep.push_back("stage gate   slot " + slot.name + ": all active mechanisms are implemented");
+
+            if (ep.contactPermode)
+            {
+                slot.contactForce = computeContactForce(b.freqHz, slot.position, ep, slot.contactLen);
+                const json::Value& py = s.at("contact_force_python");
+                if (py.isNull())
+                    throw BakeError("slot " + slot.name + ": contact is on but the bake has no Python force matrix");
+                const auto pyForce = readArray(py, "slot " + slot.name + ".contact_force_python",
+                                               {n, size_t(slot.contactLen)}, rep);
+                double maxRel = 0.0;
+                for (size_t i = 0; i < pyForce.size(); ++i)
+                    if (pyForce[i] != slot.contactForce[i])
+                        maxRel = std::max(maxRel, std::fabs(pyForce[i] - slot.contactForce[i]) /
+                                                      std::max(std::fabs(pyForce[i]), 1e-300));
+                rep.push_back("contact      slot " + slot.name + ": " + std::to_string(slot.contactLen) +
+                              "-sample force matrix " +
+                              (maxRel == 0.0 ? std::string("bit-identical to Python")
+                                             : fmt("matches Python to %.2e relative", maxRel)));
+            }
             b.slots.push_back(std::move(slot));
         }
-        if (b.slots.empty())
-            throw BakeError("bake has no slots");
 
         // ---- RNG streams (stage 0: exact PCG64, uniform() and choice())
         const auto& rng = root.at("rng");
