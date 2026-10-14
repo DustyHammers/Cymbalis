@@ -39,6 +39,10 @@ struct EngineParams
     double tipTau0 = 3.0, tipTauMax = 10.0;
     double shldTau0 = 10.0, shldTauMax = 35.0;
     double sigmaRatio = 0.35;
+
+    // Stage 4: LFO wander (lines 864-867, 1114-1119)
+    double wanderDepth = 0.0;
+    double edgeWanderDepth = 0.0, edgeWanderRate = 0.0;
 };
 
 struct SlotData

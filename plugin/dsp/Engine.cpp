@@ -37,8 +37,14 @@ Engine::Engine(std::shared_ptr<const BakeData> bake, EngineConfig config)
     zr_.assign(n, 0.0);
     zi_.assign(n, 0.0);
     omega_.resize(n);
+    cosLp_.resize(n);
     for (size_t i = 0; i < n; ++i)
+    {
         omega_[i] = bake_->twoPi * bake_->freqHz[i];
+        cosLp_[i] = std::cos(bake_->lfoPhase[i]);
+    }
+    segNegDlr_.assign(n, 0.0);
+    segWlr_.assign(n, 0.0);
     segA_.assign(n, 0.0);
     segPhi_.assign(n, 0.0);
     active_.reserve(n);
@@ -187,8 +193,12 @@ void Engine::renderContactSample(double* left, double* right)
         startFreePhase();
 }
 
-// _render_segment free ring (lines 841-922), stages 0-3: every factor after the cosine is
-// exactly 1, and wander is exactly +-0.
+// _render_segment free ring (lines 841-922). Per mode, for t_local from the start of the
+// free phase:
+//   wander = -(D/lr) * (cos((2*pi*lr) * t_abs + lp) - cos(lp))           (line 867)
+//   wave   = A * decay * cos((2*pi*f) * t_local + phi_0 + wander)        (line 868)
+// t_abs = (segment start + n_contact/SR) + t_local is absolute engine time. Modes with
+// D == 0 skip the wander, which would be exactly +-0.
 void Engine::renderFree(double* left, double* right, int n)
 {
     std::fill(left, left + n, 0.0);
@@ -196,21 +206,53 @@ void Engine::renderFree(double* left, double* right, int n)
     const double* t60 = bake_->t60S.data();
     const double* pickL = bake_->pickL.data();
     const double* pickR = bake_->pickR.data();
-    for (const int i : active_)
+    const double* lfoPhase = bake_->lfoPhase.data();
+    const double tBase = segStartTime_ + static_cast<double>(segContactSamples_) / sr_;
+
+    for (int c0 = 0; c0 < n; c0 += kChunk)
     {
-        const double A = segA_[size_t(i)];
-        const double phi0 = segPhi_[size_t(i)];
-        const double w = omega_[size_t(i)];
-        const double T = t60[i];
-        const double pl = pickL[i];
-        const double pr = pickR[i];
-        for (int j = 0; j < n; ++j)
+        const int m = std::min(kChunk, n - c0);
+        for (int j = 0; j < m; ++j)
         {
-            const double t = static_cast<double>(freePos_ + j) / sr_;  // np.arange(n_free)/SR
-            const double decay = std::exp((negLog1000_ * t) / T);       // np.exp(-LOG1000*t_local/t60)
-            const double wave = (A * decay) * std::cos((w * t) + phi0); // A*decay*np.cos(2.*np.pi*f*t_local+phi_0)
-            left[j] += pl * wave;
-            right[j] += pr * wave;
+            const double t = static_cast<double>(freePos_ + c0 + j) / sr_; // np.arange(n_free)/SR
+            chunkTl_[j] = t;
+            chunkTabs_[j] = tBase + t;
+            chunkNlt_[j] = negLog1000_ * t;
+        }
+        double* L = left + c0;
+        double* R = right + c0;
+        for (const int i : active_)
+        {
+            const size_t k = size_t(i);
+            const double A = segA_[k];
+            const double phi0 = segPhi_[k];
+            const double w = omega_[k];
+            const double T = t60[k];
+            const double pl = pickL[k];
+            const double pr = pickR[k];
+            const double negDlr = segNegDlr_[k];
+            if (negDlr == 0.0)
+            {
+                for (int j = 0; j < m; ++j)
+                {
+                    const double decay = std::exp(chunkNlt_[j] / T);
+                    const double wave = (A * decay) * std::cos((w * chunkTl_[j]) + phi0);
+                    L[j] += pl * wave;
+                    R[j] += pr * wave;
+                }
+            }
+            else
+            {
+                const double wlr = segWlr_[k], lp = lfoPhase[k], cosLp = cosLp_[k];
+                for (int j = 0; j < m; ++j)
+                {
+                    const double decay = std::exp(chunkNlt_[j] / T);
+                    const double wander = negDlr * (std::cos((wlr * chunkTabs_[j]) + lp) - cosLp);
+                    const double wave = (A * decay) * std::cos(((w * chunkTl_[j]) + phi0) + wander);
+                    L[j] += pl * wave;
+                    R[j] += pr * wave;
+                }
+            }
         }
     }
     freePos_ += n;
@@ -369,6 +411,12 @@ void Engine::applyStrike(int slotIndex, double velocity, int64_t strikeSample)
             zi_[i] += ci;
         }
     }
+    // Lines 1114-1125: wander depth and rate scales for this strike (rate jitter is rejected
+    // by the stage gate).
+    wanderScale_ = 1.0 + velocity * edgeFrac * p.edgeWanderDepth;
+    wanderRateScale_ = 1.0 + velocity * edgeFrac * p.edgeWanderRate;
+    wanderRateScale_ = std::max(wanderRateScale_, 0.1);
+
     ++strikesApplied_;
     lastSlot_ = slotIndex;
 
@@ -399,6 +447,20 @@ void Engine::startFreePhase()
         if (!(A < threshold))
             active_.push_back(i);
     }
+
+    // Wander constants for this segment (lines 864-866).
+    const double* drift = bake_->driftHz.data();
+    const double* rate = bake_->lfoRateHz.data();
+    const double depth = bake_->params.wanderDepth;
+    for (const int i : active_)
+    {
+        const size_t k = size_t(i);
+        const double D = drift[k] * depth * wanderScale_;
+        const double lr = rate[k] * wanderRateScale_;
+        segNegDlr_[k] = -(D / lr);
+        segWlr_[k] = bake_->twoPi * lr;
+    }
+
     freeStarted_ = true;
     freePos_ = 0;
 }

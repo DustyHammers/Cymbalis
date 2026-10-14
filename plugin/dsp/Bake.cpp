@@ -131,7 +131,6 @@ std::vector<std::string> unsupportedMechanisms(const json::Value& e)
         out.push_back("Gaussian contact force (tip_contact_ms > 0 without permode_contact)");
     if (eff(e, "release_gain") > 0.0 && eff(e, "tip_contact_ms") > 0.0 && !e.at("permode_contact").boolean())
         out.push_back("contact release pulse");
-    if (eff(e, "wander_depth") != 0.0) out.push_back("LFO wander (wander_depth != 0, stage 4)");
     if (eff(e, "rate_jitter") > 0.0) out.push_back("wander rate jitter (draws extra random numbers)");
     if (eff(e, "lf_sens_depth") > 0.0 && eff(e, "lf_max_scale") <= 1.0)
         out.push_back("LF amplitude scaling (lf_max_scale <= 1)");
@@ -366,6 +365,9 @@ std::shared_ptr<const BakeData> loadBake(const std::string& path)
         ep.shldTau0 = eff(e0, "shld_tau0");
         ep.shldTauMax = eff(e0, "shld_tau_max");
         ep.sigmaRatio = eff(e0, "sigma_ratio");
+        ep.wanderDepth = eff(e0, "wander_depth");
+        ep.edgeWanderDepth = eff(e0, "edge_wander_depth");
+        ep.edgeWanderRate = eff(e0, "edge_wander_rate");
         rep.push_back("params ok    engine-wide parameters identical across slots");
 
         // ---- slots

@@ -5,7 +5,8 @@
 //   1  strike coupling: velocity tables, position weights, random phases
 //   2  modal free ring and state advance, slot calibration, right-channel 120 Hz high-pass
 //   3  per-mode Gaussian contact
-// Not implemented: everything after stage 3. Bakes that need it are rejected by loadBake().
+//   4  LFO wander (phase modulation in the free ring, absolute engine time)
+// Not implemented: everything after stage 4. Bakes that need it are rejected by loadBake().
 // NL (stage 10) is off in the plugin.
 //
 // Live-engine decisions (docs/PORT_MAP.md):
@@ -104,6 +105,7 @@ private:
     // Modal state (calibrated amplitudes), real and imaginary parts.
     std::vector<double> zr_, zi_;
     std::vector<double> omega_; // (2*pi) * f, as Python's `2.*np.pi*f`
+    std::vector<double> cosLp_; // cos(lfo phase), Python's `np.cos(lp)`
 
     // Running contacts. A pool sized at construction; activeContacts_ are in use, oldest first.
     std::vector<Contact> contactPool_;
@@ -117,6 +119,19 @@ private:
     std::vector<double> segA_, segPhi_; // amplitude and phase at the start of the free phase
     std::vector<int> active_;           // modes rendered in the free phase (|z| >= threshold)
     int lastSlot_ = -1;                 // slot of the most recent strike
+
+    // Per-strike engine state that Python keeps on the engine object.
+    double wanderScale_ = 1.0;     // _wander_scale
+    double wanderRateScale_ = 1.0; // _wander_rate_scale
+
+    // Free-phase constants per mode, fixed for the segment: -(D/lr) and (2*pi)*lr of the wander.
+    std::vector<double> segNegDlr_, segWlr_;
+
+    // Per-sample values shared by all modes, for one chunk of the free phase.
+    static constexpr int kChunk = 256;
+    double chunkTl_[kChunk];   // t_local
+    double chunkTabs_[kChunk]; // t_abs_arr
+    double chunkNlt_[kChunk];  // -LOG1000 * t_local
 
     Pcg64 rng_;
     uint64_t clock_ = 0;
