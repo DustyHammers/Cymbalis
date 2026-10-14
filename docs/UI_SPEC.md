@@ -124,7 +124,13 @@ Blend 2 inherits the engine's hard bow-to-edge switch near position 0.45 (PORT_M
 ## 9. Parameters — exactly these four, no others
 Placeholder ranges until Kris revises them. At the defaults the plugin sounds the same as the Python engine.
 
-| Knob | Range | Default | Behaviour |
-|
+| Parameter ID | Knob | Range | Default | Behaviour | Readout |
+|---|---|---|---|---|---|
+| `velocity_sensitivity` | Velocity Sensitivity | 0–1 (shown 0–100%) | **1.0 (100%)** | Engine velocity = vf + s·(v_in − vf), where v_in = MIDI velocity / 127, vf = 100/127 and s is this parameter. At 100% this is the engine's own velocity response; at 0% every hit plays at velocity 100 | `100%` |
+| `volume_db` | Volume | −60 to +6 dB | **0 dB** | Output gain. Knob curve dB = 6 − 66·(1 − p)², p = knob position 0–1, so 0 dB sits at p ≈ 0.70. Smoothed (no zipper noise) | `+0.0 dB` |
+| `blend_1` | Blend Position 1 (BELL → BOW) | 0–1 (shown 0–100%) | **0 (full BELL)** | BELL and BELL2 strike at position 1.0 − 0.5·blend_1 (1.0 = bell, 0.5 = bow). Read at strike time | `BELL 100 · 0 BOW` |
+| `blend_2` | Blend Position 2 (BOW → EDGE) | 0–1 (shown 0–100%) | **0 (full BOW)** | BOW and BOW2 strike at position 0.5 − 0.5·blend_2 (0.5 = bow, 0.0 = edge). Read at strike time. The engine's bow-to-edge excitation switches abruptly near position 0.45 (engine as-is) | `BOW 100 · 0 EDGE` |
+
+EDGE always strikes at position 0.0. All four are automatable. No other parameters.
 
 Non-automatable state saved with the session: MIDI channel, note per slot, current preset, editor size.
