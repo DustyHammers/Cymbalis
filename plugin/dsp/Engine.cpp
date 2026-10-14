@@ -14,6 +14,20 @@ constexpr size_t kContactPool = 64;
 
 double clamp01(double x) { return std::min(std::max(x, 0.0), 1.0); }
 
+// np.interp(x, xp, fp) for a scalar x (numpy arr_interp, no precomputed slopes):
+// fp[0] below the range, fp[-1] above it, exact fp[j] at a knot, otherwise
+// slope * (x - xp[j]) + fp[j]. fp is read with a stride.
+double numpyInterp(double x, const double* xp, const double* fp, int len, int stride)
+{
+    if (x > xp[len - 1]) return fp[(len - 1) * stride];
+    if (x < xp[0]) return fp[0];
+    const int j = static_cast<int>(std::upper_bound(xp, xp + len, x) - xp) - 1; // xp[j] <= x < xp[j+1]
+    if (j == len - 1) return fp[j * stride];
+    if (xp[j] == x) return fp[j * stride];
+    const double slope = (fp[(j + 1) * stride] - fp[j * stride]) / (xp[j + 1] - xp[j]);
+    return slope * (x - xp[j]) + fp[j * stride];
+}
+
 // numpy `arr ** p` for a scalar exponent: fast paths for 1, 2, 0.5, -1, 0; libm pow otherwise.
 double numpyScalarPower(double x, double p)
 {
@@ -47,6 +61,8 @@ Engine::Engine(std::shared_ptr<const BakeData> bake, EngineConfig config)
     segWlr_.assign(n, 0.0);
     segT60_.assign(n, 1.0);
     segMf_.assign(n, 1.0);
+    beoPkT_.assign(n, 0.0);
+    scratchBandScale_.assign(size_t(std::max(bake_->velTiltBands, 1)), 1.0);
     segA_.assign(n, 0.0);
     segPhi_.assign(n, 0.0);
     active_.reserve(n);
@@ -201,7 +217,7 @@ void Engine::renderContactSample(double* left, double* right)
 //   wave   = A * decay * cos((2*pi*f) * t_local + phi_0 + wander)        (line 868)
 //   decay  = exp(-LOG1000 * t_local / t60), t60 = T60 / wash_damp         (lines 861-863)
 //   then the output factors in Python's order, each a separate `wave *=`:
-//   MF scale (lines 917-919)
+//   onset ramp (lines 896-901), MF scale (lines 917-919)
 // t_abs = (segment start + n_contact/SR) + t_local is absolute engine time. Modes with
 // D == 0 skip the wander, which would be exactly +-0.
 void Engine::renderFree(double* left, double* right, int n)
@@ -222,6 +238,7 @@ void Engine::renderFree(double* left, double* right, int n)
             chunkTl_[j] = t;
             chunkTabs_[j] = tBase + t;
             chunkNlt_[j] = negLog1000_ * t;
+            chunkTel_[j] = chunkTabs_[j] - beoTStrike_;
         }
         double* L = left + c0;
         double* R = right + c0;
@@ -238,6 +255,9 @@ void Engine::renderFree(double* left, double* right, int n)
             const double wlr = segWlr_[k], lp = lfoPhase[k], cosLp = cosLp_[k];
             const bool mfOn = segMfOn_;
             const double mf = segMf_[k];
+            const double pt = segRampOn_ ? beoPkT_[k] : 0.0;
+            const bool rampOn = segRampOn_ && pt > 0.001;
+            const double bf = bake_->params.birthFrac;
             for (int j = 0; j < m; ++j)
             {
                 const double decay = std::exp(chunkNlt_[j] / T);
@@ -245,6 +265,12 @@ void Engine::renderFree(double* left, double* right, int n)
                 if (negDlr != 0.0)
                     arg = arg + negDlr * (std::cos((wlr * chunkTabs_[j]) + lp) - cosLp);
                 double wave = (A * decay) * std::cos(arg);
+                if (rampOn)
+                {
+                    double ramp = std::min(1.0, bf + ((1.0 - bf) * chunkTel_[j]) / pt);
+                    ramp = std::max(ramp, 0.0);
+                    wave = wave * ramp;
+                }
                 if (mfOn)
                     wave = wave * mf;
                 L[j] += pl * wave;
@@ -422,6 +448,39 @@ void Engine::applyStrike(int slotIndex, double velocity, int64_t strikeSample)
     ++strikesApplied_;
     lastSlot_ = slotIndex;
     const double strikeTime = static_cast<double>(strikeSample) / sr_; // ev.time
+    const double rawPos = s.position;                                 // float(ev.position)
+
+    // render() lines 621-650: onset ramp target for this strike. pk_t blends the edge and
+    // bow peak times by edge_frac; away from the bow, the velocity tilt rescales pk_t per
+    // band. The ramp then applies to every ringing mode, timed from this strike (f.3).
+    if (p.bandEnvOnset)
+    {
+        const double ef = clamp01(1.0 - rawPos / 0.5);
+        for (size_t i = 0; i < n; ++i)
+            beoPkT_[i] = ef * b.pkTEdge[i] + (1.0 - ef) * b.pkTBow[i];
+        beoTStrike_ = strikeTime;
+        beoEf_ = ef;
+        beoHas_ = true;
+        if (p.velTilt && ef > 1e-3)
+        {
+            const int nv = static_cast<int>(b.velTiltVelocities.size());
+            const int nb = b.velTiltBands;
+            for (int band = 0; band < nb; ++band)
+            {
+                const double frac = numpyInterp(velocity, b.velTiltVelocities.data(),
+                                                b.velTiltFractions.data() + band, nv, nb);
+                const double ref = b.velTiltReference[size_t(band)];
+                const double ratio = ref > 1e-9 ? frac / ref : 1.0;
+                scratchBandScale_[size_t(band)] = 1.0 / std::sqrt(std::max(ratio, 0.01));
+            }
+            for (size_t i = 0; i < n; ++i)
+            {
+                double sm = scratchBandScale_[size_t(b.velTiltModeBand[i])];
+                sm = 1.0 + ef * (sm - 1.0);
+                beoPkT_[i] = beoPkT_[i] * sm;
+            }
+        }
+    }
 
     // render() lines 652-672: LF accumulator. `_lf_t_last > 0` treats a previous strike at
     // exactly t = 0 as "no previous strike", so the next strike sees dt = 0 (PORT_MAP f.8).
@@ -432,7 +491,6 @@ void Engine::applyStrike(int slotIndex, double velocity, int64_t strikeSample)
         lfS_ *= std::exp(-dt / p.lfTau);
         lfScaleNow_ = p.lfMax > 1.0 ? std::min(1.0 + lfS_ * p.lfDepth, p.lfMax)
                                     : std::max(1.0 - lfS_ * p.lfDepth, p.lfMin);
-        const double rawPos = s.position; // float(ev.position)
         const double w = rawPos <= 0.25 ? p.lfWEdge : (rawPos >= 0.75 ? p.lfWBell : p.lfWBow);
         lfS_ += velocity * w;
         lfTLast_ = strikeTime;
@@ -448,7 +506,6 @@ void Engine::applyStrike(int slotIndex, double velocity, int64_t strikeSample)
         mfS_ *= std::exp(-dt / p.mfTau);
         mfScaleNow_ = p.mfMax > 1.0 ? std::min(1.0 + mfS_ * p.mfDepth, p.mfMax)
                                     : std::max(1.0 - mfS_ * p.mfDepth, p.mfMin);
-        const double rawPos = s.position;
         const double w = rawPos <= 0.25 ? p.mfWEdge : (rawPos >= 0.75 ? p.mfWBell : p.mfWBow);
         mfS_ += velocity * w;
         mfTLast_ = strikeTime;
@@ -484,6 +541,7 @@ void Engine::startFreePhase()
 
     // Decay T60, wander and MF constants for this segment (lines 861-866, 917-918).
     segMfOn_ = !bake_->mfBandpass.empty() && std::fabs(mfScaleNow_ - 1.0) > 1e-6;
+    segRampOn_ = bake_->params.bandEnvOnset && beoHas_ && beoEf_ > 0.1; // line 848-851
     const double* t60 = bake_->t60S.data();
     const double* drift = bake_->driftHz.data();
     const double* rate = bake_->lfoRateHz.data();

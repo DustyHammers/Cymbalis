@@ -56,6 +56,11 @@ struct EngineParams
     // Stage 7: MF accumulator (render() lines 674-688, free ring lines 917-919)
     double mfDepth = 0.0, mfTau = 5.0, mfMin = 0.3, mfMax = 1.0;
     double mfWEdge = 1.0, mfWBow = 0.5, mfWBell = 0.1;
+
+    // Stage 8: per-mode onset ramp (lines 621-650, 847-856, 895-901) and velocity tilt
+    bool bandEnvOnset = false; // mode_pk_t data present
+    double birthFrac = 0.5;    // band_env_birth_frac
+    bool velTilt = false;      // vel_tilt data present
 };
 
 struct SlotData
@@ -97,6 +102,13 @@ struct BakeData
 
     // MF band-pass weight per mode (lines 399-405); empty when the MF accumulator is off.
     std::vector<double> mfBandpass;
+
+    // Onset ramp data (stage 8): peak times per mode (indexed by mode position) and the
+    // velocity tilt table (velocities x bands), its reference row and each mode's band.
+    std::vector<double> pkTBow, pkTEdge;
+    std::vector<double> velTiltVelocities, velTiltFractions, velTiltReference;
+    std::vector<int> velTiltModeBand;
+    int velTiltBands = 0;
 
     EngineParams params;
 

@@ -1,0 +1,18 @@
+{
+  "format_version": 1,
+  "name": "edge_s8_ramp_vel",
+  "slot": "EDGE",
+  "stage": "8",
+  "description": "EDGE: onset ramp with the velocity tilt (stage 8) at velocities 0.3, 0.65, 0.9; strikes 0.25 and 0.75 s apart, so later strikes land during earlier ramps.",
+  "duration_s": 6.0,
+  "strikes": [
+    [0.25, 0.3],
+    [1.0, 0.65],
+    [1.25, 0.9]
+  ],
+  "overrides": {
+    "bow_onset_band_gains": null,
+    "nl_amount": 0.0
+  },
+  "cpp_block_sizes": [512]
+}

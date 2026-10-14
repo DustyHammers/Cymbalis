@@ -134,8 +134,6 @@ std::vector<std::string> unsupportedMechanisms(const json::Value& e)
     if (eff(e, "rate_jitter") > 0.0) out.push_back("wander rate jitter (draws extra random numbers)");
     if (eff(e, "lf_sens_depth") > 0.0 && eff(e, "lf_max_scale") <= 1.0)
         out.push_back("LF amplitude scaling (lf_max_scale <= 1)");
-    if (e.at("band_env_onset").boolean() && eff(e, "band_env_birth_frac") != 1.0)
-        out.push_back("edge onset ramp (band_env_birth_frac != 1, stage 8)");
     if (e.at("bow_onset_gains_active").boolean()) out.push_back("onset band gains (stage 9)");
     if (eff(e, "nl_amount") > 1e-6) out.push_back("NL redistribution (nl_amount > 0; off in the plugin)");
     if (eff(e, "hf_bloom_modes") > 0) out.push_back("HF bloom bank");
@@ -383,6 +381,30 @@ std::shared_ptr<const BakeData> loadBake(const std::string& path)
         ep.mfWEdge = eff(e0, "mf_edge_weight");
         ep.mfWBow = eff(e0, "mf_bow_weight");
         ep.mfWBell = eff(e0, "mf_bell_weight");
+        ep.bandEnvOnset = e0.at("band_env_onset").boolean();
+        ep.birthFrac = eff(e0, "band_env_birth_frac");
+        ep.velTilt = e0.at("vel_tilt").boolean();
+        if (ep.bandEnvOnset)
+        {
+            b.pkTBow = readArray(sh.at("pk_t_bow_s"), "shared.pk_t_bow_s (used)", {n}, rep);
+            b.pkTEdge = readArray(sh.at("pk_t_edge_s"), "shared.pk_t_edge_s (used)", {n}, rep);
+        }
+        if (ep.velTilt)
+        {
+            b.velTiltVelocities = readArray(sh.at("vel_tilt_velocities"), "shared.vel_tilt_velocities (used)", {0}, rep);
+            b.velTiltReference = readArray(sh.at("vel_tilt_reference"), "shared.vel_tilt_reference (used)", {0}, rep);
+            b.velTiltBands = static_cast<int>(b.velTiltReference.size());
+            b.velTiltFractions = readArray(sh.at("vel_tilt_fractions"), "shared.vel_tilt_fractions (used)",
+                                           {b.velTiltVelocities.size(), size_t(b.velTiltBands)}, rep);
+            const auto band = readArray(sh.at("vel_tilt_mode_band"), "shared.vel_tilt_mode_band (used)", {n}, rep);
+            b.velTiltModeBand.resize(n);
+            for (size_t i = 0; i < n; ++i)
+            {
+                b.velTiltModeBand[i] = static_cast<int>(band[i]);
+                if (b.velTiltModeBand[i] < 0 || b.velTiltModeBand[i] >= b.velTiltBands)
+                    throw BakeError("vel_tilt_mode_band out of range");
+            }
+        }
         if (ep.mfDepth > 0.0)
         {
             if (sh.at("mf_bandpass").isNull())
