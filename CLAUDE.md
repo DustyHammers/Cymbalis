@@ -14,6 +14,7 @@ Cymbalis is a physically modelled cymbal instrument (macOS VST3 + AU, JUCE 7.0.1
 - Use unique timestamped filenames for every audio render.
 - Read the relevant source and docs before changing anything; do not guess.
 - Work on a branch and open a pull request for each task; do not push to `main` directly.
+- There is no `README.md` for now. Do not create or edit one unless Kris asks. Put documentation in `docs/` instead.
 
 ## Repo map
 
@@ -26,6 +27,10 @@ Cymbalis is a physically modelled cymbal instrument (macOS VST3 + AU, JUCE 7.0.1
 | `docs/ui/reference_mockup.png` | Original UI artwork, reference only |
 | `docs/history/` | Engine session summaries (background reading) |
 | `docs/BASELINE_MANIFEST.md` | Locked MD5s and the baseline render check |
+| `docs/PORT_MAP.md` | Python engine map, porting stages, live-engine decisions |
+| `docs/AB_PIPELINE.md` | How to run the Python vs C++ comparison |
+| `docs/BUILDS.md` | CI builds, installing a build, plugin identity |
+| `docs/UI_SPEC.md` | Approved UI spec, slots, the four parameters |
 
 ## Python reference
 
