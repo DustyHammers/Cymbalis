@@ -75,6 +75,11 @@ struct SlotData
     double velGainPower = 1.0;
     double edgeLevelBoost = 1.0;
 
+    // Stage 9: onset band gains of this slot's overlay (lines 425-442, 902-913).
+    bool onsetGainsActive = false;
+    std::vector<double> onsetGains; // per band (9 bands)
+    double onsetTauS = 0.08;
+
     // Stage 3: contact force matrix for this slot's position, numModes x contactLen,
     // row-major. Each row is DC-normalised. Empty when contact is off.
     std::vector<double> contactForce;
@@ -109,6 +114,9 @@ struct BakeData
     std::vector<double> velTiltVelocities, velTiltFractions, velTiltReference;
     std::vector<int> velTiltModeBand;
     int velTiltBands = 0;
+
+    // Onset-gain band of each mode (stage 9, lines 431-438).
+    std::vector<int> bowOnsetModeBand;
 
     EngineParams params;
 

@@ -10,7 +10,9 @@
 //   6  vel_len_tilt: T60 / wash_damp inside the segment, undamped T60 for the state advance
 //   7  MF accumulator: band-pass amplitude scale on every ringing mode
 //   8  edge onset ramp (per-mode pk_t) with the velocity tilt of pk_t
-// Not implemented: everything after stage 8. Bakes that need it are rejected by loadBake().
+//   9  onset band gains of the striking slot's overlay
+// Not implemented: NL (stage 10), which is off in the plugin, and the mechanisms Nova does
+// not use; bakes that need them are rejected by loadBake(). Bakes that need it are rejected by loadBake().
 // NL (stage 10) is off in the plugin.
 //
 // Live-engine decisions (docs/PORT_MAP.md):
@@ -141,6 +143,9 @@ private:
     bool segMfOn_ = false;     // the MF scale applies in this segment
     std::vector<double> segMf_; // 1 + (mf_scale_now - 1) * mf_bandpass
     bool segRampOn_ = false;    // the onset ramp applies in this segment (edge_frac > 0.1)
+    bool segOnsetOn_ = false;   // onset gains apply in this segment (edge_frac < 0.9)
+    double segOnsetTau_ = 0.08; // the striking slot's bow_onset_tau
+    std::vector<double> segOnsetGm1_; // g0 - 1 per mode, 0 where |g0 - 1| <= 1e-3
 
     // Per-sample values shared by all modes, for one chunk of the free phase.
     static constexpr int kChunk = 256;
@@ -148,6 +153,7 @@ private:
     double chunkTabs_[kChunk]; // t_abs_arr
     double chunkNlt_[kChunk];  // -LOG1000 * t_local
     double chunkTel_[kChunk];  // t_abs_arr - _beo_t_strike
+    double chunkEnv_[kChunk];  // onset-gain envelope exp(-max(t_e, 0) / tau)
 
     Pcg64 rng_;
     uint64_t clock_ = 0;

@@ -62,6 +62,7 @@ Engine::Engine(std::shared_ptr<const BakeData> bake, EngineConfig config)
     segT60_.assign(n, 1.0);
     segMf_.assign(n, 1.0);
     beoPkT_.assign(n, 0.0);
+    segOnsetGm1_.assign(n, 0.0);
     scratchBandScale_.assign(size_t(std::max(bake_->velTiltBands, 1)), 1.0);
     segA_.assign(n, 0.0);
     segPhi_.assign(n, 0.0);
@@ -217,7 +218,7 @@ void Engine::renderContactSample(double* left, double* right)
 //   wave   = A * decay * cos((2*pi*f) * t_local + phi_0 + wander)        (line 868)
 //   decay  = exp(-LOG1000 * t_local / t60), t60 = T60 / wash_damp         (lines 861-863)
 //   then the output factors in Python's order, each a separate `wave *=`:
-//   onset ramp (lines 896-901), MF scale (lines 917-919)
+//   onset ramp (lines 896-901), onset gain (lines 905-913), MF scale (lines 917-919)
 // t_abs = (segment start + n_contact/SR) + t_local is absolute engine time. Modes with
 // D == 0 skip the wander, which would be exactly +-0.
 void Engine::renderFree(double* left, double* right, int n)
@@ -240,6 +241,9 @@ void Engine::renderFree(double* left, double* right, int n)
             chunkNlt_[j] = negLog1000_ * t;
             chunkTel_[j] = chunkTabs_[j] - beoTStrike_;
         }
+        if (segOnsetOn_)
+            for (int j = 0; j < m; ++j)
+                chunkEnv_[j] = std::exp(-std::max(chunkTel_[j], 0.0) / segOnsetTau_);
         double* L = left + c0;
         double* R = right + c0;
         for (const int i : active_)
@@ -258,6 +262,8 @@ void Engine::renderFree(double* left, double* right, int n)
             const double pt = segRampOn_ ? beoPkT_[k] : 0.0;
             const bool rampOn = segRampOn_ && pt > 0.001;
             const double bf = bake_->params.birthFrac;
+            const double gm1 = segOnsetOn_ ? segOnsetGm1_[k] : 0.0;
+            const bool onsetOn = gm1 != 0.0;
             for (int j = 0; j < m; ++j)
             {
                 const double decay = std::exp(chunkNlt_[j] / T);
@@ -271,6 +277,8 @@ void Engine::renderFree(double* left, double* right, int n)
                     ramp = std::max(ramp, 0.0);
                     wave = wave * ramp;
                 }
+                if (onsetOn)
+                    wave = wave * (1.0 + gm1 * chunkEnv_[j]);
                 if (mfOn)
                     wave = wave * mf;
                 L[j] += pl * wave;
@@ -542,6 +550,19 @@ void Engine::startFreePhase()
     // Decay T60, wander and MF constants for this segment (lines 861-866, 917-918).
     segMfOn_ = !bake_->mfBandpass.empty() && std::fabs(mfScaleNow_ - 1.0) > 1e-6;
     segRampOn_ = bake_->params.bandEnvOnset && beoHas_ && beoEf_ > 0.1; // line 848-851
+    // Lines 905-913: the onset gains of the most recent strike's slot, timed from that strike,
+    // on every ringing mode, except at the edge (edge_frac >= 0.9).
+    const SlotData* lastSlot = lastSlot_ >= 0 ? &bake_->slots[size_t(lastSlot_)] : nullptr;
+    segOnsetOn_ = lastSlot != nullptr && lastSlot->onsetGainsActive && beoHas_ && beoEf_ < 0.9;
+    if (segOnsetOn_)
+    {
+        segOnsetTau_ = lastSlot->onsetTauS;
+        for (const int i : active_)
+        {
+            const double g0 = lastSlot->onsetGains[size_t(bake_->bowOnsetModeBand[size_t(i)])];
+            segOnsetGm1_[size_t(i)] = std::fabs(g0 - 1.0) > 1e-3 ? g0 - 1.0 : 0.0;
+        }
+    }
     const double* t60 = bake_->t60S.data();
     const double* drift = bake_->driftHz.data();
     const double* rate = bake_->lfoRateHz.data();

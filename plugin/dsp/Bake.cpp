@@ -134,7 +134,6 @@ std::vector<std::string> unsupportedMechanisms(const json::Value& e)
     if (eff(e, "rate_jitter") > 0.0) out.push_back("wander rate jitter (draws extra random numbers)");
     if (eff(e, "lf_sens_depth") > 0.0 && eff(e, "lf_max_scale") <= 1.0)
         out.push_back("LF amplitude scaling (lf_max_scale <= 1)");
-    if (e.at("bow_onset_gains_active").boolean()) out.push_back("onset band gains (stage 9)");
     if (eff(e, "nl_amount") > 1e-6) out.push_back("NL redistribution (nl_amount > 0; off in the plugin)");
     if (eff(e, "hf_bloom_modes") > 0) out.push_back("HF bloom bank");
     if (eff(e, "sparkle_clusters") > 0 && eff(e, "sparkle_depth") > 0.0) out.push_back("sparkle");
@@ -428,6 +427,23 @@ std::shared_ptr<const BakeData> loadBake(const std::string& path)
                 slot.bellVp = readVelocityTable(s.at("bell_vp"), "slot " + slot.name + ".bell_vp", n, rep);
             }
             const json::Value& e = s.at("effective");
+            slot.onsetGainsActive = e.at("bow_onset_gains_active").boolean();
+            if (slot.onsetGainsActive)
+            {
+                slot.onsetGains = readArray(s.at("onset_gains"), "slot " + slot.name + ".onset_gains", {0}, rep);
+                if (b.bowOnsetModeBand.empty())
+                {
+                    const auto band = readArray(sh.at("bow_onset_mode_band"), "shared.bow_onset_mode_band (used)",
+                                                {n}, rep);
+                    b.bowOnsetModeBand.resize(n);
+                    for (size_t i = 0; i < n; ++i)
+                        b.bowOnsetModeBand[i] = static_cast<int>(band[i]);
+                }
+                for (int band : b.bowOnsetModeBand)
+                    if (band < 0 || band >= static_cast<int>(slot.onsetGains.size()))
+                        throw BakeError("slot " + slot.name + ": onset band index out of range");
+            }
+            slot.onsetTauS = s.at("onset_tau_s").number();
             slot.velGainPower = e.at("vel_gain_power").number();
             slot.edgeLevelBoost = e.at("edge_level_boost").number();
 
