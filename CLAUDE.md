@@ -30,6 +30,7 @@ Cymbalis is a physically modelled cymbal instrument (macOS VST3 + AU, JUCE 7.0.1
 | `docs/PORT_MAP.md` | Python engine map, porting stages, live-engine decisions |
 | `docs/AB_PIPELINE.md` | How to run the Python vs C++ comparison |
 | `docs/BUILDS.md` | CI builds, installing a build, plugin identity |
+| `docs/UI_SPEC.md` | Approved UI spec, slots, the four parameters |
 
 ## Python reference
 
