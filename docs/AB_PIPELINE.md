@@ -17,4 +17,8 @@ python tools/run_ab.py --cpp build-ab/tools/cymbalis_render/cymbalis_render --ou
 3. Compares each pair with `tools/compare_ab.py`. A pair passes if the largest sample difference between the float64 renders is at most 1e-8.
 4. Writes `ab-out/index.md`, which lists the results and links the float32 WAV pairs and the reports.
 
-In CI, the `ab-renders` job runs this after the build and uploads `ab-out/` as the artifact `Cymbalis-AB-<shortsha>`.
+This runs locally only; CI no longer renders comparisons.
+
+## The plugin's real-time engine
+
+The plugin uses `FastEngine` (`plugin/dsp/FastEngine.h`), which renders the same model faster; `cymbalis_render --fast [--sample-rate SR]` renders a sequence with it. It was checked once against the exact engine on the `*_full_*` sequences (null residual and band envelopes); see the pull request that added it.

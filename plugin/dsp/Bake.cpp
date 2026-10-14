@@ -270,18 +270,10 @@ int BakeData::slotIndex(const std::string& name) const
     return -1;
 }
 
-std::shared_ptr<const BakeData> loadBake(const std::string& path)
+namespace
 {
-    json::Value root;
-    try
-    {
-        root = json::parseFile(path);
-    }
-    catch (const json::ParseError& e)
-    {
-        throw BakeError(e.what());
-    }
-
+std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::string& path)
+{
     auto bake = std::make_shared<BakeData>();
     BakeData& b = *bake;
     auto& rep = b.report;
@@ -559,6 +551,35 @@ std::shared_ptr<const BakeData> loadBake(const std::string& path)
     }
 
     return bake;
+}
+} // namespace
+
+std::shared_ptr<const BakeData> loadBake(const std::string& path)
+{
+    json::Value root;
+    try
+    {
+        root = json::parseFile(path);
+    }
+    catch (const json::ParseError& e)
+    {
+        throw BakeError(e.what());
+    }
+    return buildBake(root, path);
+}
+
+std::shared_ptr<const BakeData> loadBakeFromText(const std::string& text, const std::string& name)
+{
+    json::Value root;
+    try
+    {
+        root = json::parse(text);
+    }
+    catch (const json::ParseError& e)
+    {
+        throw BakeError(name + ": " + e.what());
+    }
+    return buildBake(root, name);
 }
 
 } // namespace cymbalis

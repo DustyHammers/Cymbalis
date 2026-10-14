@@ -1,21 +1,654 @@
 #include "PluginEditor.h"
 
-CymbalisEditor::CymbalisEditor (CymbalisProcessor& p)
-    : AudioProcessorEditor (&p)
+#include <cmath>
+
+namespace cymbalis::ui
 {
-    setSize (480, 240);
+
+namespace
+{
+// Font sizes and letter spacing for values in boxes and popups. UI_SPEC section 4 gives the
+// labels; values use the same font (section 4, last line).
+constexpr float kHeaderSize = 17.1f;
+constexpr float kRowSize = 15.6f;
+constexpr float kBoxValueSpacing = 3.2f;   // CYMBAL and MIDI CHANNEL boxes
+constexpr float kStickValueSpacing = 2.0f; // stick boxes
+constexpr float kNoteValueSpacing = 1.0f;  // note boxes
+constexpr float kPopupSpacing = 2.5f;
+
+// Row box tops (BELL, BOW, EDGE, BELL2, BOW2), UI_SPEC section 3.
+constexpr std::array<int, kNumSlots> kRowTop { 140, 220, 300, 380, 460 };
+constexpr std::array<float, kNumSlots> kRowLabelY { 148.0f, 228.0f, 307.0f, 387.0f, 468.0f };
+constexpr std::array<float, kNumSlots> kRowLabelSpacing { 3.33f, 2.88f, 2.83f, 3.50f, 3.25f };
+const juce::Rectangle<int> kStickBox (1265, 0, 99, 25);
+const juce::Rectangle<int> kNoteBox (1424, 0, 66, 25);
+const juce::Rectangle<int> kPresetBox (61, 371, 277, 62);
+const juce::Rectangle<int> kChannelBox (632, 936, 277, 62);
+const juce::Rectangle<int> kPhoto (434, 94, 707, 713);
+
+const juce::String emDash = juce::String::fromUTF8 ("\xe2\x80\x94");
+
+// Baseline that centres capital letters vertically in `area`.
+float capBaseline (const juce::Font& f, juce::Rectangle<float> area)
+{
+    const auto h = inkBounds (f, "H");
+    return area.getCentreY() + h.getHeight() * 0.5f;
+}
+
+// `text` centred in `area`: horizontally by its ink, vertically by the capital height.
+void drawValue (juce::Graphics& g, const juce::Font& f, const juce::String& text, juce::Rectangle<float> area,
+                juce::Colour c)
+{
+    const auto b = inkBounds (f, text);
+    drawInkText (g, f, text, { area.getCentreX() - b.getWidth() * 0.5f, capBaseline (f, area) + b.getY() }, c);
+}
+
+void drawTriangle (juce::Graphics& g, juce::Point<float> topLeft)
+{
+    juce::Path p;
+    p.addTriangle (topLeft, topLeft.translated (13.0f, 0.0f), topLeft.translated (6.5f, 9.0f));
+    g.setColour (palette::arrow);
+    g.fillPath (p);
+}
+
+void drawBoxOutline (juce::Graphics& g, juce::Rectangle<int> r, juce::Colour c)
+{
+    g.setColour (c);
+    g.drawRect (r, 2);
+}
+} // namespace
+
+// =====================================================================================
+Knob::Knob (const Assets& a) : assets (a)
+{
+    setSliderStyle (juce::Slider::RotaryVerticalDrag);
+    setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    setMouseDragSensitivity (300);
+    setScrollWheelEnabled (true);
+}
+
+void Knob::paint (juce::Graphics& g)
+{
+    if (! assets.knobStrip.isValid())
+        return;
+    const int frame = juce::jlimit (0, Assets::knobFrames - 1,
+                                    juce::roundToInt (valueToProportionOfLength (getValue()) * (Assets::knobFrames - 1)));
+    const int s = Assets::knobFrameSize;
+    g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
+    g.drawImage (assets.knobStrip, 0, 0, getWidth(), getHeight(), 0, frame * s, s, s);
+}
+
+// =====================================================================================
+DropdownBox::DropdownBox (const Assets& a, juce::Point<float> arrowTopLeft) : assets (a), arrow (arrowTopLeft)
+{
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+}
+
+void DropdownBox::setText (const juce::String& t)
+{
+    text = t;
+    repaint();
+}
+
+void DropdownBox::setOpen (bool shouldBeOpen)
+{
+    open = shouldBeOpen;
+    repaint();
+}
+
+void DropdownBox::paint (juce::Graphics& g)
+{
+    const auto outline = open ? palette::openOutline : (isMouseOver() ? palette::bronze : palette::boxOutline);
+    drawBoxOutline (g, getLocalBounds(), outline);
+    drawTriangle (g, arrow);
+    drawValue (g, assets.font (kHeaderSize, kBoxValueSpacing), text, getLocalBounds().toFloat(), palette::label);
+}
+
+void DropdownBox::mouseDown (const juce::MouseEvent&)
+{
+    if (onClick)
+        onClick();
+}
+
+// =====================================================================================
+NoteBox::NoteBox (const Assets& a) : assets (a)
+{
+    setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
+}
+
+void NoteBox::setNote (int n)
+{
+    note = n;
+    repaint();
+}
+
+void NoteBox::setLearning (bool l, float p)
+{
+    if (l != learning || (l && std::abs (p - pulse) > 0.01f))
+    {
+        learning = l;
+        pulse = p;
+        repaint();
+    }
+}
+
+void NoteBox::setOpen (bool shouldBeOpen)
+{
+    open = shouldBeOpen;
+    repaint();
+}
+
+void NoteBox::paint (juce::Graphics& g)
+{
+    const auto outline = open ? palette::openOutline : (isMouseOver() ? palette::bronze : palette::rowOutline);
+    drawBoxOutline (g, getLocalBounds(), outline);
+    const auto area = getLocalBounds().toFloat();
+    const auto f = assets.font (kRowSize, kNoteValueSpacing);
+    if (learning)
+    {
+        drawValue (g, f, "LEARN", area, palette::label.withMultipliedAlpha (pulse));
+        return;
+    }
+    if (note < 0)
+    {
+        drawValue (g, f, emDash, area, palette::secondary);
+        return;
+    }
+    // Name in the value colour, number in the secondary colour, on one baseline.
+    const juce::String name = noteName (note), number (note);
+    const auto bn = inkBounds (f, name), bm = inkBounds (f, number);
+    const float gap = 6.0f;
+    const float x0 = area.getCentreX() - (bn.getWidth() + gap + bm.getWidth()) * 0.5f;
+    const float base = capBaseline (f, area);
+    drawInkText (g, f, name, { x0, base + bn.getY() }, palette::label);
+    drawInkText (g, f, number, { x0 + bn.getWidth() + gap, base + bm.getY() }, palette::secondary);
+}
+
+void NoteBox::mouseDown (const juce::MouseEvent&)
+{
+    dragStartNote = note;
+    dragged = false;
+}
+
+// Vertical drag: one semitone per 8 design units, up is higher. Below 0 is unassigned.
+void NoteBox::mouseDrag (const juce::MouseEvent& e)
+{
+    const int dy = e.getDistanceFromDragStartY();
+    if (! dragged && std::abs (dy) < 4)
+        return;
+    dragged = true;
+    const int start = dragStartNote < 0 ? 60 : dragStartNote;
+    const int n = juce::jlimit (-1, 127, start - dy / 8);
+    if (n != note && onNoteDragged)
+        onNoteDragged (n);
+}
+
+void NoteBox::mouseUp (const juce::MouseEvent&)
+{
+    if (! dragged && onClick)
+        onClick();
+}
+
+// =====================================================================================
+PopupPanel::PopupPanel (const Assets& a, juce::StringArray i, int sel, int cols, juce::Point<int> size)
+    : assets (a), items (std::move (i)), selected (sel), columns (juce::jmax (1, cols)), itemSize (size)
+{
+    const int rows = (items.size() + columns - 1) / columns;
+    setSize (columns * itemSize.x + 2 * (border + padding), rows * itemSize.y + 2 * (border + padding));
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+}
+
+juce::Rectangle<int> PopupPanel::itemBounds (int index) const
+{
+    const int inset = border + padding;
+    return { inset + (index % columns) * itemSize.x, inset + (index / columns) * itemSize.y, itemSize.x, itemSize.y };
+}
+
+int PopupPanel::itemAt (juce::Point<int> p) const
+{
+    for (int i = 0; i < items.size(); ++i)
+        if (itemBounds (i).contains (p))
+            return i;
+    return -1;
+}
+
+void PopupPanel::paint (juce::Graphics& g)
+{
+    g.fillAll (palette::popup);
+    drawBoxOutline (g, getLocalBounds(), palette::boxOutline);
+    const auto f = assets.font (kRowSize, kPopupSpacing);
+    for (int i = 0; i < items.size(); ++i)
+    {
+        const auto r = itemBounds (i);
+        if (i == hover)
+        {
+            g.setColour (palette::bronze);
+            g.drawRect (r.reduced (2), 1);
+        }
+        const bool bright = selected < 0 || i == selected || i == hover;
+        drawValue (g, f, items[i], r.toFloat(), bright ? palette::label : palette::secondary);
+    }
+}
+
+void PopupPanel::mouseMove (const juce::MouseEvent& e)
+{
+    const int h = itemAt (e.getPosition());
+    if (h != hover)
+    {
+        hover = h;
+        repaint();
+    }
+}
+
+void PopupPanel::mouseExit (const juce::MouseEvent&)
+{
+    hover = -1;
+    repaint();
+}
+
+void PopupPanel::mouseUp (const juce::MouseEvent& e)
+{
+    const int i = itemAt (e.getPosition());
+    if (i >= 0 && onChoose)
+        onChoose (i);
+}
+
+// =====================================================================================
+namespace
+{
+// Catches clicks outside the popup and closes it.
+class PopupLayer final : public juce::Component
+{
+public:
+    explicit PopupLayer (std::function<void()> close) : onClose (std::move (close)) { setInterceptsMouseClicks (true, true); }
+    void mouseDown (const juce::MouseEvent&) override
+    {
+        if (onClose)
+            onClose();
+    }
+
+private:
+    std::function<void()> onClose;
+};
+} // namespace
+
+Content::Content (CymbalisProcessor& p)
+    : processor (p),
+      knobSpecs { {
+          { CymbalisProcessor::paramVelocitySensitivity, { 201.0f, 641.0f }, "VELOCITY SENSITIVITY", { 99.0f, 544.0f }, 3.09f, palette::knobLabel },
+          { CymbalisProcessor::paramVolumeDb, { 199.0f, 881.0f }, "VOLUME", { 164.0f, 784.0f }, 3.40f, palette::knobLabel },
+          { CymbalisProcessor::paramBlend1, { 1349.0f, 642.0f }, "BLEND POSITION 1", { 1269.0f, 545.0f }, 3.18f, palette::label },
+          { CymbalisProcessor::paramBlend2, { 1350.0f, 881.0f }, "BLEND POSITION 2", { 1270.0f, 783.0f }, 2.98f, palette::label },
+      } },
+      presetBox (assets, { 306.0f - (float) kPresetBox.getX(), 398.0f - (float) kPresetBox.getY() }),
+      channelBox (assets, { 877.0f - (float) kChannelBox.getX(), 963.0f - (float) kChannelBox.getY() })
+{
+    setSize (kDesignWidth, kDesignHeight);
+    setOpaque (true);
+
+    for (size_t i = 0; i < knobs.size(); ++i)
+    {
+        auto& spec = knobSpecs[i];
+        knobs[i] = std::make_unique<Knob> (assets);
+        const int s = Assets::knobFrameSize;
+        knobs[i]->setBounds (juce::roundToInt (spec.centre.x) - s / 2, juce::roundToInt (spec.centre.y) - s / 2, s, s);
+        attachments[i] = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
+            processor.parameters(), spec.paramId, *knobs[i]);
+        if (auto* param = processor.parameters().getParameter (spec.paramId))
+            knobs[i]->setDoubleClickReturnValue (true, param->convertFrom0to1 (param->getDefaultValue()));
+        knobs[i]->addListener (this);
+        addAndMakeVisible (*knobs[i]);
+    }
+
+    presetBox.setBounds (kPresetBox);
+    presetBox.setText (processor.presetName());
+    presetBox.onClick = [this] { openPresetMenu(); };
+    addAndMakeVisible (presetBox);
+
+    channelBox.setBounds (kChannelBox);
+    channelBox.onClick = [this] { openChannelMenu(); };
+    addAndMakeVisible (channelBox);
+
+    for (int s = 0; s < kNumSlots; ++s)
+    {
+        auto box = std::make_unique<NoteBox> (assets);
+        box->setBounds (kNoteBox.withY (kRowTop[(size_t) s]));
+        box->onNoteDragged = [this, s] (int n) {
+            processor.setSlotNote (s, n);
+            refresh();
+        };
+        box->onClick = [this, s] { openNoteMenu (s); };
+        addAndMakeVisible (*box);
+        noteBoxes[(size_t) s] = std::move (box);
+    }
+    shownNotes.fill (-2);
+
+    addMouseListener (this, true); // a click anywhere cancels MIDI learn
+    refresh();
+}
+
+Content::~Content()
+{
+    removeMouseListener (this);
+    for (auto& k : knobs)
+        k->removeListener (this);
+}
+
+void Content::refresh()
+{
+    for (int s = 0; s < kNumSlots; ++s)
+    {
+        const int n = processor.slotNote (s);
+        if (n != shownNotes[(size_t) s])
+        {
+            shownNotes[(size_t) s] = n;
+            noteBoxes[(size_t) s]->setNote (n);
+        }
+    }
+    const int ch = processor.midiChannel();
+    if (ch != shownChannel)
+    {
+        shownChannel = ch;
+        channelBox.setText (juce::String (ch));
+    }
+    const int learn = processor.midiLearnSlot();
+    if (learn != shownLearn)
+    {
+        shownLearn = learn;
+        learnStartMs = juce::Time::getMillisecondCounterHiRes();
+    }
+    const double t = (juce::Time::getMillisecondCounterHiRes() - learnStartMs) * 0.001;
+    const float pulse = 0.6f + 0.4f * (float) std::cos (juce::MathConstants<double>::twoPi * 1.25 * t);
+    for (int s = 0; s < kNumSlots; ++s)
+        noteBoxes[(size_t) s]->setLearning (s == learn, pulse);
+}
+
+void Content::mouseDown (const juce::MouseEvent& e)
+{
+    const int learn = processor.midiLearnSlot();
+    if (learn < 0 || popup != nullptr)
+        return;
+    if (e.eventComponent != noteBoxes[(size_t) learn].get())
+    {
+        processor.cancelMidiLearn();
+        refresh();
+    }
+}
+
+// The area of a knob's header, wide enough for its readout.
+juce::Rectangle<int> Content::labelArea (int knob) const
+{
+    const auto& spec = knobSpecs[(size_t) knob];
+    const auto b = inkBounds (assets.font (kHeaderSize, spec.spacing), spec.label);
+    return juce::Rectangle<float> (spec.labelInk.x, spec.labelInk.y, b.getWidth(), b.getHeight())
+        .expanded (140.0f, 12.0f)
+        .toNearestInt();
+}
+
+void Content::sliderValueChanged (juce::Slider* s)
+{
+    if (draggingKnob >= 0 && knobs[(size_t) draggingKnob].get() == s)
+        repaint (labelArea (draggingKnob));
+}
+
+void Content::sliderDragStarted (juce::Slider* s)
+{
+    for (size_t i = 0; i < knobs.size(); ++i)
+        if (knobs[i].get() == s)
+            draggingKnob = (int) i;
+    if (draggingKnob >= 0)
+        repaint (labelArea (draggingKnob));
+}
+
+void Content::sliderDragEnded (juce::Slider*)
+{
+    if (draggingKnob >= 0)
+        repaint (labelArea (draggingKnob));
+    draggingKnob = -1;
+}
+
+void Content::showPopup (std::unique_ptr<PopupPanel> panel, juce::Rectangle<int> bounds, std::function<void()> onClose)
+{
+    closePopup();
+    popupClosed = std::move (onClose);
+    popupLayer = std::make_unique<PopupLayer> ([this] { closePopup(); });
+    popupLayer->setBounds (getLocalBounds());
+    addAndMakeVisible (*popupLayer);
+    popup = std::move (panel);
+    popup->setBounds (bounds);
+    addAndMakeVisible (*popup);
+}
+
+void Content::closePopup()
+{
+    if (popup == nullptr)
+        return;
+    // Deleting the panel from inside its own mouse callback is unsafe, so defer it.
+    auto* p = popup.release();
+    auto* l = popupLayer.release();
+    p->setVisible (false);
+    l->setVisible (false);
+    juce::MessageManager::callAsync ([p, l] {
+        delete p;
+        delete l;
+    });
+    if (auto f = std::move (popupClosed))
+        f();
+    popupClosed = nullptr;
+}
+
+void Content::openPresetMenu()
+{
+    auto panel = std::make_unique<PopupPanel> (assets, juce::StringArray { processor.presetName() }, 0, 1,
+                                               juce::Point<int> { kPresetBox.getWidth() - 2 * (PopupPanel::border + PopupPanel::padding), 40 });
+    panel->onChoose = [this] (int) { closePopup(); }; // Nova Ride is the only preset
+    const auto b = kPresetBox.withY (kPresetBox.getBottom() + 4).withHeight (panel->getHeight());
+    presetBox.setOpen (true);
+    showPopup (std::move (panel), b, [this] { presetBox.setOpen (false); });
+}
+
+// A 4 x 4 grid of channels 1-16.
+void Content::openChannelMenu()
+{
+    juce::StringArray items;
+    for (int c = 1; c <= 16; ++c)
+        items.add (juce::String (c));
+    auto panel = std::make_unique<PopupPanel> (assets, items, processor.midiChannel() - 1, 4, juce::Point<int> { 61, 40 });
+    panel->onChoose = [this] (int i) {
+        processor.setMidiChannel (i + 1);
+        closePopup();
+        refresh();
+    };
+    const int w = panel->getWidth(), h = panel->getHeight();
+    const juce::Rectangle<int> b (kChannelBox.getCentreX() - w / 2, kChannelBox.getY() - 4 - h, w, h);
+    channelBox.setOpen (true);
+    showPopup (std::move (panel), b, [this] { channelBox.setOpen (false); });
+}
+
+void Content::openNoteMenu (int slot)
+{
+    auto panel = std::make_unique<PopupPanel> (assets, juce::StringArray { "MIDI LEARN", "RESET DEFAULT" }, -1, 1,
+                                               juce::Point<int> { 170, 34 });
+    panel->onChoose = [this, slot] (int i) {
+        closePopup();
+        if (i == 0)
+            processor.startMidiLearn (slot);
+        else
+        {
+            processor.cancelMidiLearn();
+            processor.setSlotNote (slot, kSlots[(size_t) slot].defaultNote);
+        }
+        refresh();
+    };
+    auto* box = noteBoxes[(size_t) slot].get();
+    const int w = panel->getWidth(), h = panel->getHeight();
+    const juce::Rectangle<int> b (box->getRight() - w, box->getBottom() + 3, w, h);
+    box->setOpen (true);
+    showPopup (std::move (panel), b, [box] { box->setOpen (false); });
+}
+
+void Content::paint (juce::Graphics& g)
+{
+    g.fillAll (palette::background);
+    g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
+    if (assets.background.isValid())
+        g.drawImage (assets.background, getLocalBounds().toFloat());
+    if (processor.presetError().isEmpty())
+    {
+        if (assets.photo.isValid())
+            g.drawImage (assets.photo, kPhoto.toFloat());
+    }
+    else
+        paintError (g);
+    paintLines (g);
+    paintLabels (g);
+    paintRows (g);
+}
+
+void Content::paintLines (juce::Graphics& g)
+{
+    g.setColour (palette::divider);
+    g.fillRect (338, 869, 1161 - 338, 1);
+    g.fillRect (39, 869, 58 - 39, 1);
+    g.fillRect (1188, 110, 1, 850 - 110);
+
+    // - and + under Velocity Sensitivity and Volume
+    g.setColour (palette::secondary);
+    auto minus = [&g] (float x, float y) { g.fillRect (juce::Rectangle<float> (x, y, 11.0f, 1.0f)); };
+    auto plus = [&g] (float cx, float cy) {
+        g.fillRect (juce::Rectangle<float> (cx - 5.0f, cy - 0.5f, 10.0f, 1.0f));
+        g.fillRect (juce::Rectangle<float> (cx - 0.5f, cy - 4.5f, 1.0f, 9.0f));
+    };
+    minus (120.0f, 722.0f);
+    plus (274.0f, 723.0f);
+    minus (118.0f, 962.0f);
+    plus (272.0f, 963.0f);
+}
+
+void Content::paintLabels (juce::Graphics& g)
+{
+    const auto header = [this, &g] (const char* text, float x, float y, float spacing, juce::Colour c) {
+        drawInkText (g, assets.font (kHeaderSize, spacing), text, { x, y }, c);
+    };
+    const auto small = [this, &g] (const char* text, float x, float y, float spacing) {
+        drawInkText (g, assets.font (kRowSize, spacing), text, { x, y }, palette::secondary);
+    };
+
+    header ("CYMBAL", 160.0f, 348.0f, 3.45f, palette::label);
+    header ("MIDI CHANNEL", 704.0f, 913.0f, 3.11f, palette::label);
+    header ("STICK ARTICULATION", 1201.0f, 98.0f, 3.29f, palette::label);
+    header ("MIDI NOTE", 1424.0f, 98.0f, 3.00f, palette::label);
+
+    // Knob headers; while a knob is dragged its readout replaces its header.
+    for (size_t i = 0; i < knobSpecs.size(); ++i)
+    {
+        const auto& spec = knobSpecs[i];
+        const auto f = assets.font (kHeaderSize, spec.spacing);
+        if ((int) i == draggingKnob)
+        {
+            const auto lb = inkBounds (f, spec.label);
+            juce::String readout;
+            if (auto* param = processor.parameters().getParameter (spec.paramId))
+                readout = param->getCurrentValueAsText();
+            drawInkTextCentred (g, f, readout, { spec.labelInk.x + lb.getWidth() * 0.5f, spec.labelInk.y + lb.getHeight() * 0.5f },
+                                spec.colour);
+        }
+        else
+            drawInkText (g, f, spec.label, spec.labelInk, spec.colour);
+    }
+
+    small ("BELL", 1249.0f, 720.0f, 3.33f);
+    small ("BOW", 1409.0f, 720.0f, 2.88f);
+    small ("BOW", 1249.0f, 958.0f, 2.88f);
+    small ("EDGE", 1409.0f, 958.0f, 2.83f);
+}
+
+void Content::paintRows (juce::Graphics& g)
+{
+    const auto valueFont = assets.font (kRowSize, kStickValueSpacing);
+    for (size_t s = 0; s < kSlots.size(); ++s)
+    {
+        drawInkText (g, assets.font (kRowSize, kRowLabelSpacing[s]), kSlots[s].label, { 1201.0f, kRowLabelY[s] },
+                     palette::secondary);
+        const auto box = kStickBox.withY (kRowTop[s]);
+        drawBoxOutline (g, box, palette::rowOutline);
+        const juce::String stick (kSlots[s].stick);
+        drawValue (g, valueFont, stick.isEmpty() ? emDash : stick, box.toFloat(),
+                   stick.isEmpty() ? palette::secondary : palette::label);
+    }
+}
+
+void Content::paintError (juce::Graphics& g)
+{
+    const auto area = kPhoto.toFloat().reduced (60.0f, 200.0f);
+    drawInkTextCentred (g, assets.font (kHeaderSize, 3.0f), "PRESET FAILED TO LOAD", { area.getCentreX(), area.getY() + 20.0f },
+                        palette::label);
+    g.setColour (palette::secondary);
+    g.setFont (assets.font (kRowSize));
+    g.drawFittedText (processor.presetError(), area.withTrimmedTop (60.0f).toNearestInt(), juce::Justification::centredTop, 12);
+}
+
+} // namespace cymbalis::ui
+
+// =====================================================================================
+CymbalisEditor::CymbalisEditor (CymbalisProcessor& p) : AudioProcessorEditor (&p), processorRef (p)
+{
+    using namespace cymbalis::ui;
+    content = std::make_unique<Content> (p);
+    addAndMakeVisible (*content);
+
+    // Resizable at a fixed 3:2, from 960 x 640 to 1536 x 1024 (UI_SPEC section 2).
+    setResizable (true, true);
+    setResizeLimits (960, 640, kDesignWidth, kDesignHeight);
+    if (auto* c = getConstrainer())
+        c->setFixedAspectRatio ((double) kDesignWidth / (double) kDesignHeight);
+    setLookAndFeel (&resizerLookAndFeel);
+
+    // The saved size, or the largest size that fits the screen.
+    int w = p.editorSize().x;
+    if (w < 960)
+    {
+        juce::Rectangle<int> area (0, 0, kDesignWidth, kDesignHeight);
+        if (auto* d = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+            area = d->userArea;
+        w = juce::jmin (kDesignWidth, area.getWidth() - 40, juce::roundToInt ((area.getHeight() - 80) * 1.5));
+    }
+    w = juce::jlimit (960, kDesignWidth, w);
+    setSize (w, juce::roundToInt (w * (double) kDesignHeight / (double) kDesignWidth));
+    startTimerHz (30);
+}
+
+CymbalisEditor::~CymbalisEditor()
+{
+    stopTimer();
+    setLookAndFeel (nullptr);
 }
 
 void CymbalisEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colour (0xff0d0d0d));
+    g.fillAll (cymbalis::ui::palette::background);
+}
 
-    g.setColour (juce::Colour (0xffb8965a));
-    g.setFont (juce::Font (28.0f));
-    g.drawText ("CYMBALIS", getLocalBounds().withTrimmedBottom (40), juce::Justification::centred);
+void CymbalisEditor::resized()
+{
+    // Everything is painted in design units and scaled with one transform.
+    const float scale = (float) getWidth() / (float) cymbalis::ui::kDesignWidth;
+    content->setTransform (juce::AffineTransform::scale (scale));
+    content->setBounds (0, 0, cymbalis::ui::kDesignWidth, cymbalis::ui::kDesignHeight);
+    processorRef.setEditorSize (getWidth(), getHeight());
+}
 
-    g.setColour (juce::Colour (0xffc8c8c8));
-    g.setFont (juce::Font (13.0f));
-    g.drawText ("v" JucePlugin_VersionString "  -  build skeleton",
-                getLocalBounds().withTrimmedTop (60), juce::Justification::centred);
+void CymbalisEditor::timerCallback()
+{
+    content->refresh();
+}
+
+void CymbalisEditor::ResizerLookAndFeel::drawCornerResizer (juce::Graphics& g, int w, int h, bool isMouseOver,
+                                                            bool isMouseDragging)
+{
+    using namespace cymbalis::ui;
+    g.setColour (isMouseDragging ? palette::openOutline : (isMouseOver ? palette::bronze : palette::boxOutline));
+    const float s = (float) juce::jmin (w, h);
+    for (float i = 0.3f; i < 1.0f; i += 0.3f)
+        g.drawLine ((float) w - s * i, (float) h, (float) w, (float) h - s * i, 1.0f);
 }

@@ -3,6 +3,7 @@
 //   cymbalis_render --bake BAKE.json --sequence SEQ.json [--block-size 512]
 //                   [--out OUT.f32.wav] [--out64 OUT.f64.wav] [--info INFO.json] [--quiet]
 //                   [--python-contact-truncation] [--bench]
+//                   [--fast [--sample-rate SR]]
 //
 // --python-contact-truncation selects the Python-matching contact path: a new strike cuts
 // short a contact that is still running. Without it, the live-engine behaviour applies and
@@ -12,11 +13,15 @@
 // --bench renders without writing any file and reports the time spent in Engine::process
 // alone ("render_seconds") and the real-time factor render_seconds / audio seconds.
 //
+// --fast renders with FastEngine, the real-time engine the plugin uses, at --sample-rate
+// (default: the bake's 44.1 kHz). Strikes land on round(t * SR). Its output is float.
+//
 // The sequence's strikes go to the engine block by block, each at its sample
 // offset within its block, the way a host delivers MIDI. Without --out, the
 // file goes to renders/<name>_cpp_bs<N>_<UTC timestamp>.f32.wav.
 #include "Bake.h"
 #include "Engine.h"
+#include "FastEngine.h"
 #include "Json.h"
 
 #include <algorithm>
@@ -135,8 +140,83 @@ int usage()
     std::fprintf(stderr,
                  "usage: cymbalis_render --bake BAKE.json --sequence SEQ.json [--block-size N]\n"
                  "                       [--out OUT.f32.wav] [--out64 OUT.f64.wav] [--info INFO.json] [--quiet]\n"
-                 "                       [--python-contact-truncation] [--bench]\n");
+                 "                       [--python-contact-truncation] [--bench]\n"
+                 "                       [--fast [--sample-rate SR]]\n");
     return 2;
+}
+
+// --fast: FastEngine at any sample rate. The block is split at each strike, the way the
+// plugin splits a host block at MIDI events.
+int renderFast(const std::shared_ptr<const cymbalis::BakeData>& bake, const cymbalis::json::Value& seq,
+               const std::string& name, const std::string& slotName, double sr, int blockSize, std::string out32,
+               const std::string& infoPath, bool bench, std::chrono::steady_clock::time_point t0)
+{
+    cymbalis::FastEngine engine(bake);
+    engine.prepare(sr);
+    const int slot = engine.slotIndex(slotName);
+    if (slot < 0) throw std::runtime_error("slot '" + slotName + "' is not in the bake");
+    const double position = bake->slots[size_t(slot)].position;
+
+    const int64_t total = static_cast<int64_t>(seq.at("duration_s").number() * sr);
+    struct Hit { int64_t sample; double velocity; };
+    std::vector<Hit> hits;
+    for (const auto& s : seq.at("strikes").array())
+        hits.push_back({static_cast<int64_t>(std::llround(s.array().at(0).number() * sr)), s.array().at(1).number()});
+
+    std::vector<float> L(static_cast<size_t>(total)), R(static_cast<size_t>(total));
+    size_t h = 0;
+    double renderSeconds = 0.0;
+    for (int64_t start = 0; start < total; start += blockSize)
+    {
+        const int n = static_cast<int>(std::min<int64_t>(blockSize, total - start));
+        const auto p0 = std::chrono::steady_clock::now();
+        int pos = 0;
+        for (; h < hits.size() && hits[h].sample < start + n; ++h)
+        {
+            if (hits[h].sample < start) continue;
+            const int at = static_cast<int>(hits[h].sample - start);
+            if (at > pos)
+            {
+                engine.process(L.data() + start + pos, R.data() + start + pos, at - pos);
+                pos = at;
+            }
+            engine.strike(slot, hits[h].velocity, position);
+        }
+        if (pos < n) engine.process(L.data() + start + pos, R.data() + start + pos, n - pos);
+        renderSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - p0).count();
+    }
+    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    const double audioSeconds = static_cast<double>(total) / sr;
+
+    if (!bench)
+    {
+        if (out32.empty())
+            out32 = "renders/" + name + "_fast" + std::to_string(static_cast<int>(sr)) + "_bs" +
+                    std::to_string(blockSize) + "_" + utcStamp() + ".f32.wav";
+        std::vector<double> dl(L.begin(), L.end()), dr(R.begin(), R.end());
+        writeFloatWav(out32, dl, dr, static_cast<int>(sr), 32);
+    }
+    double peak = 0.0;
+    for (size_t i = 0; i < L.size(); ++i)
+        peak = std::max(peak, double(std::max(std::fabs(L[i]), std::fabs(R[i]))));
+    char nums[768];
+    std::snprintf(nums, sizeof nums,
+                  "\"block_size\": %d, \"samples\": %lld, \"sample_rate\": %d, \"strikes\": %llu, "
+                  "\"contact_samples\": %d, \"peak\": %.9g, \"seconds\": %.2f, \"audio_seconds\": %.6f, "
+                  "\"render_seconds\": %.4f, \"realtime_factor\": %.5f",
+                  blockSize, static_cast<long long>(total), static_cast<int>(sr),
+                  static_cast<unsigned long long>(engine.strikesApplied()), engine.contactLength(), peak, seconds,
+                  audioSeconds, renderSeconds, audioSeconds > 0.0 ? renderSeconds / audioSeconds : 0.0);
+    const std::string outJson = bench ? std::string("null") : "\"" + jsonEscape(out32) + "\"";
+    const std::string info = "{\"sequence\": \"" + jsonEscape(name) + "\", \"slot\": \"" + jsonEscape(slotName) +
+                             "\", \"engine\": \"fast\", " + nums + ", \"out\": " + outJson + "}";
+    if (!infoPath.empty())
+    {
+        std::ofstream f(infoPath);
+        f << info << "\n";
+    }
+    std::printf("%s\n", info.c_str());
+    return 0;
 }
 
 } // namespace
@@ -147,6 +227,8 @@ int main(int argc, char** argv)
     int blockSize = 512;
     bool quiet = false;
     bool bench = false;
+    bool fast = false;
+    double fastRate = 0.0;
     cymbalis::EngineConfig config;
     for (int i = 1; i < argc; ++i)
     {
@@ -166,6 +248,8 @@ int main(int argc, char** argv)
             else if (a == "--quiet") quiet = true;
             else if (a == "--python-contact-truncation") config.truncateContactsLikePython = true;
             else if (a == "--bench") bench = true;
+            else if (a == "--fast") fast = true;
+            else if (a == "--sample-rate") fastRate = std::stod(next());
             else return usage();
         }
         catch (const std::exception& e)
@@ -195,6 +279,11 @@ int main(int argc, char** argv)
         if (!cymbalis::json::equal(seq.at("overrides"), bake->overrides))
             throw std::runtime_error("sequence overrides " + cymbalis::json::toString(seq.at("overrides")) +
                                      " differ from the bake's " + cymbalis::json::toString(bake->overrides));
+
+        if (fast)
+            return renderFast(bake, seq, name, slotName, fastRate > 0.0 ? fastRate : bake->sampleRate, blockSize,
+                              out32, infoPath, bench, t0);
+        if (fastRate > 0.0) throw std::runtime_error("--sample-rate needs --fast");
 
         cymbalis::Engine engine(bake, config);
         const int slot = engine.slotIndex(slotName);

@@ -17,6 +17,7 @@ option(CYMBALIS_BUILD_PLUGIN "Build the JUCE plugin (VST3/AU)" ON)
 # ---------------------------------------------------------------------------
 add_subdirectory(plugin/dsp)
 add_subdirectory(tools/cymbalis_render)
+add_subdirectory(tools/cymbalis_bench)
 
 if(NOT CYMBALIS_BUILD_PLUGIN)
     return()
@@ -63,10 +64,34 @@ juce_add_plugin(Cymbalis
     AU_MAIN_TYPE                kAudioUnitType_MusicDevice
 )
 
-target_sources(Cymbalis PRIVATE
+# ---------------------------------------------------------------------------
+# Compiled-in resources: the baked Nova Ride preset (nl_amount 0, written by
+# tools/bake_preset.py) and the UI artwork and font. Calibri Light is used when
+# resources/ui/calibril.ttf exists; Carlito Regular stands in until then.
+# ---------------------------------------------------------------------------
+set(CYMBALIS_RESOURCES
+    resources/presets/nova_ride.bake.json
+    resources/ui/CYMBALIS_Background_logo.png
+    resources/ui/Nova.png
+    resources/ui/knob.png
+    resources/ui/Carlito-Regular.ttf
+)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/ui/calibril.ttf")
+    list(APPEND CYMBALIS_RESOURCES resources/ui/calibril.ttf)
+endif()
+juce_add_binary_data(CymbalisBinaryData
+    HEADER_NAME BinaryData.h
+    NAMESPACE BinaryData
+    SOURCES ${CYMBALIS_RESOURCES}
+)
+set_target_properties(CymbalisBinaryData PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+set(CYMBALIS_PLUGIN_SOURCES
     plugin/PluginProcessor.cpp
     plugin/PluginEditor.cpp
+    plugin/ui/UiAssets.cpp
 )
+target_sources(Cymbalis PRIVATE ${CYMBALIS_PLUGIN_SOURCES})
 
 target_include_directories(Cymbalis PRIVATE plugin)
 
@@ -88,11 +113,38 @@ endif()
 
 target_link_libraries(Cymbalis
     PRIVATE
+        CymbalisBinaryData
+        cymbalis_fast
         juce::juce_audio_utils
         juce::juce_audio_processors
         juce::juce_dsp
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags
+)
+
+# ---------------------------------------------------------------------------
+# CymbalisSnapshot: renders the editor to PNG (CI uploads 1536x1024 and 960x640)
+# ---------------------------------------------------------------------------
+juce_add_console_app(CymbalisSnapshot)
+target_sources(CymbalisSnapshot PRIVATE tools/cymbalis_snapshot/main.cpp ${CYMBALIS_PLUGIN_SOURCES})
+target_include_directories(CymbalisSnapshot PRIVATE plugin)
+target_compile_definitions(CymbalisSnapshot PRIVATE
+    JucePlugin_Name="Cymbalis"
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+)
+if(APPLE)
+    target_compile_options(CymbalisSnapshot PRIVATE -Xarch_x86_64 -msse4.1)
+endif()
+target_link_libraries(CymbalisSnapshot
+    PRIVATE
+        CymbalisBinaryData
+        cymbalis_fast
+        juce::juce_audio_utils
+        juce::juce_audio_processors
+    PUBLIC
+        juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags
 )
