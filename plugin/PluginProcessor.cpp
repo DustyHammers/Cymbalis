@@ -34,7 +34,10 @@ CymbalisProcessor::CymbalisProcessor()
     blend1 = apvts.getRawParameterValue (paramBlend1);
     blend2 = apvts.getRawParameterValue (paramBlend2);
     for (size_t i = 0; i < notes.size(); ++i)
+    {
         notes[i].store (cymbalis::kSlots[i].defaultNote);
+        sticks[i].store ((int) cymbalis::kSlots[i].defaultStick);
+    }
     loadPreset();
 }
 
@@ -96,11 +99,18 @@ void CymbalisProcessor::loadPreset()
             throw cymbalis::BakeError ("the Nova Ride preset is missing from the plugin");
         bake = cymbalis::loadBakeFromText (std::string (data, (size_t) size), "Nova Ride preset");
         auto e = std::make_unique<cymbalis::FastEngine> (bake);
+        // Each row plays the bake entry of its overlay for the chosen stick.
+        auto entryFor = [this] (const char* overlay) {
+            for (size_t k = 0; k < bake->slots.size(); ++k)
+                if (bake->slots[k].overlay == overlay)
+                    return (int) k;
+            throw cymbalis::BakeError (std::string ("the preset has no ") + (*overlay != 0 ? overlay : "no-overlay (edge)")
+                                       + " articulation");
+        };
         for (size_t i = 0; i < engineSlot.size(); ++i)
         {
-            engineSlot[i] = e->slotIndex (cymbalis::kSlots[i].bakeName);
-            if (engineSlot[i] < 0)
-                throw cymbalis::BakeError (std::string ("the preset has no slot ") + cymbalis::kSlots[i].bakeName);
+            engineSlot[i][0] = entryFor (cymbalis::kSlots[i].tipOverlay);
+            engineSlot[i][1] = entryFor (cymbalis::kSlots[i].shoulderOverlay);
         }
         engine = std::move (e); // the engine clock and the strike-phase sequence start here
     }
@@ -175,7 +185,8 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
                 engine->process (left + pos, right + pos, at - pos);
                 pos = at;
             }
-            engine->strike (engineSlot[s], velocity, cymbalis::slotPosition (cymbalis::kSlots[s], b1, b2));
+            const int stick = sticks[s].load() == (int) cymbalis::Stick::shoulder ? 1 : 0;
+            engine->strike (engineSlot[s][(size_t) stick], velocity, cymbalis::slotPosition (cymbalis::kSlots[s], b1, b2));
         }
     }
     if (pos < n)
@@ -209,6 +220,13 @@ void CymbalisProcessor::setSlotNote (int slot, int note) noexcept
         notes[(size_t) slot].store (juce::jlimit (-1, 127, note));
 }
 
+void CymbalisProcessor::setSlotStick (int slot, cymbalis::Stick stick) noexcept
+{
+    if (slot >= 0 && slot < cymbalis::kNumSlots && cymbalis::hasStickChoice (cymbalis::kSlots[(size_t) slot])
+        && stick != cymbalis::Stick::none)
+        sticks[(size_t) slot].store ((int) stick);
+}
+
 void CymbalisProcessor::setEditorSize (int w, int h) noexcept
 {
     editorWidth.store (w);
@@ -216,7 +234,7 @@ void CymbalisProcessor::setEditorSize (int w, int h) noexcept
 }
 
 // The parameters, plus the session settings that are not automatable: MIDI channel,
-// note per slot, preset and editor size (UI_SPEC section 9).
+// note and stick per slot, preset and editor size (UI_SPEC section 9).
 void CymbalisProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
@@ -227,7 +245,12 @@ void CymbalisProcessor::getStateInformation (juce::MemoryBlock& destData)
     session->setAttribute ("preset", kPresetId);
     session->setAttribute ("midiChannel", channel.load());
     for (size_t i = 0; i < notes.size(); ++i)
+    {
         session->setAttribute (juce::String ("note_") + cymbalis::kSlots[i].label, notes[i].load());
+        if (cymbalis::hasStickChoice (cymbalis::kSlots[i]))
+            session->setAttribute (juce::String ("stick_") + cymbalis::kSlots[i].label,
+                                   cymbalis::stickName ((cymbalis::Stick) sticks[i].load()));
+    }
     session->setAttribute ("editorWidth", editorWidth.load());
     session->setAttribute ("editorHeight", editorHeight.load());
     copyXmlToBinary (*xml, destData);
@@ -243,8 +266,16 @@ void CymbalisProcessor::setStateInformation (const void* data, int sizeInBytes)
     {
         setMidiChannel (session->getIntAttribute ("midiChannel", cymbalis::kDefaultMidiChannel));
         for (size_t i = 0; i < notes.size(); ++i)
-            setSlotNote ((int) i, session->getIntAttribute (juce::String ("note_") + cymbalis::kSlots[i].label,
-                                                            cymbalis::kSlots[i].defaultNote));
+        {
+            const auto& slot = cymbalis::kSlots[i];
+            setSlotNote ((int) i, session->getIntAttribute (juce::String ("note_") + slot.label, slot.defaultNote));
+            if (cymbalis::hasStickChoice (slot))
+            {
+                const auto stick = session->getStringAttribute (juce::String ("stick_") + slot.label,
+                                                                cymbalis::stickName (slot.defaultStick));
+                setSlotStick ((int) i, stick == "TIP" ? cymbalis::Stick::tip : cymbalis::Stick::shoulder);
+            }
+        }
         setEditorSize (session->getIntAttribute ("editorWidth", 0), session->getIntAttribute ("editorHeight", 0));
         // "preset": Nova Ride is the only preset, so there is nothing else to restore.
         xml->removeChildElement (session, true);

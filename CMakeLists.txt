@@ -148,3 +148,31 @@ target_link_libraries(CymbalisSnapshot
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags
 )
+
+# ---------------------------------------------------------------------------
+# CymbalisUiTest (macOS): hosts the built AU or VST3 with JUCE's hosting code,
+# posts real mouse events to its editor window and checks the result in the
+# plugin's saved state. CI runs it on both formats.
+# ---------------------------------------------------------------------------
+if(APPLE)
+    juce_add_gui_app(CymbalisUiTest)
+    target_sources(CymbalisUiTest PRIVATE
+        tools/cymbalis_uitest/main.cpp
+        tools/cymbalis_uitest/MacEvents.mm
+    )
+    target_include_directories(CymbalisUiTest PRIVATE tools/cymbalis_uitest)
+    target_compile_definitions(CymbalisUiTest PRIVATE
+        JUCE_PLUGINHOST_VST3=1
+        JUCE_PLUGINHOST_AU=1
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+    )
+    target_link_libraries(CymbalisUiTest
+        PRIVATE
+            juce::juce_audio_utils
+            juce::juce_audio_processors
+        PUBLIC
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags
+    )
+endif()

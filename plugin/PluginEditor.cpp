@@ -190,6 +190,195 @@ void NoteBox::mouseUp (const juce::MouseEvent&)
 }
 
 // =====================================================================================
+StickBox::StickBox (const Assets& a) : assets (a) {}
+
+void StickBox::setStick (Stick s, bool canChoose)
+{
+    stick = s;
+    selectable = canChoose;
+    setMouseCursor (selectable ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+    repaint();
+}
+
+void StickBox::setOpen (bool shouldBeOpen)
+{
+    open = shouldBeOpen;
+    repaint();
+}
+
+void StickBox::paint (juce::Graphics& g)
+{
+    auto outline = palette::rowOutline;
+    if (selectable)
+        outline = open ? palette::openOutline : (isMouseOver() ? palette::bronze : palette::rowOutline);
+    drawBoxOutline (g, getLocalBounds(), outline);
+    const auto f = assets.font (kRowSize, kStickValueSpacing);
+    if (stick == Stick::none)
+        drawValue (g, f, emDash, getLocalBounds().toFloat(), palette::secondary);
+    else
+        drawValue (g, f, stickName (stick), getLocalBounds().toFloat(), palette::label);
+}
+
+void StickBox::mouseUp (const juce::MouseEvent& e)
+{
+    if (selectable && onClick && e.mouseWasClicked())
+        onClick();
+}
+
+// =====================================================================================
+// The scrolling part of the note menu: one row per MIDI note.
+class NoteMenu::List final : public juce::Component
+{
+public:
+    List (const Assets& a, int current) : assets (a), currentNote (current)
+    {
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    }
+
+    std::function<void (int)> onNote;
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto clip = g.getClipBounds();
+        const int first = juce::jmax (0, clip.getY() / rowHeight);
+        const int last = juce::jmin (127, clip.getBottom() / rowHeight);
+        const auto f = assets.font (kRowSize, kNoteValueSpacing);
+        for (int n = first; n <= last; ++n)
+        {
+            const auto r = rowBounds (n);
+            if (n == currentNote)
+            {
+                g.setColour (palette::openOutline);
+                g.drawRect (r.reduced (2, 1), 1);
+            }
+            else if (n == hover)
+            {
+                g.setColour (palette::bronze);
+                g.drawRect (r.reduced (2, 1), 1);
+            }
+            // Name in the value colour, number in the secondary colour, as in the note box.
+            const juce::String name = noteName (n), number (n);
+            const auto area = r.toFloat();
+            const float base = capBaseline (f, area);
+            const auto bn = inkBounds (f, name), bm = inkBounds (f, number);
+            drawInkText (g, f, name, { area.getX() + 14.0f, base + bn.getY() }, palette::label);
+            drawInkText (g, f, number, { area.getRight() - 14.0f - bm.getWidth(), base + bm.getY() }, palette::secondary);
+        }
+    }
+
+    void mouseMove (const juce::MouseEvent& e) override { setHover (e.y / rowHeight); }
+    void mouseExit (const juce::MouseEvent&) override { setHover (-1); }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        const int n = e.y / rowHeight;
+        if (e.mouseWasClicked() && n >= 0 && n <= 127 && onNote)
+            onNote (n);
+    }
+
+    juce::Rectangle<int> rowBounds (int n) const { return { 0, n * rowHeight, getWidth(), rowHeight }; }
+
+private:
+    void setHover (int h)
+    {
+        if (h == hover)
+            return;
+        if (hover >= 0) repaint (rowBounds (hover));
+        hover = h;
+        if (hover >= 0) repaint (rowBounds (hover));
+    }
+
+    const Assets& assets;
+    int currentNote;
+    int hover = -1;
+};
+
+namespace
+{
+const char* const kNoteActions[] = { "MIDI LEARN", "RESET DEFAULT", "NONE" };
+}
+
+NoteMenu::NoteMenu (const Assets& a, int currentNote) : assets (a)
+{
+    list = std::make_unique<List> (assets, currentNote);
+    list->onNote = [this] (int n) {
+        if (onNote)
+            onNote (n);
+    };
+    viewport.setScrollBarsShown (true, false);
+    viewport.setScrollBarThickness (8);
+    viewport.setSingleStepSizes (rowHeight, rowHeight);
+    viewport.getVerticalScrollBar().setColour (juce::ScrollBar::thumbColourId, palette::bronze);
+    viewport.getVerticalScrollBar().setColour (juce::ScrollBar::trackColourId, palette::popup);
+    viewport.setViewedComponent (list.get(), false);
+    addAndMakeVisible (viewport);
+    setSize (width, height());
+    const int first = juce::jlimit (0, 128 - visibleRows, (currentNote < 0 ? 60 : currentNote) - rowsAboveCurrent);
+    viewport.setViewPosition (0, first * rowHeight);
+}
+
+juce::Rectangle<int> NoteMenu::actionBounds (int i) const
+{
+    return { inset, inset + i * actionHeight, width - 2 * inset, actionHeight };
+}
+
+int NoteMenu::actionAt (juce::Point<int> p) const
+{
+    for (int i = 0; i < 3; ++i)
+        if (actionBounds (i).contains (p))
+            return i;
+    return -1;
+}
+
+void NoteMenu::resized()
+{
+    const int top = inset + 3 * actionHeight + gap;
+    viewport.setBounds (inset, top, width - 2 * inset, visibleRows * rowHeight);
+    list->setSize (viewport.getMaximumVisibleWidth(), 128 * rowHeight);
+}
+
+void NoteMenu::paint (juce::Graphics& g)
+{
+    g.fillAll (palette::popup);
+    drawBoxOutline (g, getLocalBounds(), palette::boxOutline);
+    const auto f = assets.font (kRowSize, kPopupSpacing);
+    for (int i = 0; i < 3; ++i)
+    {
+        const auto r = actionBounds (i);
+        if (i == hover)
+        {
+            g.setColour (palette::bronze);
+            g.drawRect (r.reduced (2), 1);
+        }
+        drawValue (g, f, kNoteActions[i], r.toFloat(), palette::label);
+    }
+    g.setColour (palette::divider);
+    g.fillRect (inset, inset + 3 * actionHeight + gap / 2, width - 2 * inset, 1);
+}
+
+void NoteMenu::mouseMove (const juce::MouseEvent& e)
+{
+    const int h = actionAt (e.getPosition());
+    if (h != hover)
+    {
+        hover = h;
+        repaint();
+    }
+}
+
+void NoteMenu::mouseExit (const juce::MouseEvent&)
+{
+    hover = -1;
+    repaint();
+}
+
+void NoteMenu::mouseUp (const juce::MouseEvent& e)
+{
+    const int i = actionAt (e.getPosition());
+    if (i >= 0 && onAction)
+        onAction (i);
+}
+
+// =====================================================================================
 PopupPanel::PopupPanel (const Assets& a, juce::StringArray i, int sel, int cols, juce::Point<int> size)
     : assets (a), items (std::move (i)), selected (sel), columns (juce::jmax (1, cols)), itemSize (size)
 {
@@ -323,6 +512,16 @@ Content::Content (CymbalisProcessor& p)
     }
     shownNotes.fill (-2);
 
+    for (int s = 0; s < kNumSlots; ++s)
+    {
+        auto box = std::make_unique<StickBox> (assets);
+        box->setBounds (kStickBox.withY (kRowTop[(size_t) s]));
+        box->onClick = [this, s] { openStickMenu (s); };
+        addAndMakeVisible (*box);
+        stickBoxes[(size_t) s] = std::move (box);
+    }
+    shownSticks.fill (-2);
+
     addMouseListener (this, true); // a click anywhere cancels MIDI learn
     refresh();
 }
@@ -343,6 +542,15 @@ void Content::refresh()
         {
             shownNotes[(size_t) s] = n;
             noteBoxes[(size_t) s]->setNote (n);
+        }
+    }
+    for (int s = 0; s < kNumSlots; ++s)
+    {
+        const auto stick = processor.slotStick (s);
+        if ((int) stick != shownSticks[(size_t) s])
+        {
+            shownSticks[(size_t) s] = (int) stick;
+            stickBoxes[(size_t) s]->setStick (stick, hasStickChoice (kSlots[(size_t) s]));
         }
     }
     const int ch = processor.midiChannel();
@@ -407,7 +615,7 @@ void Content::sliderDragEnded (juce::Slider*)
     draggingKnob = -1;
 }
 
-void Content::showPopup (std::unique_ptr<PopupPanel> panel, juce::Rectangle<int> bounds, std::function<void()> onClose)
+void Content::showPopup (std::unique_ptr<juce::Component> panel, juce::Rectangle<int> bounds, std::function<void()> onClose)
 {
     closePopup();
     popupClosed = std::move (onClose);
@@ -465,24 +673,47 @@ void Content::openChannelMenu()
     showPopup (std::move (panel), b, [this] { channelBox.setOpen (false); });
 }
 
+// MIDI LEARN, RESET DEFAULT, NONE and the note list, right-aligned below the note box.
 void Content::openNoteMenu (int slot)
 {
-    auto panel = std::make_unique<PopupPanel> (assets, juce::StringArray { "MIDI LEARN", "RESET DEFAULT" }, -1, 1,
-                                               juce::Point<int> { 170, 34 });
-    panel->onChoose = [this, slot] (int i) {
+    auto menu = std::make_unique<NoteMenu> (assets, processor.slotNote (slot));
+    menu->onAction = [this, slot] (int action) {
         closePopup();
-        if (i == 0)
+        if (action == NoteMenu::learn)
             processor.startMidiLearn (slot);
         else
         {
             processor.cancelMidiLearn();
-            processor.setSlotNote (slot, kSlots[(size_t) slot].defaultNote);
+            processor.setSlotNote (slot, action == NoteMenu::resetDefault ? kSlots[(size_t) slot].defaultNote : -1);
         }
         refresh();
     };
+    menu->onNote = [this, slot] (int note) {
+        closePopup();
+        processor.cancelMidiLearn();
+        processor.setSlotNote (slot, note);
+        refresh();
+    };
     auto* box = noteBoxes[(size_t) slot].get();
-    const int w = panel->getWidth(), h = panel->getHeight();
+    const int w = menu->getWidth(), h = menu->getHeight();
     const juce::Rectangle<int> b (box->getRight() - w, box->getBottom() + 3, w, h);
+    box->setOpen (true);
+    showPopup (std::move (menu), b, [box] { box->setOpen (false); });
+}
+
+// TIP / SHOULDER below the stick box.
+void Content::openStickMenu (int slot)
+{
+    const int current = processor.slotStick (slot) == Stick::shoulder ? 1 : 0;
+    auto panel = std::make_unique<PopupPanel> (assets, juce::StringArray { "TIP", "SHOULDER" }, current, 1,
+                                               juce::Point<int> { 130, 32 });
+    panel->onChoose = [this, slot] (int i) {
+        closePopup();
+        processor.setSlotStick (slot, i == 0 ? Stick::tip : Stick::shoulder);
+        refresh();
+    };
+    auto* box = stickBoxes[(size_t) slot].get();
+    const juce::Rectangle<int> b (box->getX(), box->getBottom() + 3, panel->getWidth(), panel->getHeight());
     box->setOpen (true);
     showPopup (std::move (panel), b, [box] { box->setOpen (false); });
 }
@@ -565,17 +796,9 @@ void Content::paintLabels (juce::Graphics& g)
 
 void Content::paintRows (juce::Graphics& g)
 {
-    const auto valueFont = assets.font (kRowSize, kStickValueSpacing);
     for (size_t s = 0; s < kSlots.size(); ++s)
-    {
         drawInkText (g, assets.font (kRowSize, kRowLabelSpacing[s]), kSlots[s].label, { 1201.0f, kRowLabelY[s] },
                      palette::secondary);
-        const auto box = kStickBox.withY (kRowTop[s]);
-        drawBoxOutline (g, box, palette::rowOutline);
-        const juce::String stick (kSlots[s].stick);
-        drawValue (g, valueFont, stick.isEmpty() ? emDash : stick, box.toFloat(),
-                   stick.isEmpty() ? palette::secondary : palette::label);
-    }
 }
 
 void Content::paintError (juce::Graphics& g)
@@ -594,6 +817,10 @@ void Content::paintError (juce::Graphics& g)
 CymbalisEditor::CymbalisEditor (CymbalisProcessor& p) : AudioProcessorEditor (&p), processorRef (p)
 {
     using namespace cymbalis::ui;
+    // Read the saved size first: setting the resize limits below already resizes the editor
+    // (to the minimum), and resized() records every size as the session's editor size.
+    int w = p.editorSize().x;
+
     content = std::make_unique<Content> (p);
     addAndMakeVisible (*content);
 
@@ -605,7 +832,6 @@ CymbalisEditor::CymbalisEditor (CymbalisProcessor& p) : AudioProcessorEditor (&p
     setLookAndFeel (&resizerLookAndFeel);
 
     // The saved size, or the largest size that fits the screen.
-    int w = p.editorSize().x;
     if (w < 960)
     {
         juce::Rectangle<int> area (0, 0, kDesignWidth, kDesignHeight);
@@ -614,6 +840,7 @@ CymbalisEditor::CymbalisEditor (CymbalisProcessor& p) : AudioProcessorEditor (&p
         w = juce::jmin (kDesignWidth, area.getWidth() - 40, juce::roundToInt ((area.getHeight() - 80) * 1.5));
     }
     w = juce::jlimit (960, kDesignWidth, w);
+    sizeIsSet = true;
     setSize (w, juce::roundToInt (w * (double) kDesignHeight / (double) kDesignWidth));
     startTimerHz (30);
 }
@@ -631,11 +858,15 @@ void CymbalisEditor::paint (juce::Graphics& g)
 
 void CymbalisEditor::resized()
 {
-    // Everything is painted in design units and scaled with one transform.
-    const float scale = (float) getWidth() / (float) cymbalis::ui::kDesignWidth;
-    content->setTransform (juce::AffineTransform::scale (scale));
-    content->setBounds (0, 0, cymbalis::ui::kDesignWidth, cymbalis::ui::kDesignHeight);
-    processorRef.setEditorSize (getWidth(), getHeight());
+    // Everything is painted in design units and scaled with one transform. If a host gives
+    // the editor a size that is not 3:2, the whole design still fits, centred.
+    using namespace cymbalis::ui;
+    const float scale = juce::jmin ((float) getWidth() / (float) kDesignWidth, (float) getHeight() / (float) kDesignHeight);
+    content->setTransform (juce::AffineTransform::scale (scale).translated (
+        ((float) getWidth() - scale * (float) kDesignWidth) * 0.5f, ((float) getHeight() - scale * (float) kDesignHeight) * 0.5f));
+    content->setBounds (0, 0, kDesignWidth, kDesignHeight);
+    if (sizeIsSet)
+        processorRef.setEditorSize (getWidth(), getHeight());
 }
 
 void CymbalisEditor::timerCallback()

@@ -8,6 +8,7 @@ Every push to `main` runs **Actions → Build macOS (VST3 + AU)**. It produces:
 - JUCE 7.0.12, built with Xcode 15
 - The Intel slice capped at SSE4.1, and the build fails if any AVX instructions appear
 - Validation with pluginval (VST3) and auval (AU, native and under Rosetta)
+- An editor mouse test in an AU and a VST3 host (`tools/cymbalis_uitest`): real mouse events change the MIDI channel, notes and a stick, checked in the plugin's saved state
 - Ad-hoc code signing
 
 The run's **Artifacts** section has one artifact, `Cymbalis-macOS-<shortsha>`, with:
@@ -19,7 +20,7 @@ The job summary also shows the CPU cost of the engine on the runner (`cymbalis_b
 
 ## Playing it
 
-The plugin is an instrument. Note-ons on MIDI channel 16 (selectable in the editor) strike the slots: BELL C3 (60), BELL2 C#3 (61), BOW D3 (62), BOW2 D#3 (63); EDGE has no note until one is assigned. Note-off and sustain are ignored. `docs/UI_SPEC.md` describes the controls.
+The plugin is an instrument. Note-ons on MIDI channel 16 (selectable in the editor) strike the slots: BELL C3 (60), BELL2 C#3 (61), BOW D3 (62), BOW2 D#3 (63); EDGE has no note until one is assigned. Note-off and sustain are ignored. Click a note box to pick a note from the list, learn one from MIDI, reset it or unassign it; click a stick box to choose TIP or SHOULDER. `docs/UI_SPEC.md` describes the controls.
 
 ## The compiled-in preset
 

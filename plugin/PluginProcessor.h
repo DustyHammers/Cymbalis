@@ -56,6 +56,10 @@ public:
     int slotNote (int slot) const noexcept { return notes[(size_t) slot].load(); }
     void setSlotNote (int slot, int note) noexcept;
 
+    // Stick choice of a slot (TIP or SHOULDER); Stick::none for EDGE. Not a parameter.
+    cymbalis::Stick slotStick (int slot) const noexcept { return (cymbalis::Stick) sticks[(size_t) slot].load(); }
+    void setSlotStick (int slot, cymbalis::Stick stick) noexcept;
+
     // MIDI learn: the next note-on on the selected channel is assigned to this slot.
     void startMidiLearn (int slot) noexcept { learnSlot.store (slot); }
     void cancelMidiLearn() noexcept { learnSlot.store (-1); }
@@ -82,11 +86,13 @@ private:
 
     std::shared_ptr<const cymbalis::BakeData> bake;
     std::unique_ptr<cymbalis::FastEngine> engine; // null when the preset failed to load
-    std::array<int, cymbalis::kNumSlots> engineSlot {}; // bake slot of each editor slot
+    // Bake entry (overlay) of each slot for TIP [0] and SHOULDER [1].
+    std::array<std::array<int, 2>, cymbalis::kNumSlots> engineSlot {};
     juce::String loadError;
 
     std::atomic<int> channel { cymbalis::kDefaultMidiChannel };
     std::array<std::atomic<int>, cymbalis::kNumSlots> notes;
+    std::array<std::atomic<int>, cymbalis::kNumSlots> sticks; // cymbalis::Stick
     std::atomic<int> learnSlot { -1 };
     std::atomic<int> editorWidth { 0 }, editorHeight { 0 };
 

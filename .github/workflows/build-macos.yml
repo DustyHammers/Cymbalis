@@ -63,7 +63,7 @@ jobs:
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
-        run: cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU CymbalisSnapshot cymbalis_bench --parallel
+        run: cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU CymbalisSnapshot CymbalisUiTest cymbalis_bench --parallel
 
       # CPU cost of the real-time engine on this runner (Apple Silicon), every slot playing.
       # Printed to the log and the job summary only; nothing is uploaded.
@@ -134,6 +134,19 @@ jobs:
           else
             echo "Rosetta not installed on this runner; skipping x86_64 auval"
           fi
+
+      # Real mouse events through the AU and VST3 wrappers: change the MIDI channel, the slot
+      # notes (drag, menu, note list) and a stick in the editor, and check the plugin's saved
+      # state (tools/cymbalis_uitest).
+      - name: Editor mouse test (AU and VST3)
+        timeout-minutes: 5
+        run: |
+          UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
+          STEPS="channel drag reset none list stick"
+          echo "--- VST3 ---"
+          "$UITEST" "$PWD/$VST3" $STEPS
+          echo "--- AU ---"
+          "$UITEST" AU $STEPS
 
       - name: Package
         run: |
