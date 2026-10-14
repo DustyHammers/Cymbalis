@@ -21,7 +21,8 @@
 //     accumulator time constants) are in seconds and do not depend on the rate.
 //
 // The strike itself (velocity tables, position weight, phases, coupling, contact,
-// accumulators) is computed in double exactly as in Engine. The strike position is an
+// accumulators) is computed in double exactly as in Engine. Each strike is scaled by its
+// slot's calibration and, when the bake has one, its level trim (SlotData::levelTrim). The strike position is an
 // argument, so the plugin's blend knobs can move it (docs/UI_SPEC.md section 9).
 //
 // Thread use: the constructor and prepare() allocate and must not run on the audio

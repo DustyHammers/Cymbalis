@@ -18,6 +18,7 @@ option(CYMBALIS_BUILD_PLUGIN "Build the JUCE plugin (VST3/AU)" ON)
 add_subdirectory(plugin/dsp)
 add_subdirectory(tools/cymbalis_render)
 add_subdirectory(tools/cymbalis_bench)
+add_subdirectory(tools/cymbalis_trims)
 
 if(NOT CYMBALIS_BUILD_PLUGIN)
     return()

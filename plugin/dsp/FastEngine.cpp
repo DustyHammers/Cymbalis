@@ -754,7 +754,8 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
             scratchPosW_[i] = scratchPosW_[i] * g;
     }
 
-    const double calib = s.calibScalar;
+    // The slot's calibration level and its level trim scale its own strike.
+    const double calib = s.calibScalar * s.levelTrim;
     Contact* contact = nullptr;
     if (p.contactPermode)
     {
@@ -870,7 +871,9 @@ void FastEngine::startFreePhase() noexcept
 {
     const BakeData& b = *bake_;
     const EngineParams& p = b.params;
-    const double threshold = b.ampSkipThreshold * (lastSlot_ >= 0 ? b.slots[size_t(lastSlot_)].calibScalar : 1.0);
+    const double threshold =
+        b.ampSkipThreshold *
+        (lastSlot_ >= 0 ? b.slots[size_t(lastSlot_)].calibScalar * b.slots[size_t(lastSlot_)].levelTrim : 1.0);
 
     segMfOn_ = !b.mfBandpass.empty() && std::fabs(mfScaleNow_ - 1.0) > 1e-6;
     segRampOn_ = p.bandEnvOnset && beoHas_ && beoEf_ > 0.1;

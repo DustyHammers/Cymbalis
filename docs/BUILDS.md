@@ -24,10 +24,18 @@ The plugin is an instrument. Note-ons on MIDI channel 16 (selectable in the edit
 
 ## The compiled-in preset
 
-The plugin plays `resources/presets/nova_ride.bake.json`, the Nova Ride preset baked from the Python engine with NL off. After a change to the Python engine or the preset, regenerate it:
+The plugin plays `resources/presets/nova_ride.bake.json`, the Nova Ride preset baked from the Python engine's data with NL off. After a change to the preset data, regenerate it:
 
 ```
 python tools/bake_preset.py --overrides '{"nl_amount": 0.0}' --out resources/presets/nova_ride.bake.json
+```
+
+The bake also holds each slot's level trim, in `slots[].level_trim.gain_db`. The plugin uses only that number; edit it to adjust a slot's level by ear. Re-baking drops the trims. To measure them again with the plugin's engine (the gain that gives a velocity-0.9 hit at the slot's base position the same 1-second RMS as one on BOW (tip)) and store them:
+
+```
+cmake --build build --target cymbalis_trims
+build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/nova_ride.bake.json --json trims.json
+python tools/set_level_trims.py resources/presets/nova_ride.bake.json trims.json
 ```
 
 ## Installing a CI build

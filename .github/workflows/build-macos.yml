@@ -63,7 +63,7 @@ jobs:
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
-        run: cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU CymbalisSnapshot CymbalisUiTest cymbalis_bench --parallel
+        run: cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU CymbalisSnapshot CymbalisUiTest cymbalis_bench cymbalis_trims --parallel
 
       # CPU cost of the real-time engine on this runner (Apple Silicon), every slot playing.
       # Printed to the log and the job summary only; nothing is uploaded.

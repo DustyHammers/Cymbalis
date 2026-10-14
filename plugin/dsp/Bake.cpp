@@ -412,6 +412,16 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
             slot.overlay = s.at("overlay").isNull() ? std::string() : s.at("overlay").string();
             slot.position = s.at("position").number();
             slot.calibScalar = s.at("calib_scalar").number();
+            // Optional (plugin bake): the level trim of this slot in dB, measured with
+            // tools/cymbalis_trims and stored by tools/set_level_trims.py; editable by hand.
+            if (const auto* trim = s.find("level_trim"); trim != nullptr && !trim->isNull())
+            {
+                const double db = trim->at("gain_db").number();
+                if (!std::isfinite(db) || std::fabs(db) > 60.0)
+                    throw BakeError("slot " + slot.name + ": level_trim.gain_db must be a finite value within 60 dB");
+                slot.levelTrim = std::pow(10.0, db / 20.0);
+                rep.push_back("level trim   slot " + slot.name + ": " + fmt("%+.2f dB", db));
+            }
             slot.bowVp = readVelocityTable(s.at("bow_vp"), "slot " + slot.name + ".bow_vp", n, rep);
             if (!s.at("bell_vp").isNull())
             {
