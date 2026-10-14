@@ -132,5 +132,7 @@ struct BakeData
 };
 
 std::shared_ptr<const BakeData> loadBake(const std::string& path);
+// The same from a bake held in memory (the plugin's compiled-in preset). `name` labels errors.
+std::shared_ptr<const BakeData> loadBakeFromText(const std::string& text, const std::string& name);
 
 } // namespace cymbalis
