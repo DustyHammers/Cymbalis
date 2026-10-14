@@ -134,7 +134,6 @@ std::vector<std::string> unsupportedMechanisms(const json::Value& e)
     if (eff(e, "rate_jitter") > 0.0) out.push_back("wander rate jitter (draws extra random numbers)");
     if (eff(e, "lf_sens_depth") > 0.0 && eff(e, "lf_max_scale") <= 1.0)
         out.push_back("LF amplitude scaling (lf_max_scale <= 1)");
-    if (eff(e, "mf_sens_depth") > 0.0) out.push_back("MF accumulator (mf_sens_depth > 0, stage 7)");
     if (e.at("band_env_onset").boolean() && eff(e, "band_env_birth_frac") != 1.0)
         out.push_back("edge onset ramp (band_env_birth_frac != 1, stage 8)");
     if (e.at("bow_onset_gains_active").boolean()) out.push_back("onset band gains (stage 9)");
@@ -377,6 +376,19 @@ std::shared_ptr<const BakeData> loadBake(const std::string& path)
         ep.lfWanderRateBoost = eff(e0, "lf_wander_rate_boost");
         ep.velLenTilt = eff(e0, "vel_len_tilt");
         ep.velLenTiltRef = eff(e0, "vel_len_tilt_ref");
+        ep.mfDepth = eff(e0, "mf_sens_depth");
+        ep.mfTau = eff(e0, "mf_sens_tau");
+        ep.mfMin = eff(e0, "mf_min_scale");
+        ep.mfMax = eff(e0, "mf_max_scale");
+        ep.mfWEdge = eff(e0, "mf_edge_weight");
+        ep.mfWBow = eff(e0, "mf_bow_weight");
+        ep.mfWBell = eff(e0, "mf_bell_weight");
+        if (ep.mfDepth > 0.0)
+        {
+            if (sh.at("mf_bandpass").isNull())
+                throw BakeError("mf_sens_depth > 0 but the bake has no mf_bandpass");
+            b.mfBandpass = readArray(sh.at("mf_bandpass"), "shared.mf_bandpass (used)", {n}, rep);
+        }
         rep.push_back("params ok    engine-wide parameters identical across slots");
 
         // ---- slots

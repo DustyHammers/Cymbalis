@@ -52,6 +52,10 @@ struct EngineParams
 
     // Stage 6: velocity-dependent T60 (lines 1127-1130, 861-862)
     double velLenTilt = 0.0, velLenTiltRef = 0.787;
+
+    // Stage 7: MF accumulator (render() lines 674-688, free ring lines 917-919)
+    double mfDepth = 0.0, mfTau = 5.0, mfMin = 0.3, mfMax = 1.0;
+    double mfWEdge = 1.0, mfWBow = 0.5, mfWBell = 0.1;
 };
 
 struct SlotData
@@ -90,6 +94,9 @@ struct BakeData
 
     // Per-sample mode step of the contact phase: exp(1j*2pi*f/SR) * exp(-ln1000/(T60*SR)).
     std::vector<double> modeStepRe, modeStepIm;
+
+    // MF band-pass weight per mode (lines 399-405); empty when the MF accumulator is off.
+    std::vector<double> mfBandpass;
 
     EngineParams params;
 

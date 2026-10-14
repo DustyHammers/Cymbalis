@@ -1,0 +1,22 @@
+{
+  "format_version": 1,
+  "name": "bell2_s7_mf_burst",
+  "slot": "BELL2",
+  "stage": "7",
+  "description": "BELL2: MF accumulator (stage 7). Five strikes 0.25 s apart, then one more after 1.25 s: from the second strike on, the MF scale suppresses every ringing mode for the whole segment.",
+  "duration_s": 4.5,
+  "strikes": [
+    [0.25, 0.4],
+    [0.5, 0.6],
+    [0.75, 0.8],
+    [1.0, 0.6],
+    [1.25, 0.9],
+    [2.5, 0.7]
+  ],
+  "overrides": {
+    "band_env_birth_frac": 1.0,
+    "bow_onset_band_gains": null,
+    "nl_amount": 0.0
+  },
+  "cpp_block_sizes": [512]
+}

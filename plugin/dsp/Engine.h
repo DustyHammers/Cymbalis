@@ -8,7 +8,8 @@
 //   4  LFO wander (phase modulation in the free ring, absolute engine time)
 //   5  LF accumulator -> wander rate
 //   6  vel_len_tilt: T60 / wash_damp inside the segment, undamped T60 for the state advance
-// Not implemented: everything after stage 6. Bakes that need it are rejected by loadBake().
+//   7  MF accumulator: band-pass amplitude scale on every ringing mode
+// Not implemented: everything after stage 7. Bakes that need it are rejected by loadBake().
 // NL (stage 10) is off in the plugin.
 //
 // Live-engine decisions (docs/PORT_MAP.md):
@@ -127,10 +128,13 @@ private:
     double wanderRateScale_ = 1.0; // _wander_rate_scale
     double lfS_ = 0.0, lfTLast_ = 0.0, lfScaleNow_ = 1.0; // _lf_S, _lf_t_last, _lf_scale_now
     double washDamp_ = 1.0;                              // _wash_damp
+    double mfS_ = 0.0, mfTLast_ = 0.0, mfScaleNow_ = 1.0; // _mf_S, _mf_t_last, _mf_scale_now
 
     // Free-phase constants per mode, fixed for the segment: -(D/lr) and (2*pi)*lr of the wander,
     // and the T60 of the decay (T60 / wash_damp).
     std::vector<double> segNegDlr_, segWlr_, segT60_;
+    bool segMfOn_ = false;     // the MF scale applies in this segment
+    std::vector<double> segMf_; // 1 + (mf_scale_now - 1) * mf_bandpass
 
     // Per-sample values shared by all modes, for one chunk of the free phase.
     static constexpr int kChunk = 256;

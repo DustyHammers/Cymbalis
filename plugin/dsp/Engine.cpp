@@ -46,6 +46,7 @@ Engine::Engine(std::shared_ptr<const BakeData> bake, EngineConfig config)
     segNegDlr_.assign(n, 0.0);
     segWlr_.assign(n, 0.0);
     segT60_.assign(n, 1.0);
+    segMf_.assign(n, 1.0);
     segA_.assign(n, 0.0);
     segPhi_.assign(n, 0.0);
     active_.reserve(n);
@@ -199,6 +200,8 @@ void Engine::renderContactSample(double* left, double* right)
 //   wander = -(D/lr) * (cos((2*pi*lr) * t_abs + lp) - cos(lp))           (line 867)
 //   wave   = A * decay * cos((2*pi*f) * t_local + phi_0 + wander)        (line 868)
 //   decay  = exp(-LOG1000 * t_local / t60), t60 = T60 / wash_damp         (lines 861-863)
+//   then the output factors in Python's order, each a separate `wave *=`:
+//   MF scale (lines 917-919)
 // t_abs = (segment start + n_contact/SR) + t_local is absolute engine time. Modes with
 // D == 0 skip the wander, which would be exactly +-0.
 void Engine::renderFree(double* left, double* right, int n)
@@ -232,27 +235,20 @@ void Engine::renderFree(double* left, double* right, int n)
             const double pl = pickL[k];
             const double pr = pickR[k];
             const double negDlr = segNegDlr_[k];
-            if (negDlr == 0.0)
+            const double wlr = segWlr_[k], lp = lfoPhase[k], cosLp = cosLp_[k];
+            const bool mfOn = segMfOn_;
+            const double mf = segMf_[k];
+            for (int j = 0; j < m; ++j)
             {
-                for (int j = 0; j < m; ++j)
-                {
-                    const double decay = std::exp(chunkNlt_[j] / T);
-                    const double wave = (A * decay) * std::cos((w * chunkTl_[j]) + phi0);
-                    L[j] += pl * wave;
-                    R[j] += pr * wave;
-                }
-            }
-            else
-            {
-                const double wlr = segWlr_[k], lp = lfoPhase[k], cosLp = cosLp_[k];
-                for (int j = 0; j < m; ++j)
-                {
-                    const double decay = std::exp(chunkNlt_[j] / T);
-                    const double wander = negDlr * (std::cos((wlr * chunkTabs_[j]) + lp) - cosLp);
-                    const double wave = (A * decay) * std::cos(((w * chunkTl_[j]) + phi0) + wander);
-                    L[j] += pl * wave;
-                    R[j] += pr * wave;
-                }
+                const double decay = std::exp(chunkNlt_[j] / T);
+                double arg = (w * chunkTl_[j]) + phi0;
+                if (negDlr != 0.0)
+                    arg = arg + negDlr * (std::cos((wlr * chunkTabs_[j]) + lp) - cosLp);
+                double wave = (A * decay) * std::cos(arg);
+                if (mfOn)
+                    wave = wave * mf;
+                L[j] += pl * wave;
+                R[j] += pr * wave;
             }
         }
     }
@@ -444,6 +440,20 @@ void Engine::applyStrike(int slotIndex, double velocity, int64_t strikeSample)
             wanderRateScale_ = std::max(wanderRateScale_, 1.0 + lfS_ * p.lfWanderRateBoost);
     }
 
+    // render() lines 674-688: MF accumulator. The scale for this segment comes from S before
+    // this strike is added; same t = 0 quirk as the LF accumulator.
+    if (p.mfDepth > 0.0)
+    {
+        const double dt = mfTLast_ > 0.0 ? strikeTime - mfTLast_ : 0.0;
+        mfS_ *= std::exp(-dt / p.mfTau);
+        mfScaleNow_ = p.mfMax > 1.0 ? std::min(1.0 + mfS_ * p.mfDepth, p.mfMax)
+                                    : std::max(1.0 - mfS_ * p.mfDepth, p.mfMin);
+        const double rawPos = s.position;
+        const double w = rawPos <= 0.25 ? p.mfWEdge : (rawPos >= 0.75 ? p.mfWBell : p.mfWBow);
+        mfS_ += velocity * w;
+        mfTLast_ = strikeTime;
+    }
+
     // A new segment starts at the strike (render() lines 606-613).
     segStartTime_ = strikeTime;
     segContactSamples_ = 0;
@@ -472,7 +482,8 @@ void Engine::startFreePhase()
             active_.push_back(i);
     }
 
-    // Decay T60 and wander constants for this segment (lines 861-866).
+    // Decay T60, wander and MF constants for this segment (lines 861-866, 917-918).
+    segMfOn_ = !bake_->mfBandpass.empty() && std::fabs(mfScaleNow_ - 1.0) > 1e-6;
     const double* t60 = bake_->t60S.data();
     const double* drift = bake_->driftHz.data();
     const double* rate = bake_->lfoRateHz.data();
@@ -481,6 +492,8 @@ void Engine::startFreePhase()
     {
         const size_t k = size_t(i);
         segT60_[k] = washDamp_ == 1.0 ? t60[k] : t60[k] / std::max(washDamp_, 0.1);
+        if (segMfOn_)
+            segMf_[k] = 1.0 + (mfScaleNow_ - 1.0) * bake_->mfBandpass[k];
         const double D = drift[k] * depth * wanderScale_;
         const double lr = rate[k] * wanderRateScale_;
         segNegDlr_[k] = -(D / lr);
