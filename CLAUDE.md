@@ -1,17 +1,18 @@
 # Cymbalis — rules for Claude Code
 
-Cymbalis is a physically modelled cymbal instrument (macOS VST3 + AU, JUCE 7.0.12). The Python engine V19 in `prototype/` is the reference; the plugin's C++ engine must reproduce it.
+Cymbalis is a physically modelled cymbal instrument (macOS VST3 + AU, JUCE 7.0.12). **The plugin is the reference.** Kris tunes the sound by ear, playing the plugin. The Python engine V19 in `prototype/` was the basis for the C++ engine and is the source of the preset data (bake); its audio output is no longer a target.
 
 ## Standing rules
 
 - Never add or remove plugin parameters without explicit instruction from Kris.
-- Never modify `prototype/engine/*.py` or anything under `presets/`. These are MD5-locked baselines (`docs/BASELINE_MANIFEST.md`). Python-side experiments use `load_engine(..., overrides=...)` only.
+- Never modify `prototype/engine/*.py` or anything under `presets/`. They are the locked source data (`docs/BASELINE_MANIFEST.md`). Sound changes go into the plugin's engine and its baked preset data (`resources/presets/`).
 - One change per task. Do not bundle unrelated changes.
 - SPEAR `.txt` files never enter this repo.
-- The C++ engine reproduces Python V19 as it is, including its known bugs. Do not "fix" behaviour while porting; report anything that looks wrong.
-- When a C++ vs Python comparison fails, diagnose and report. Never tune C++ values to make numbers match.
+- **No regression or A/B renders.** Do not compare against Python, do not render audio for checking, and put no audio in CI or pull requests, unless Kris asks. Verify changes with the build, pluginval/auval and the CPU benchmark. Kris judges the sound by ear.
+- When a new preset needs engine features the C++ engine doesn't have yet, port them from the Python engine as a guide; no render comparison.
+- Real-time requirement: the engine must stay at least 3× faster than real time (`cymbalis_bench`).
+- Report anything in the engine that looks wrong; don't change sound behaviour unless the task asks for it.
 - No UI code beyond what the task's approved spec describes.
-- Use unique timestamped filenames for every audio render.
 - Read the relevant source and docs before changing anything; do not guess.
 - Work on a branch and open a pull request for each task; do not push to `main` directly.
 - There is no `README.md` for now. Do not create or edit one unless Kris asks. Put documentation in `docs/` instead.
@@ -28,7 +29,7 @@ Cymbalis is a physically modelled cymbal instrument (macOS VST3 + AU, JUCE 7.0.1
 | `docs/history/` | Engine session summaries (background reading) |
 | `docs/BASELINE_MANIFEST.md` | Locked MD5s and the baseline render check |
 | `docs/PORT_MAP.md` | Python engine map, porting stages, live-engine decisions |
-| `docs/AB_PIPELINE.md` | How to run the Python vs C++ comparison |
+| `docs/AB_PIPELINE.md` | Retired Python vs C++ comparison (don't run unless Kris asks) |
 | `docs/BUILDS.md` | CI builds, installing a build, plugin identity |
 | `docs/UI_SPEC.md` | Approved UI spec, slots, the four parameters |
 
