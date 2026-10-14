@@ -135,7 +135,6 @@ std::vector<std::string> unsupportedMechanisms(const json::Value& e)
     if (eff(e, "lf_sens_depth") > 0.0 && eff(e, "lf_max_scale") <= 1.0)
         out.push_back("LF amplitude scaling (lf_max_scale <= 1)");
     if (eff(e, "mf_sens_depth") > 0.0) out.push_back("MF accumulator (mf_sens_depth > 0, stage 7)");
-    if (eff(e, "vel_len_tilt") != 0.0) out.push_back("velocity-dependent T60 (vel_len_tilt != 0, stage 6)");
     if (e.at("band_env_onset").boolean() && eff(e, "band_env_birth_frac") != 1.0)
         out.push_back("edge onset ramp (band_env_birth_frac != 1, stage 8)");
     if (e.at("bow_onset_gains_active").boolean()) out.push_back("onset band gains (stage 9)");
@@ -376,6 +375,8 @@ std::shared_ptr<const BakeData> loadBake(const std::string& path)
         ep.lfWBow = eff(e0, "lf_bow_weight");
         ep.lfWBell = eff(e0, "lf_bell_weight");
         ep.lfWanderRateBoost = eff(e0, "lf_wander_rate_boost");
+        ep.velLenTilt = eff(e0, "vel_len_tilt");
+        ep.velLenTiltRef = eff(e0, "vel_len_tilt_ref");
         rep.push_back("params ok    engine-wide parameters identical across slots");
 
         // ---- slots

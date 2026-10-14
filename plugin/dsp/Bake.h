@@ -49,6 +49,9 @@ struct EngineParams
     double lfDepth = 0.0, lfTau = 5.0, lfMin = 0.3, lfMax = 1.0;
     double lfWEdge = 1.0, lfWBow = 0.5, lfWBell = 0.1;
     double lfWanderRateBoost = 0.0;
+
+    // Stage 6: velocity-dependent T60 (lines 1127-1130, 861-862)
+    double velLenTilt = 0.0, velLenTiltRef = 0.787;
 };
 
 struct SlotData

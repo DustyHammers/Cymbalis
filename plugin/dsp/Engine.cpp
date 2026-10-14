@@ -45,6 +45,7 @@ Engine::Engine(std::shared_ptr<const BakeData> bake, EngineConfig config)
     }
     segNegDlr_.assign(n, 0.0);
     segWlr_.assign(n, 0.0);
+    segT60_.assign(n, 1.0);
     segA_.assign(n, 0.0);
     segPhi_.assign(n, 0.0);
     active_.reserve(n);
@@ -197,13 +198,13 @@ void Engine::renderContactSample(double* left, double* right)
 // free phase:
 //   wander = -(D/lr) * (cos((2*pi*lr) * t_abs + lp) - cos(lp))           (line 867)
 //   wave   = A * decay * cos((2*pi*f) * t_local + phi_0 + wander)        (line 868)
+//   decay  = exp(-LOG1000 * t_local / t60), t60 = T60 / wash_damp         (lines 861-863)
 // t_abs = (segment start + n_contact/SR) + t_local is absolute engine time. Modes with
 // D == 0 skip the wander, which would be exactly +-0.
 void Engine::renderFree(double* left, double* right, int n)
 {
     std::fill(left, left + n, 0.0);
     std::fill(right, right + n, 0.0);
-    const double* t60 = bake_->t60S.data();
     const double* pickL = bake_->pickL.data();
     const double* pickR = bake_->pickR.data();
     const double* lfoPhase = bake_->lfoPhase.data();
@@ -227,7 +228,7 @@ void Engine::renderFree(double* left, double* right, int n)
             const double A = segA_[k];
             const double phi0 = segPhi_[k];
             const double w = omega_[k];
-            const double T = t60[k];
+            const double T = segT60_[k];
             const double pl = pickL[k];
             const double pr = pickR[k];
             const double negDlr = segNegDlr_[k];
@@ -417,6 +418,11 @@ void Engine::applyStrike(int slotIndex, double velocity, int64_t strikeSample)
     wanderRateScale_ = 1.0 + velocity * edgeFrac * p.edgeWanderRate;
     wanderRateScale_ = std::max(wanderRateScale_, 0.1);
 
+    // Lines 1127-1130: velocity-dependent T60 for the free ring of the coming segment. It applies
+    // to every ringing mode; the state advance keeps the undamped T60, so the level jumps at the
+    // next strike (PORT_MAP f.2).
+    washDamp_ = std::max(0.3, 1.0 + p.velLenTilt * (velocity - p.velLenTiltRef));
+
     ++strikesApplied_;
     lastSlot_ = slotIndex;
     const double strikeTime = static_cast<double>(strikeSample) / sr_; // ev.time
@@ -466,13 +472,15 @@ void Engine::startFreePhase()
             active_.push_back(i);
     }
 
-    // Wander constants for this segment (lines 864-866).
+    // Decay T60 and wander constants for this segment (lines 861-866).
+    const double* t60 = bake_->t60S.data();
     const double* drift = bake_->driftHz.data();
     const double* rate = bake_->lfoRateHz.data();
     const double depth = bake_->params.wanderDepth;
     for (const int i : active_)
     {
         const size_t k = size_t(i);
+        segT60_[k] = washDamp_ == 1.0 ? t60[k] : t60[k] / std::max(washDamp_, 0.1);
         const double D = drift[k] * depth * wanderScale_;
         const double lr = rate[k] * wanderRateScale_;
         segNegDlr_[k] = -(D / lr);

@@ -7,7 +7,8 @@
 //   3  per-mode Gaussian contact
 //   4  LFO wander (phase modulation in the free ring, absolute engine time)
 //   5  LF accumulator -> wander rate
-// Not implemented: everything after stage 5. Bakes that need it are rejected by loadBake().
+//   6  vel_len_tilt: T60 / wash_damp inside the segment, undamped T60 for the state advance
+// Not implemented: everything after stage 6. Bakes that need it are rejected by loadBake().
 // NL (stage 10) is off in the plugin.
 //
 // Live-engine decisions (docs/PORT_MAP.md):
@@ -125,9 +126,11 @@ private:
     double wanderScale_ = 1.0;     // _wander_scale
     double wanderRateScale_ = 1.0; // _wander_rate_scale
     double lfS_ = 0.0, lfTLast_ = 0.0, lfScaleNow_ = 1.0; // _lf_S, _lf_t_last, _lf_scale_now
+    double washDamp_ = 1.0;                              // _wash_damp
 
-    // Free-phase constants per mode, fixed for the segment: -(D/lr) and (2*pi)*lr of the wander.
-    std::vector<double> segNegDlr_, segWlr_;
+    // Free-phase constants per mode, fixed for the segment: -(D/lr) and (2*pi)*lr of the wander,
+    // and the T60 of the decay (T60 / wash_damp).
+    std::vector<double> segNegDlr_, segWlr_, segT60_;
 
     // Per-sample values shared by all modes, for one chunk of the free phase.
     static constexpr int kChunk = 256;
