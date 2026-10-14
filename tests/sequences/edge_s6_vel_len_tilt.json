@@ -1,0 +1,22 @@
+{
+  "format_version": 1,
+  "name": "edge_s6_vel_len_tilt",
+  "slot": "EDGE",
+  "stage": "6",
+  "description": "EDGE: vel_len_tilt (stage 6). Velocities 0.3-1.0 with gaps of 0.25-2.0 s: the free ring decays with T60/wash_damp but the state advances with T60, so every ringing mode jumps at the next strike (PORT_MAP f.2).",
+  "duration_s": 6.0,
+  "strikes": [
+    [0.25, 0.3],
+    [1.0, 0.9],
+    [1.25, 0.5],
+    [3.25, 0.3],
+    [4.0, 1.0]
+  ],
+  "overrides": {
+    "mf_sens_depth": 0.0,
+    "band_env_birth_frac": 1.0,
+    "bow_onset_band_gains": null,
+    "nl_amount": 0.0
+  },
+  "cpp_block_sizes": [512]
+}

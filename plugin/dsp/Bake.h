@@ -30,6 +30,39 @@ struct VelocityTable
     int numVel = 0;
 };
 
+// Engine-wide effective parameters: the base preset plus the bake's overrides. They are
+// the same for every slot (loadBake checks this), so the engine stores them once.
+struct EngineParams
+{
+    // Stage 3: per-mode contact (_apply_strike lines 1067-1093)
+    bool contactPermode = false; // tip_contact_ms > 0 and permode_contact
+    double tipTau0 = 3.0, tipTauMax = 10.0;
+    double shldTau0 = 10.0, shldTauMax = 35.0;
+    double sigmaRatio = 0.35;
+
+    // Stage 4: LFO wander (lines 864-867, 1114-1119)
+    double wanderDepth = 0.0;
+    double edgeWanderDepth = 0.0, edgeWanderRate = 0.0;
+
+    // Stage 5: LF accumulator (render() lines 652-672). Only the wander-rate boost is
+    // audible in boost mode (lf_max_scale > 1); suppress mode is rejected by the gate.
+    double lfDepth = 0.0, lfTau = 5.0, lfMin = 0.3, lfMax = 1.0;
+    double lfWEdge = 1.0, lfWBow = 0.5, lfWBell = 0.1;
+    double lfWanderRateBoost = 0.0;
+
+    // Stage 6: velocity-dependent T60 (lines 1127-1130, 861-862)
+    double velLenTilt = 0.0, velLenTiltRef = 0.787;
+
+    // Stage 7: MF accumulator (render() lines 674-688, free ring lines 917-919)
+    double mfDepth = 0.0, mfTau = 5.0, mfMin = 0.3, mfMax = 1.0;
+    double mfWEdge = 1.0, mfWBow = 0.5, mfWBell = 0.1;
+
+    // Stage 8: per-mode onset ramp (lines 621-650, 847-856, 895-901) and velocity tilt
+    bool bandEnvOnset = false; // mode_pk_t data present
+    double birthFrac = 0.5;    // band_env_birth_frac
+    bool velTilt = false;      // vel_tilt data present
+};
+
 struct SlotData
 {
     std::string name;
@@ -41,6 +74,16 @@ struct SlotData
     VelocityTable bellVp;
     double velGainPower = 1.0;
     double edgeLevelBoost = 1.0;
+
+    // Stage 9: onset band gains of this slot's overlay (lines 425-442, 902-913).
+    bool onsetGainsActive = false;
+    std::vector<double> onsetGains; // per band (9 bands)
+    double onsetTauS = 0.08;
+
+    // Stage 3: contact force matrix for this slot's position, numModes x contactLen,
+    // row-major. Each row is DC-normalised. Empty when contact is off.
+    std::vector<double> contactForce;
+    int contactLen = 0;
 };
 
 struct BakeData
@@ -58,6 +101,24 @@ struct BakeData
     std::vector<double> pickL, pickR, lfoRateHz, lfoPhase;
 
     double hpSos[6] = {}; // b0 b1 b2 a0 a1 a2, right channel only
+
+    // Per-sample mode step of the contact phase: exp(1j*2pi*f/SR) * exp(-ln1000/(T60*SR)).
+    std::vector<double> modeStepRe, modeStepIm;
+
+    // MF band-pass weight per mode (lines 399-405); empty when the MF accumulator is off.
+    std::vector<double> mfBandpass;
+
+    // Onset ramp data (stage 8): peak times per mode (indexed by mode position) and the
+    // velocity tilt table (velocities x bands), its reference row and each mode's band.
+    std::vector<double> pkTBow, pkTEdge;
+    std::vector<double> velTiltVelocities, velTiltFractions, velTiltReference;
+    std::vector<int> velTiltModeBand;
+    int velTiltBands = 0;
+
+    // Onset-gain band of each mode (stage 9, lines 431-438).
+    std::vector<int> bowOnsetModeBand;
+
+    EngineParams params;
 
     Pcg64 renderStream;  // strike phases: state when the plugin loads
     double phaseLow = 0.0, phaseHigh = 0.0;

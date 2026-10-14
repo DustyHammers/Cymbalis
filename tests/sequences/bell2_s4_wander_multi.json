@@ -1,0 +1,22 @@
+{
+  "format_version": 1,
+  "name": "bell2_s4_wander_multi",
+  "slot": "BELL2",
+  "stage": "4",
+  "description": "BELL2: wander (stage 4). v0.65 at 0.5 s and again at 2.25 s, v0.9 at 3.0 s: older ring loses its wander during each 13-sample contact (PORT_MAP f.4).",
+  "duration_s": 5.0,
+  "strikes": [
+    [0.5, 0.65],
+    [2.25, 0.65],
+    [3.0, 0.9]
+  ],
+  "overrides": {
+    "lf_wander_rate_boost": 0.0,
+    "vel_len_tilt": 0.0,
+    "mf_sens_depth": 0.0,
+    "band_env_birth_frac": 1.0,
+    "bow_onset_band_gains": null,
+    "nl_amount": 0.0
+  },
+  "cpp_block_sizes": [512]
+}

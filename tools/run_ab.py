@@ -18,6 +18,14 @@ threshold (1e-8) is finer than float32 resolution for any sample above 0.125,
 whose float32 step is 1.5e-8. The float32 files are also compared, as
 information only.
 
+When a sequence is rendered at several block sizes and the C++ outputs are
+bit-identical, only the first float32 WAV is kept in <out>. index.md names the
+file each block size shares.
+
+Sequences marked "benchmark": true are rendered once more, one at a time,
+with `cymbalis_render --bench` (block size 512). This measures the real-time
+factor of Engine::process.
+
 An A/B FAIL or a C++ render error is reported, not fatal: the exit code is 0.
 Pipeline errors exit non-zero: a bake failure, a Python reference failure, or
 a missing binary.
@@ -25,6 +33,7 @@ a missing binary.
 import argparse
 import concurrent.futures as cf
 import glob
+import hashlib
 import json
 import os
 import platform
@@ -71,6 +80,25 @@ def fmt_db(x):
 
 def rel(path, base):
     return os.path.relpath(path, base).replace(os.sep, '/')
+
+
+# PORT_MAP section e stages, in report order.
+STAGES = [
+    ('0-2', 'linear core: data, PCG64, strike coupling, free ring, calibration, high-pass'),
+    ('3', 'per-mode contact'),
+    ('4', 'wander'),
+    ('5', 'LF accumulator -> wander rate'),
+    ('6', 'vel_len_tilt'),
+    ('7', 'MF accumulator'),
+    ('8', 'edge onset ramp + velocity tilt'),
+    ('9', 'onset gains'),
+    ('full', 'full engine, overrides {"nl_amount": 0.0} only: the plugin reference sound'),
+]
+STAGE_ORDER = {k: i for i, (k, _) in enumerate(STAGES)}
+
+
+def stage_title(stage):
+    return dict(STAGES).get(stage, '')
 
 
 def main():
@@ -167,7 +195,8 @@ def main():
     for j in [j for j in done if j['kind'] == 'cpp']:
         s = j['seq']
         ref = py_by_name[s['name']]
-        row = dict(sequence=s['name'], slot=s['slot'], block_size=j['bs'], cpp_seconds=j['seconds'],
+        row = dict(sequence=s['name'], slot=s['slot'], stage=s.get('stage', '?'), block_size=j['bs'],
+                   cpp_seconds=j['seconds'],
                    py_seconds=ref['seconds'], py_wav=ref['f32'], cpp_wav=j['f32'], error=j['error'],
                    cpp_log=j['log'])
         if j['returncode'] == 0:
@@ -187,7 +216,24 @@ def main():
         else:
             row.update(result='FAIL', f64=None, f32=None)
         rows.append(row)
-    rows.sort(key=lambda r: (r['sequence'], r['block_size']))
+    rows.sort(key=lambda r: (STAGE_ORDER.get(r['stage'], 99), r['sequence'], r['block_size']))
+
+    # ---- 3b. speed: benchmark sequences, rendered alone, Engine::process time only
+    bench = []
+    for p, s in seqs:
+        if not s.get('benchmark'):
+            continue
+        key = json.dumps(s['overrides'], sort_keys=True)
+        proc, _ = run([cpp, '--bench', '--quiet', '--bake', bakes[key], '--sequence', p, '--block-size', '512'],
+                      os.path.join(out, 'logs', f'{s["name"]}_bench.log'))
+        if proc.returncode != 0:
+            bench.append(dict(sequence=s['name'], slot=s['slot'], error=proc.stderr.strip()))
+            continue
+        info = json.loads(proc.stdout.strip().splitlines()[-1])
+        bench.append(dict(sequence=s['name'], slot=s['slot'], audio_seconds=info['audio_seconds'],
+                          render_seconds=info['render_seconds'], realtime_factor=info['realtime_factor']))
+        print(f'  bench {s["name"]:22s} {info["render_seconds"]:7.2f}s for {info["audio_seconds"]:.1f}s audio '
+              f'(RTF {info["realtime_factor"]:.3f})', flush=True)
 
     # ---- 4. block-size consistency of the C++ renders
     consistency = []
@@ -205,6 +251,19 @@ def main():
             other, _ = sf.read(j['f64'], dtype='float64')
             worst = max(worst, float(np.max(np.abs(other - base))) if other.shape == base.shape else float('inf'))
         consistency.append(dict(sequence=name, block_sizes=[j['bs'] for j in js], max_abs_diff=worst))
+        # Keep one float32 file when the renders are byte-identical.
+        digests = {}
+        for j in js:
+            with open(j['f32'], 'rb') as f:
+                d = hashlib.md5(f.read()).hexdigest()
+            if d in digests:
+                os.remove(j['f32'])
+                for r in rows:
+                    if r['sequence'] == name and r['block_size'] == j['bs']:
+                        r['cpp_wav_shared_with'] = digests[d]['bs']
+                        r['cpp_wav'] = digests[d]['f32']
+            else:
+                digests[d] = j
 
     # ---- 5. index.md and summary.json
     n_pass = sum(r['result'] == 'PASS' for r in rows)
@@ -216,20 +275,30 @@ def main():
                    f'{os.environ.get("GITHUB_REPOSITORY")}/actions/runs/{os.environ["GITHUB_RUN_ID"]}')
     overrides_sets = sorted(bakes.keys())
 
-    table = ['| Sequence | Slot | Block | max \\|diff\\| (f64) | Null peak dB | Null RMS dB | Offset | '
+    def make_table(stage_rows):
+        t = ['| Sequence | Slot | Block | max \\|diff\\| (f64) | Null peak dB | Null RMS dB | Offset | '
              'Max band Δ dB | Result | max \\|diff\\| (f32 files) |',
              '|---|---|---:|---:|---:|---:|---:|---:|:---:|---:|']
-    for r in rows:
-        if r['f64'] is None:
-            table.append(f'| {r["sequence"]} | {r["slot"]} | {r["block_size"]} | — | — | — | — | — | '
+        for r in stage_rows:
+            if r['f64'] is None:
+                t.append(f'| {r["sequence"]} | {r["slot"]} | {r["block_size"]} | — | — | — | — | — | '
                          f'**FAIL** (C++ error: {r["error"]}) | — |')
-            continue
-        a, b = r['f64'], r['f32']
-        table.append(
-            f'| [{r["sequence"]}]({rel(r["report_md"], out)}) | {r["slot"]} | {r["block_size"]} | '
-            f'{fmt_e(a["max_abs_diff"])} | {fmt_db(a["null_peak_db_re_ref_peak"])} | '
-            f'{fmt_db(a["null_rms_db_re_ref_peak"])} | {a["sample_offset"]} | '
-            f'{a["bands"]["max_abs_delta_db"]:.2g} | **{r["result"]}** | {fmt_e(b["max_abs_diff"])} |')
+                continue
+            a, b = r['f64'], r['f32']
+            t.append(
+                f'| [{r["sequence"]}]({rel(r["report_md"], out)}) | {r["slot"]} | {r["block_size"]} | '
+                f'{fmt_e(a["max_abs_diff"])} | {fmt_db(a["null_peak_db_re_ref_peak"])} | '
+                f'{fmt_db(a["null_rms_db_re_ref_peak"])} | {a["sample_offset"]} | '
+                f'{a["bands"]["max_abs_delta_db"]:.2g} | **{r["result"]}** | {fmt_e(b["max_abs_diff"])} |')
+        return t
+
+    stages_present = sorted({r['stage'] for r in rows}, key=lambda st: STAGE_ORDER.get(st, 99))
+    table = []
+    for st in stages_present:
+        st_rows = [r for r in rows if r['stage'] == st]
+        st_pass = sum(r['result'] == 'PASS' for r in st_rows)
+        table += [f'### Stage {st}: {stage_title(st)} ({st_pass}/{len(st_rows)} PASS)', '',
+                  *make_table(st_rows), '']
 
     idx = [
         '# Cymbalis A/B: Python V19 reference vs C++ engine', '',
@@ -237,12 +306,11 @@ def main():
         f'- Run: {run_url}' if run_url else '- Run: local',
         f'- Created: {ab.utc_stamp()}',
         f'- Platform: {platform.platform()}; Python {platform.python_version()}, numpy {np.__version__}',
-        '- C++ engine: PORT_MAP stages 0–2 (data, exact PCG64, strike coupling, modal free ring, calibration, '
-        'right-channel high-pass)',
-        '- Overrides: ' + '; '.join(f'`{k}`' for k in overrides_sets),
+        '- Stages compared: ' + ', '.join(stages_present) + ' (docs/PORT_MAP.md, section e)',
+        f'- Bakes: {len(overrides_sets)} (one per distinct overrides set, listed under "Bake")',
         f'- Gate: max |diff| ≤ {args.threshold:g} on the float64 renders. **{n_pass}/{len(rows)} PASS.**',
         '',
-        '## Results', '', *table, '',
+        '## Results', '', *table,
         'Notes:',
         '',
         '- **Null peak / Null RMS:** peak and RMS of (C++ − Python), in dB relative to the Python peak.',
@@ -254,6 +322,18 @@ def main():
         '0.125, which is coarser than the 1e-8 gate.',
         '',
     ]
+    if bench:
+        idx += ['## C++ render speed', '',
+                'Full-engine 15 s sequences, block size 512, single thread, rendered one at a time on this machine. '
+                'Real-time factor = time in `Engine::process` / audio duration (below 1 is faster than real time).',
+                '', '| Slot | Sequence | Audio s | Render s | Real-time factor |', '|---|---|---:|---:|---:|']
+        for b in bench:
+            if 'error' in b:
+                idx.append(f'| {b["slot"]} | {b["sequence"]} | — | — | error: {b["error"]} |')
+            else:
+                idx.append(f'| {b["slot"]} | {b["sequence"]} | {b["audio_seconds"]:.1f} | '
+                           f'{b["render_seconds"]:.2f} | {b["realtime_factor"]:.3f} |')
+        idx.append('')
     if consistency:
         idx += ['## C++ block-size consistency', '',
                 '| Sequence | Block sizes | max \\|diff\\| between C++ renders |', '|---|---|---:|']
@@ -272,9 +352,10 @@ def main():
     for r in rows:
         md64 = f'[md]({rel(r["report_md"], out)})' if r.get('report_md') else '—'
         md32 = f'[md]({rel(r["report_md32"], out)})' if r.get('report_md32') else '—'
+        shared = (f' (bit-identical to bs {r["cpp_wav_shared_with"]})' if r.get('cpp_wav_shared_with') else '')
         idx.append(f'| {r["sequence"]} (bs {r["block_size"]}) | [{os.path.basename(r["py_wav"])}]'
-                   f'({rel(r["py_wav"], out)}) | [{os.path.basename(r["cpp_wav"])}]({rel(r["cpp_wav"], out)}) | '
-                   f'{md64} | {md32} | [log]({rel(r["cpp_log"], out)}) |')
+                   f'({rel(r["py_wav"], out)}) | [{os.path.basename(r["cpp_wav"])}]({rel(r["cpp_wav"], out)})'
+                   f'{shared} | {md64} | {md32} | [log]({rel(r["cpp_log"], out)}) |')
     idx.append('')
     with open(os.path.join(out, 'index.md'), 'w') as f:
         f.write('\n'.join(idx))
@@ -288,7 +369,7 @@ def main():
                                 'sample_offset', 'samples_differing', 'pass')} | {
                                    'max_band_delta_db': v['bands']['max_abs_delta_db']}))
                           for k, v in r.items()} for r in rows],
-                   block_size_consistency=consistency)
+                   block_size_consistency=consistency, benchmark=bench)
     with open(os.path.join(out, 'summary.json'), 'w') as f:
         json.dump(summary, f, indent=1)
 
@@ -299,10 +380,16 @@ def main():
 
     gh_summary = os.environ.get('GITHUB_STEP_SUMMARY')
     if gh_summary:
+        speed = []
+        if bench:
+            speed = ['', '### C++ render speed (full engine, 15 s, block 512)', '',
+                     '| Slot | Render s | Real-time factor |', '|---|---:|---:|']
+            speed += [f'| {b["slot"]} | {b.get("render_seconds", float("nan")):.2f} | '
+                      f'{b.get("realtime_factor", float("nan")):.3f} |' for b in bench]
         with open(gh_summary, 'a') as f:
             f.write('## Cymbalis A/B (Python V19 vs C++)\n\n'
                     f'{n_pass}/{len(rows)} PASS (max |diff| ≤ {args.threshold:g}, float64 renders)\n\n'
-                    + '\n'.join(table) + '\n')
+                    + '\n'.join(table + speed) + '\n')
     for r in rows:
         if r['result'] != 'PASS':
             detail = r['error'] or f'max |diff| {fmt_e(r["f64"]["max_abs_diff"])}'

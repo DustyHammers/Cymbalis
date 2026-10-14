@@ -2,6 +2,7 @@
   "format_version": 1,
   "name": "bow2_1hit_tail20s",
   "slot": "BOW2",
+  "stage": "0-2",
   "description": "BOW2: one hit at 1.0 s, velocity 1.0, then a 20 s tail. PORT_MAP stages 0-2 (ALL_OFF).",
   "duration_s": 21.0,
   "strikes": [

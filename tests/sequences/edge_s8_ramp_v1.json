@@ -1,0 +1,17 @@
+{
+  "format_version": 1,
+  "name": "edge_s8_ramp_v1",
+  "slot": "EDGE",
+  "stage": "8",
+  "description": "EDGE: onset ramp (stage 8) at velocity 1.0, where the velocity tilt is exactly an identity. The second strike arrives during the first ramp (peak times up to 4.59 s) and restarts it for every ringing mode (PORT_MAP f.3); the ramp starts at contact sample 13 (f.4).",
+  "duration_s": 5.0,
+  "strikes": [
+    [0.25, 1.0],
+    [0.5, 1.0]
+  ],
+  "overrides": {
+    "bow_onset_band_gains": null,
+    "nl_amount": 0.0
+  },
+  "cpp_block_sizes": [512]
+}

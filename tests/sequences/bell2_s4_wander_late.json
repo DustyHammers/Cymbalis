@@ -1,0 +1,20 @@
+{
+  "format_version": 1,
+  "name": "bell2_s4_wander_late",
+  "slot": "BELL2",
+  "stage": "4",
+  "description": "BELL2: wander (stage 4). The same v0.65 strike as the first hit of bell2_s4_wander_multi, but at 3.75 s: wander depends on absolute time (PORT_MAP f.5).",
+  "duration_s": 6.0,
+  "strikes": [
+    [3.75, 0.65]
+  ],
+  "overrides": {
+    "lf_wander_rate_boost": 0.0,
+    "vel_len_tilt": 0.0,
+    "mf_sens_depth": 0.0,
+    "band_env_birth_frac": 1.0,
+    "bow_onset_band_gains": null,
+    "nl_amount": 0.0
+  },
+  "cpp_block_sizes": [512]
+}

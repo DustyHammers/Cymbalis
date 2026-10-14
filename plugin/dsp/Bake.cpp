@@ -1,5 +1,6 @@
 #include "Bake.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -126,16 +127,13 @@ std::vector<std::string> unsupportedMechanisms(const json::Value& e)
     if (e.at("articulation").string() != "stick") out.push_back("brush articulation");
     if (!e.at("vel_participation").boolean()) out.push_back("hertz_vel_scale (no velocity participation table)");
     if (eff(e, "contact_tau_ms") > 0.0) out.push_back("contact sinc stick profile (contact_tau_ms)");
-    if (eff(e, "tip_contact_ms") > 0.0) out.push_back("contact force (tip_contact_ms > 0, PORT_MAP stage 3)");
-    if (eff(e, "wander_depth") != 0.0) out.push_back("LFO wander (wander_depth != 0, stage 4)");
+    if (eff(e, "tip_contact_ms") > 0.0 && !e.at("permode_contact").boolean())
+        out.push_back("Gaussian contact force (tip_contact_ms > 0 without permode_contact)");
+    if (eff(e, "release_gain") > 0.0 && eff(e, "tip_contact_ms") > 0.0 && !e.at("permode_contact").boolean())
+        out.push_back("contact release pulse");
     if (eff(e, "rate_jitter") > 0.0) out.push_back("wander rate jitter (draws extra random numbers)");
     if (eff(e, "lf_sens_depth") > 0.0 && eff(e, "lf_max_scale") <= 1.0)
         out.push_back("LF amplitude scaling (lf_max_scale <= 1)");
-    if (eff(e, "mf_sens_depth") > 0.0) out.push_back("MF accumulator (mf_sens_depth > 0, stage 7)");
-    if (eff(e, "vel_len_tilt") != 0.0) out.push_back("velocity-dependent T60 (vel_len_tilt != 0, stage 6)");
-    if (e.at("band_env_onset").boolean() && eff(e, "band_env_birth_frac") != 1.0)
-        out.push_back("edge onset ramp (band_env_birth_frac != 1, stage 8)");
-    if (e.at("bow_onset_gains_active").boolean()) out.push_back("onset band gains (stage 9)");
     if (eff(e, "nl_amount") > 1e-6) out.push_back("NL redistribution (nl_amount > 0; off in the plugin)");
     if (eff(e, "hf_bloom_modes") > 0) out.push_back("HF bloom bank");
     if (eff(e, "sparkle_clusters") > 0 && eff(e, "sparkle_depth") > 0.0) out.push_back("sparkle");
@@ -144,6 +142,75 @@ std::vector<std::string> unsupportedMechanisms(const json::Value& e)
     if (e.at("edge_band_env").boolean()) out.push_back("edge band envelope");
     if (e.at("edge_npz").boolean()) out.push_back("NPZ edge velw");
     return out;
+}
+
+double clamp01(double x) { return std::min(std::max(x, 0.0), 1.0); }
+
+// numpy's pairwise summation (pairwise_sum in loops_utils.h), as used by add.reduce
+// along a contiguous axis. A row sum is the additive identity (0) plus this sum.
+double numpyPairwiseSum(const double* a, size_t n)
+{
+    if (n < 8)
+    {
+        double res = 0.0;
+        for (size_t i = 0; i < n; ++i)
+            res += a[i];
+        return res;
+    }
+    if (n <= 128)
+    {
+        double r[8];
+        for (int j = 0; j < 8; ++j)
+            r[j] = a[j];
+        size_t i = 8;
+        for (; i < n - (n % 8); i += 8)
+            for (int j = 0; j < 8; ++j)
+                r[j] += a[i + size_t(j)];
+        double res = ((r[0] + r[1]) + (r[2] + r[3])) + ((r[4] + r[5]) + (r[6] + r[7]));
+        for (; i < n; ++i)
+            res += a[i];
+        return res;
+    }
+    size_t n2 = n / 2;
+    n2 -= n2 % 8;
+    return numpyPairwiseSum(a, n2) + numpyPairwiseSum(a + n2, n - n2);
+}
+
+// _apply_strike lines 1073-1091: per-mode Gaussian force envelopes, DC-normalised per mode.
+std::vector<double> computeContactForce(const std::vector<double>& freq, double position, const EngineParams& p,
+                                        int& lenOut)
+{
+    const size_t n = freq.size();
+    const double pos = clamp01(position);
+    const double edgeFrac = clamp01(1.0 - pos / 0.5);
+    const double tau0 = p.tipTau0 + edgeFrac * (p.shldTau0 - p.tipTau0);
+    const double tauM = p.tipTauMax + edgeFrac * (p.shldTauMax - p.tipTauMax);
+    const double fMax = *std::max_element(freq.begin(), freq.end());
+    std::vector<double> tau(n), sig(n);
+    double sigMax = -1.0;
+    for (size_t i = 0; i < n; ++i)
+    {
+        const double fNorm = std::sqrt(freq[i] / (fMax + 1e-9));
+        tau[i] = tauM - (tauM - tau0) * fNorm;
+        sig[i] = std::max(tau[i] * p.sigmaRatio, 1.0);
+        sigMax = std::max(sigMax, sig[i]);
+    }
+    const int len = static_cast<int>(tauM + 3.0 * sigMax) + 1;
+    std::vector<double> f(n * size_t(len));
+    for (size_t i = 0; i < n; ++i)
+    {
+        double* row = f.data() + i * size_t(len);
+        for (int k = 0; k < len; ++k)
+        {
+            const double x = (static_cast<double>(k) - tau[i]) / sig[i];
+            row[k] = std::exp(-0.5 * (x * x));
+        }
+        const double denom = (0.0 + numpyPairwiseSum(row, size_t(len))) + 1e-9;
+        for (int k = 0; k < len; ++k)
+            row[k] = row[k] / denom;
+    }
+    lenOut = len;
+    return f;
 }
 
 Pcg64 readStream(const json::Value& s, const std::string& name, std::vector<std::string>& report)
@@ -263,14 +330,90 @@ std::shared_ptr<const BakeData> loadBake(const std::string& path)
         if (!sh.at("vel_tilt_fractions").isNull())
             readArray(sh.at("vel_tilt_fractions"), "shared.vel_tilt_fractions", {0, 0}, rep);
 
+        b.modeStepRe = readArray(sh.at("mode_step_re"), "shared.mode_step_re", {n}, rep);
+        b.modeStepIm = readArray(sh.at("mode_step_im"), "shared.mode_step_im", {n}, rep);
+
         const auto sos = readArray(root.at("hp_right").at("sos"), "hp_right.sos", {1, 6}, rep);
         for (int i = 0; i < 6; ++i)
             b.hpSos[i] = sos[size_t(i)];
         if (b.hpSos[3] != 1.0)
             throw BakeError("hp_right.sos: a0 must be 1");
 
+        // ---- engine-wide parameters: every slot must agree (only overlays differ per slot)
+        const auto& slotArr = root.at("slots").array();
+        if (slotArr.empty())
+            throw BakeError("bake has no slots");
+        const json::Value& e0 = slotArr.at(0).at("effective");
+        for (const auto& s : slotArr)
+            for (const auto& kv : e0.object())
+            {
+                if (kv.first == "bow_onset_gains_active") continue; // overlay-specific
+                const json::Value* other = s.at("effective").find(kv.first);
+                if (other == nullptr || !json::equal(kv.second, *other))
+                    throw BakeError("engine-wide parameter '" + kv.first + "' differs between slots " +
+                                    slotArr.at(0).at("name").string() + " and " + s.at("name").string());
+            }
+        EngineParams& ep = b.params;
+        ep.contactPermode = eff(e0, "tip_contact_ms") > 0.0 && e0.at("permode_contact").boolean();
+        ep.tipTau0 = eff(e0, "tip_tau0");
+        ep.tipTauMax = eff(e0, "tip_tau_max");
+        ep.shldTau0 = eff(e0, "shld_tau0");
+        ep.shldTauMax = eff(e0, "shld_tau_max");
+        ep.sigmaRatio = eff(e0, "sigma_ratio");
+        ep.wanderDepth = eff(e0, "wander_depth");
+        ep.edgeWanderDepth = eff(e0, "edge_wander_depth");
+        ep.edgeWanderRate = eff(e0, "edge_wander_rate");
+        ep.lfDepth = eff(e0, "lf_sens_depth");
+        ep.lfTau = eff(e0, "lf_sens_tau");
+        ep.lfMin = eff(e0, "lf_min_scale");
+        ep.lfMax = eff(e0, "lf_max_scale");
+        ep.lfWEdge = eff(e0, "lf_edge_weight");
+        ep.lfWBow = eff(e0, "lf_bow_weight");
+        ep.lfWBell = eff(e0, "lf_bell_weight");
+        ep.lfWanderRateBoost = eff(e0, "lf_wander_rate_boost");
+        ep.velLenTilt = eff(e0, "vel_len_tilt");
+        ep.velLenTiltRef = eff(e0, "vel_len_tilt_ref");
+        ep.mfDepth = eff(e0, "mf_sens_depth");
+        ep.mfTau = eff(e0, "mf_sens_tau");
+        ep.mfMin = eff(e0, "mf_min_scale");
+        ep.mfMax = eff(e0, "mf_max_scale");
+        ep.mfWEdge = eff(e0, "mf_edge_weight");
+        ep.mfWBow = eff(e0, "mf_bow_weight");
+        ep.mfWBell = eff(e0, "mf_bell_weight");
+        ep.bandEnvOnset = e0.at("band_env_onset").boolean();
+        ep.birthFrac = eff(e0, "band_env_birth_frac");
+        ep.velTilt = e0.at("vel_tilt").boolean();
+        if (ep.bandEnvOnset)
+        {
+            b.pkTBow = readArray(sh.at("pk_t_bow_s"), "shared.pk_t_bow_s (used)", {n}, rep);
+            b.pkTEdge = readArray(sh.at("pk_t_edge_s"), "shared.pk_t_edge_s (used)", {n}, rep);
+        }
+        if (ep.velTilt)
+        {
+            b.velTiltVelocities = readArray(sh.at("vel_tilt_velocities"), "shared.vel_tilt_velocities (used)", {0}, rep);
+            b.velTiltReference = readArray(sh.at("vel_tilt_reference"), "shared.vel_tilt_reference (used)", {0}, rep);
+            b.velTiltBands = static_cast<int>(b.velTiltReference.size());
+            b.velTiltFractions = readArray(sh.at("vel_tilt_fractions"), "shared.vel_tilt_fractions (used)",
+                                           {b.velTiltVelocities.size(), size_t(b.velTiltBands)}, rep);
+            const auto band = readArray(sh.at("vel_tilt_mode_band"), "shared.vel_tilt_mode_band (used)", {n}, rep);
+            b.velTiltModeBand.resize(n);
+            for (size_t i = 0; i < n; ++i)
+            {
+                b.velTiltModeBand[i] = static_cast<int>(band[i]);
+                if (b.velTiltModeBand[i] < 0 || b.velTiltModeBand[i] >= b.velTiltBands)
+                    throw BakeError("vel_tilt_mode_band out of range");
+            }
+        }
+        if (ep.mfDepth > 0.0)
+        {
+            if (sh.at("mf_bandpass").isNull())
+                throw BakeError("mf_sens_depth > 0 but the bake has no mf_bandpass");
+            b.mfBandpass = readArray(sh.at("mf_bandpass"), "shared.mf_bandpass (used)", {n}, rep);
+        }
+        rep.push_back("params ok    engine-wide parameters identical across slots");
+
         // ---- slots
-        for (const auto& s : root.at("slots").array())
+        for (const auto& s : slotArr)
         {
             SlotData slot;
             slot.name = s.at("name").string();
@@ -284,6 +427,23 @@ std::shared_ptr<const BakeData> loadBake(const std::string& path)
                 slot.bellVp = readVelocityTable(s.at("bell_vp"), "slot " + slot.name + ".bell_vp", n, rep);
             }
             const json::Value& e = s.at("effective");
+            slot.onsetGainsActive = e.at("bow_onset_gains_active").boolean();
+            if (slot.onsetGainsActive)
+            {
+                slot.onsetGains = readArray(s.at("onset_gains"), "slot " + slot.name + ".onset_gains", {0}, rep);
+                if (b.bowOnsetModeBand.empty())
+                {
+                    const auto band = readArray(sh.at("bow_onset_mode_band"), "shared.bow_onset_mode_band (used)",
+                                                {n}, rep);
+                    b.bowOnsetModeBand.resize(n);
+                    for (size_t i = 0; i < n; ++i)
+                        b.bowOnsetModeBand[i] = static_cast<int>(band[i]);
+                }
+                for (int band : b.bowOnsetModeBand)
+                    if (band < 0 || band >= static_cast<int>(slot.onsetGains.size()))
+                        throw BakeError("slot " + slot.name + ": onset band index out of range");
+            }
+            slot.onsetTauS = s.at("onset_tau_s").number();
             slot.velGainPower = e.at("vel_gain_power").number();
             slot.edgeLevelBoost = e.at("edge_level_boost").number();
 
@@ -295,11 +455,28 @@ std::shared_ptr<const BakeData> loadBake(const std::string& path)
                     msg += "\n  - " + m;
                 throw BakeError(msg);
             }
-            rep.push_back("stage gate   slot " + slot.name + ": only stage 0-2 mechanisms active");
+            rep.push_back("stage gate   slot " + slot.name + ": all active mechanisms are implemented");
+
+            if (ep.contactPermode)
+            {
+                slot.contactForce = computeContactForce(b.freqHz, slot.position, ep, slot.contactLen);
+                const json::Value& py = s.at("contact_force_python");
+                if (py.isNull())
+                    throw BakeError("slot " + slot.name + ": contact is on but the bake has no Python force matrix");
+                const auto pyForce = readArray(py, "slot " + slot.name + ".contact_force_python",
+                                               {n, size_t(slot.contactLen)}, rep);
+                double maxRel = 0.0;
+                for (size_t i = 0; i < pyForce.size(); ++i)
+                    if (pyForce[i] != slot.contactForce[i])
+                        maxRel = std::max(maxRel, std::fabs(pyForce[i] - slot.contactForce[i]) /
+                                                      std::max(std::fabs(pyForce[i]), 1e-300));
+                rep.push_back("contact      slot " + slot.name + ": " + std::to_string(slot.contactLen) +
+                              "-sample force matrix " +
+                              (maxRel == 0.0 ? std::string("bit-identical to Python")
+                                             : fmt("matches Python to %.2e relative", maxRel)));
+            }
             b.slots.push_back(std::move(slot));
         }
-        if (b.slots.empty())
-            throw BakeError("bake has no slots");
 
         // ---- RNG streams (stage 0: exact PCG64, uniform() and choice())
         const auto& rng = root.at("rng");

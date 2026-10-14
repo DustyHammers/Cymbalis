@@ -1,0 +1,24 @@
+{
+  "format_version": 1,
+  "name": "bow_s3_contact",
+  "slot": "BOW",
+  "stage": "3",
+  "description": "BOW: per-mode contact (stage 3). Four strikes 0.25-1.0 s apart at mixed velocities; each contact (13 samples) finishes before the next strike.",
+  "duration_s": 4.0,
+  "strikes": [
+    [0.25, 0.3],
+    [0.5, 0.9],
+    [1.0, 0.65],
+    [2.0, 1.0]
+  ],
+  "overrides": {
+    "wander_depth": 0.0,
+    "lf_wander_rate_boost": 0.0,
+    "vel_len_tilt": 0.0,
+    "mf_sens_depth": 0.0,
+    "band_env_birth_frac": 1.0,
+    "bow_onset_band_gains": null,
+    "nl_amount": 0.0
+  },
+  "cpp_block_sizes": [512]
+}
