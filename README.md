@@ -49,7 +49,7 @@ These values are set in `CMakeLists.txt`. Changing a code changes the plugin ID 
 
 ## A/B comparison: Python reference vs C++ engine
 
-The C++ engine (`plugin/dsp/`, static library `cymbalis_engine`) is checked render by render against the Python V19 reference. See `docs/PORT_MAP.md` for the porting stages and the live-engine decisions.
+The C++ engine (`plugin/dsp/`, static library `cymbalis_engine`) is checked render by render against the Python V19 reference. It implements PORT_MAP stages 0–9; NL (stage 10) is off in the plugin. See `docs/PORT_MAP.md` for the porting stages and the live-engine decisions. The plugin reference sound is the Python engine with the overrides `{"nl_amount": 0.0}` (the `*_full_*` sequences).
 
 ```
 python3 -m venv prototype/.venv && source prototype/.venv/bin/activate

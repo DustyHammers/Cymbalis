@@ -1,0 +1,15 @@
+{
+  "format_version": 1,
+  "name": "bow2_full_1hit_tail20s",
+  "slot": "BOW2",
+  "stage": "full",
+  "description": "BOW2: full engine (plugin reference sound). One hit at 1.0 s, velocity 0.9, 20 s tail.",
+  "duration_s": 21.0,
+  "strikes": [
+    [1.0, 0.9]
+  ],
+  "overrides": {
+    "nl_amount": 0.0
+  },
+  "cpp_block_sizes": [64, 512, 1013]
+}
