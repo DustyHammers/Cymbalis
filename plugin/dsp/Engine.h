@@ -12,8 +12,9 @@
 //   8  edge onset ramp (per-mode pk_t) with the velocity tilt of pk_t
 //   9  onset band gains of the striking slot's overlay
 // Not implemented: NL (stage 10), which is off in the plugin, and the mechanisms Nova does
-// not use; bakes that need them are rejected by loadBake(). Bakes that need it are rejected by loadBake().
-// NL (stage 10) is off in the plugin.
+// not use; bakes that need them are rejected by loadBake(). The mechanisms ported later for
+// the 602 and Bettis presets (hertz_vel_scale, NPZ edge data, velocity-bracketed edge pk_t)
+// exist only in FastEngine; the constructor rejects bakes that use them.
 //
 // Live-engine decisions (docs/PORT_MAP.md):
 //   - The engine clock and the strike-phase random sequence start at construction

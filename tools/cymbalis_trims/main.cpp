@@ -1,13 +1,15 @@
 // cymbalis_trims — level trims measured with FastEngine, the plugin's own engine.
 //
-//   cymbalis_trims --bake BAKE.json [--json TRIMS.json]
+//   cymbalis_trims --bake BAKE.json [--reference NOVA_BAKE.json] [--json TRIMS.json]
 //
 // For every slot of the bake (one per overlay: each row and stick choice of the plugin
 // plays one of them), a fresh engine with no level trim plays one velocity-0.9 strike at
 // the slot's base position at t = 0. The RMS of the first second (both channels) gives
-// the trim that matches it to BOW (tip): trim = RMS(BOW tip) / RMS(slot). The trims are
-// printed and, with --json, written for tools/set_level_trims.py, which stores them in the
-// bake. The audio is only measured in memory; nothing is written but the JSON.
+// the trim that matches it to BOW (tip): trim = RMS(BOW tip) / RMS(slot). BOW (tip) is the
+// bake's own bow_tip slot, or, with --reference, the bow_tip slot of that bake (Nova Ride),
+// so every preset is matched to the same level. The trims are printed and, with --json,
+// written for tools/set_level_trims.py, which stores them in the bake. The audio is only
+// measured in memory; nothing is written but the JSON.
 #include "Bake.h"
 #include "FastEngine.h"
 
@@ -48,40 +50,50 @@ double strikeRms(const std::shared_ptr<const cymbalis::BakeData>& bake, int slot
 
 int main(int argc, char** argv)
 {
-    std::string bakePath, jsonPath;
+    std::string bakePath, jsonPath, referencePath;
     bool usage = false;
     for (int i = 1; i < argc; ++i)
     {
         const std::string a = argv[i];
         if (a == "--bake" && i + 1 < argc) bakePath = argv[++i];
         else if (a == "--json" && i + 1 < argc) jsonPath = argv[++i];
+        else if (a == "--reference" && i + 1 < argc) referencePath = argv[++i];
         else usage = true;
     }
     if (usage || bakePath.empty())
     {
-        std::fprintf(stderr, "usage: cymbalis_trims --bake BAKE.json [--json TRIMS.json]\n");
+        std::fprintf(stderr, "usage: cymbalis_trims --bake BAKE.json [--reference NOVA_BAKE.json] [--json TRIMS.json]\n");
         return 2;
     }
     try
     {
-        // Measure without the trims the bake may already hold.
-        auto bake = std::make_shared<cymbalis::BakeData>(*cymbalis::loadBake(bakePath));
-        for (auto& s : bake->slots)
-            s.levelTrim = 1.0;
+        // Measure without the trims the bakes may already hold.
+        auto untrimmed = [](const std::string& path) {
+            auto b = std::make_shared<cymbalis::BakeData>(*cymbalis::loadBake(path));
+            for (auto& s : b->slots)
+                s.levelTrim = 1.0;
+            return b;
+        };
+        auto bake = untrimmed(bakePath);
+        auto refBake = referencePath.empty() ? bake : untrimmed(referencePath);
         const double sr = bake->sampleRate;
         const int numSlots = static_cast<int>(bake->slots.size());
 
         int ref = -1;
-        for (int k = 0; k < numSlots; ++k)
-            if (bake->slots[size_t(k)].overlay == kReferenceOverlay && bake->slots[size_t(k)].position == kReferencePosition)
+        for (int k = 0; k < static_cast<int>(refBake->slots.size()); ++k)
+            if (refBake->slots[size_t(k)].overlay == kReferenceOverlay &&
+                refBake->slots[size_t(k)].position == kReferencePosition)
                 ref = k;
         if (ref < 0)
-            throw std::runtime_error(std::string("the bake has no ") + kReferenceOverlay + " slot at position 0.5");
+            throw std::runtime_error(std::string("the reference bake has no ") + kReferenceOverlay +
+                                     " slot at position 0.5");
 
         std::vector<double> rms(static_cast<size_t>(numSlots));
         for (int k = 0; k < numSlots; ++k)
             rms[size_t(k)] = strikeRms(bake, k, sr);
-        const double refRms = rms[size_t(ref)];
+        const double refRms = strikeRms(refBake, ref, refBake->sampleRate);
+        const std::string refName =
+            (referencePath.empty() ? std::string() : std::string("Nova ")) + refBake->slots[size_t(ref)].name;
 
         std::printf("| Slot | Overlay | Position | 1 s RMS | Trim (dB) |\n|---|---|---|---|---|\n");
         for (int k = 0; k < numSlots; ++k)
@@ -99,7 +111,7 @@ int main(int argc, char** argv)
             std::fprintf(f, "{\n  \"measured_by\": \"tools/cymbalis_trims (FastEngine)\",\n");
             std::fprintf(f, "  \"sample_rate\": %.17g,\n  \"velocity\": %.17g,\n  \"strike_time_s\": 0.0,\n", sr, kVelocity);
             std::fprintf(f, "  \"window_s\": %.17g,\n  \"reference_slot\": \"%s\",\n  \"reference_rms_1s\": %.17g,\n",
-                         kWindowSeconds, bake->slots[size_t(ref)].name.c_str(), refRms);
+                         kWindowSeconds, refName.c_str(), refRms);
             std::fprintf(f, "  \"slots\": {\n");
             for (int k = 0; k < numSlots; ++k)
             {

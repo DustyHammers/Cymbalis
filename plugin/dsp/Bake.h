@@ -61,6 +61,32 @@ struct EngineParams
     bool bandEnvOnset = false; // mode_pk_t data present
     double birthFrac = 0.5;    // band_env_birth_frac
     bool velTilt = false;      // vel_tilt data present
+
+    // hertz_vel_scale (hertz_velocity.py), used by slots without a velocity participation
+    // table (_apply_strike line 979): contact duration at velocity 1, ms.
+    double tauRefMs = 0.0;
+};
+
+// NPZ-derived edge data (__init__ lines 329-345; 602 and Bettis). For a strike with
+// edge_frac > 0.1 it replaces the coupling with a velocity-weighted table (velw, lines
+// 1043-1061) and, when envelopeActive, drives each mode's level for onsetS seconds from a
+// per-band envelope (lines 535-573, 869-894).
+struct EdgeNpz
+{
+    bool present = false;
+    std::vector<double> velocities; // measured velocities, ascending
+    std::vector<double> velw;       // velocities x numModes, row-major
+    std::vector<double> envelopes;  // velocities x numFrames x numBands, zero-padded
+    int numFrames = 0, numBands = 0;
+    std::vector<int> bandIndex;     // envelope band of each mode
+    double frameDurS = 0.02;        // envelope frame length
+    bool useVelw = true;            // edge_use_velw
+    bool normalize = true;          // edge_velw_normalize
+    double levelVelGainPower = 0.7; // exponent of the velocity level (line 1058)
+    std::vector<double> rmsCorrection; // per band; empty = none (edge_rms_correction)
+    bool envelopeActive = false;    // an edge band envelope file is set too (line 691)
+    double onsetS = 1.5;            // edge_band_env_onset_s
+    double frameDecayPeriodS = 0.02; // the in-frame decay restarts every 20 ms (line 889)
 };
 
 struct SlotData
@@ -79,6 +105,8 @@ struct SlotData
     VelocityTable bellVp;
     double velGainPower = 1.0;
     double edgeLevelBoost = 1.0;
+    // false: no velocity participation table; the bow velocity response is hertz_vel_scale.
+    bool hasBowVp = true;
 
     // Stage 9: onset band gains of this slot's overlay (lines 425-442, 902-913).
     bool onsetGainsActive = false;
@@ -116,12 +144,17 @@ struct BakeData
     // Onset ramp data (stage 8): peak times per mode (indexed by mode position) and the
     // velocity tilt table (velocities x bands), its reference row and each mode's band.
     std::vector<double> pkTBow, pkTEdge;
+    // Velocity-bracketed edge pk_t (Bettis format, render() lines 628-631): one row of
+    // numModes per velocity. When present, pkTEdge is empty.
+    std::vector<double> pkTEdgeByVel, pkTEdgeVelocities;
     std::vector<double> velTiltVelocities, velTiltFractions, velTiltReference;
     std::vector<int> velTiltModeBand;
     int velTiltBands = 0;
 
     // Onset-gain band of each mode (stage 9, lines 431-438).
     std::vector<int> bowOnsetModeBand;
+
+    EdgeNpz edgeNpz;
 
     EngineParams params;
 

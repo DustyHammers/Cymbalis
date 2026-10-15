@@ -158,6 +158,43 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake) : bake_(std::move(b
     // The shared oscillator's decay: T60 / the smallest wash_damp a strike with a velocity
     // in 0..1 can have, so every strike's own decay relative to it is >= 0 (it only falls).
     oscWash_ = std::max(kWashDampFloor, 1.0 + p.velLenTilt * ((p.velLenTilt >= 0.0 ? 0.0 : 1.0) - p.velLenTiltRef));
+
+    // hertz_vel_scale's reference spectrum: 1 / H(f, tau_ref) = sqrt(1 + (pi f tau_ref)^2).
+    hertzRef_.resize(n);
+    for (size_t i = 0; i < n; ++i)
+    {
+        const double x = 3.14159265358979323846 * b.freqHz[i] * (p.tauRefMs * 1e-3);
+        hertzRef_[i] = std::sqrt(1.0 + x * x);
+    }
+
+    const EdgeNpz& z = b.edgeNpz;
+    if (z.present)
+    {
+        // line 1049: sqrt of the NPZ velocities normalised to 0..1
+        const double v0 = z.velocities.front(), v1 = z.velocities.back();
+        for (double v : z.velocities)
+            sqrtVelsNorm_.push_back(std::sqrt((v - v0) / (v1 - v0)));
+    }
+    envBake_ = z.present && z.envelopeActive;
+    if (envBake_)
+    {
+        // An envelope strike's level follows its band envelope, not the T60 decay, so the
+        // shared oscillator must not decay: every component carries its whole decay.
+        oscWash_ = 0.0;
+        bandStart_.assign(size_t(z.numBands), 0);
+        bandEnd_.assign(size_t(z.numBands), 0);
+        for (int k = 0; k < n_; ++k)
+        {
+            const int band = z.bandIndex[size_t(k)];
+            if (k > 0 && band < z.bandIndex[size_t(k - 1)])
+                throw BakeError("FastEngine: the NPZ envelope bands must rise with the mode index");
+            if (k == 0 || band != z.bandIndex[size_t(k - 1)])
+                bandStart_[size_t(band)] = k;
+            bandEnd_[size_t(band)] = k + 1;
+        }
+        bandVal0_.assign(size_t(z.numBands), 0.0);
+        bandVal1_.assign(size_t(z.numBands), 0.0);
+    }
     if (p.contactPermode)
     {
         contactPool_.resize(kMaxContacts);
@@ -175,6 +212,9 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake) : bake_(std::move(b
         c.rc0.assign(np, 1.0f);
         for (auto* v : {&c.epsK, &c.pt})
             v->assign(np, 0.0);
+        if (envBake_)
+            for (auto* v : {&c.Er, &c.Ei, &c.fd, &c.em0, &c.em1, &c.emax})
+                v->assign(np, 0.0f);
     }
 
     actIdx_.assign(np, 0);
@@ -209,6 +249,15 @@ void FastEngine::prepare(double sampleRate)
     sr_ = sampleRate;
     // About 2.8 ms between control points at every supported rate.
     K_ = sr_ > 50000.0 ? 256 : 128;
+    if (envBake_)
+    {
+        // A whole number of blocks per 20 ms frame of the in-frame decay (line 889), so its
+        // restarts fall on control points: 7 x 126 at 44.1 kHz, 8 x 120 at 48 kHz, 7 x 252
+        // at 88.2 kHz, 8 x 240 at 96 kHz.
+        const double frame = b.edgeNpz.frameDecayPeriodS * sr_;
+        frameBlocks_ = std::max(1, static_cast<int>(std::lround(frame / K_)));
+        K_ = std::min(kMaxControlBlock, std::max(16, static_cast<int>(std::lround(frame / frameBlocks_))));
+    }
 
     // Steps at the host rate: undamped per sample (contact phase), and the shared
     // oscillator's per sample and per control block (decay T60 / oscWash_).
@@ -608,7 +657,12 @@ void FastEngine::dropQuietModes() noexcept
         for (int o = 0; o < nPad_; o += 4)
         {
             const v4f d = ld(D + o), r = ld(Br + o), m = ld(Bi + o);
-            const v4f ce = (r * r + m * m) * (d * d);
+            v4f ce = (r * r + m * m) * (d * d);
+            if (c.envOn) // and what its band envelope can still give it
+            {
+                const v4f er = ld(c.Er.data() + o), ei = ld(c.Ei.data() + o), mx = ld(c.emax.data() + o);
+                ce += (er * er + ei * ei) * (mx * mx);
+            }
             st(E + o, ld(E + o) + ce);
             alive |= (ce * ld(W + o) >= t2);
         }
@@ -626,7 +680,11 @@ void FastEngine::dropQuietModes() noexcept
         {
             for (auto& c : components_)
                 if (c.used && !c.pending)
+                {
                     c.Br[k] = c.Bi[k] = 0.0f;
+                    if (c.envOn)
+                        c.Er[k] = c.Ei[k] = 0.0f;
+                }
             actPos_[k] = -1;
             continue;
         }
@@ -743,25 +801,53 @@ void FastEngine::beginControlBlock() noexcept
 // decay; the others also carry their onset gains and, from the edge, their onset ramp.
 void FastEngine::sumComponents(double t0, double t1) noexcept
 {
-    int nS = 0, nO = 0, nR = 0;
+    int nS = 0, nO = 0, nR = 0, nE = 0;
     for (auto& c : components_)
     {
         if (!c.used || c.pending)
             continue;
+        // After its onset window an envelope strike rings with its own decaying amplitude
+        // (line 881: past onset, normal T60).
+        if (c.envOn && t0 - c.tStrike >= bake_->edgeNpz.onsetS)
+            c.envOn = false;
         if (!c.settled)
         {
             const double te0 = t0 - c.tStrike, te1 = t1 - c.tStrike;
             c.env0 = c.onsetOn ? std::exp(-std::max(te0, 0.0) / c.onsetTau) : 0.0;
             c.env1 = c.onsetOn ? std::exp(-std::max(te1, 0.0) / c.onsetTau) : 0.0;
-            if ((!c.onsetOn || c.env0 * c.gm1Max < kSettled) && (!c.rampOn || te0 >= c.ptMax))
+            if ((!c.onsetOn || c.env0 * c.gm1Max < kSettled) && (!c.rampOn || te0 >= c.ptMax) && !c.envOn)
                 c.settled = true;
         }
-        if (c.settled)
+        if (c.envOn)
+            envList_[size_t(nE++)] = &c;
+        else if (c.settled)
             settledList_[size_t(nS++)] = &c;
         else if (c.rampOn)
             rampList_[size_t(nR++)] = &c;
         else
             onsetList_[size_t(nO++)] = &c;
+    }
+    // Envelope strikes: the in-frame decay restarts on a frame boundary; the band
+    // envelope at both ends of the block, per mode.
+    for (int q = 0; q < nE; ++q)
+    {
+        Component& c = *envList_[size_t(q)];
+        if (c.frameBlocksLeft <= 0)
+        {
+            std::fill(c.fd.begin(), c.fd.end(), 1.0f);
+            c.frameBlocksLeft = frameBlocks_;
+        }
+        const int nb = bake_->edgeNpz.numBands;
+        for (int band = 0; band < nb; ++band)
+        {
+            const size_t bs = size_t(band);
+            if (bandEnd_[bs] <= bandStart_[bs])
+                continue;
+            std::fill(c.em0.begin() + bandStart_[bs], c.em0.begin() + bandEnd_[bs],
+                      static_cast<float>(envelopeAt(c, band, t0 - c.tStrike)));
+            std::fill(c.em1.begin() + bandStart_[bs], c.em1.begin() + bandEnd_[bs],
+                      static_cast<float>(envelopeAt(c, band, t1 - c.tStrike)));
+        }
     }
     nKinks_ = 0;
     {
@@ -855,6 +941,36 @@ void FastEngine::sumComponents(double t0, double t1) noexcept
                     a1i[h] += m * x1;
                 }
             }
+            for (int q = 0; q < nE; ++q)
+            {
+                // |coupling| x band envelope x in-frame decay (x onset gains): lines 886-894.
+                // D keeps stepping for the ring after the window.
+                Component& c = *envList_[size_t(q)];
+                const v4f e0 = splat(static_cast<float>(c.env0)), e1 = splat(static_cast<float>(c.env1));
+                float* D = c.D.data() + o;
+                float* F = c.fd.data() + o;
+                const float* dm = c.dmul.data() + o;
+                const float* er = c.Er.data() + o;
+                const float* ei = c.Ei.data() + o;
+                const float* gm = c.gm1.data() + o;
+                const float* m0 = c.em0.data() + o;
+                const float* m1 = c.em1.data() + o;
+                for (int h = 0; h < 2; ++h)
+                {
+                    const v4f step = ld(dm + 4 * h);
+                    st(D + 4 * h, ld(D + 4 * h) * step);
+                    const v4f f0 = ld(F + 4 * h), f1 = f0 * step;
+                    st(F + 4 * h, f1);
+                    const v4f g = ld(gm + 4 * h);
+                    const v4f x0 = ld(m0 + 4 * h) * f0 * (one + g * e0);
+                    const v4f x1 = ld(m1 + 4 * h) * f1 * (one + g * e1);
+                    const v4f r = ld(er + 4 * h), m = ld(ei + 4 * h);
+                    a0r[h] += r * x0;
+                    a0i[h] += m * x0;
+                    a1r[h] += r * x1;
+                    a1i[h] += m * x1;
+                }
+            }
             for (int h = 0; h < 2; ++h)
             {
                 st(a0rP + o + 4 * h, a0r[h]);
@@ -864,6 +980,8 @@ void FastEngine::sumComponents(double t0, double t1) noexcept
             }
         }
     }
+    for (int q = 0; q < nE; ++q)
+        --envList_[size_t(q)]->frameBlocksLeft;
 
 }
 
@@ -916,6 +1034,9 @@ void FastEngine::rebaseComponents() noexcept
             st(sumR_.data() + o, ld(sumR_.data() + o) + nr);
             st(sumI_.data() + o, ld(sumI_.data() + o) + ni);
         }
+        // An envelope strike's |coupling| only turns with the oscillator (it has no decay).
+        if (c.envOn)
+            multiplyAmplitudes(c.Er.data(), c.Ei.data(), rotR_.data(), rotI_.data());
     }
     for (int k = 0; k < n_; ++k)
     {
@@ -928,8 +1049,11 @@ void FastEngine::rebaseComponents() noexcept
 // B *= u per mode (complex), four modes per vector.
 void FastEngine::multiplyAmplitudes(Component& c, const float* ur, const float* ui) noexcept
 {
-    float* __restrict Br = c.Br.data();
-    float* __restrict Bi = c.Bi.data();
+    multiplyAmplitudes(c.Br.data(), c.Bi.data(), ur, ui);
+}
+
+void FastEngine::multiplyAmplitudes(float* __restrict Br, float* __restrict Bi, const float* ur, const float* ui) noexcept
+{
     for (int o = 0; o < nPad_; o += 4)
     {
         const v4f br = ld(Br + o), bi = ld(Bi + o), r = ld(ur + o), m = ld(ui + o);
@@ -973,7 +1097,7 @@ void FastEngine::mergeComponents(Component& into, Component& from, bool dropEnve
     into.order = std::max(into.order, from.order);
     if (dropEnvelopes)
     {
-        into.onsetOn = into.rampOn = false;
+        into.onsetOn = into.rampOn = into.envOn = false;
         into.settled = true;
     }
     from.used = false;
@@ -1062,6 +1186,173 @@ void FastEngine::velocityParticipation(const VelocityTable& t, double v, double*
 // One strike, as Engine::applyStrike, with the position given by the caller. Its coupling,
 // wash_damp and onset envelopes become a new component; the accumulators, wander scales and
 // MF state stay cymbal-wide.
+// hertz_velocity.py hertz_vel_scale(): v^2 x H(f, tau(v)) / H(f, tau_ref) per mode, with
+// H(f, tau) = 1 / sqrt(1 + (pi f tau)^2), tau(v) = tau_ref v^-0.2, v clipped to 1e-4..1.
+void FastEngine::hertzVelocity(double velocity, double* out) const noexcept
+{
+    const BakeData& b = *bake_;
+    const double v = std::min(std::max(velocity, 1e-4), 1.0);
+    const double tauV = (b.params.tauRefMs * 1e-3) * std::pow(1.0 / v, 0.2);
+    const double amplitude = std::pow(v, 2.0);
+    const double k = 3.14159265358979323846 * tauV;
+    for (int i = 0; i < n_; ++i)
+    {
+        const double x = k * b.freqHz[size_t(i)];
+        out[i] = amplitude * (hertzRef_[size_t(i)] / std::sqrt(1.0 + x * x));
+    }
+}
+
+// Lines 1047-1057: the NPZ velw row for this velocity, peak-normalised. The velocity is
+// remapped through sqrt of its 0..1 position among the NPZ velocities first (as in Python,
+// whose remap adds the lowest velocity twice).
+void FastEngine::npzCoupling(double velocity, double* out) const noexcept
+{
+    const EdgeNpz& z = bake_->edgeNpz;
+    const int nv = static_cast<int>(z.velocities.size());
+    const double v0 = z.velocities.front(), v1 = z.velocities.back();
+    const double x = std::sqrt(clamp01((velocity - v0) / (v1 - v0)));
+    const double mapped = v0 + numpyInterp(x, sqrtVelsNorm_.data(), z.velocities.data(), nv, 1);
+    double peak = 0.0;
+    for (int i = 0; i < n_; ++i)
+    {
+        out[i] = numpyInterp(mapped, z.velocities.data(), z.velw.data() + i, nv, n_);
+        peak = std::max(peak, out[i]);
+    }
+    if (z.normalize && peak > 1e-12)
+        for (int i = 0; i < n_; ++i)
+            out[i] = out[i] / peak;
+}
+
+// Lines 540-573: the band envelope of an edge strike, interpolated between the NPZ
+// velocities, peak-normalised and times the per-band RMS correction.
+void FastEngine::startEnvelope(Component& c, double velocity) noexcept
+{
+    const EdgeNpz& z = bake_->edgeNpz;
+    const int nv = static_cast<int>(z.velocities.size());
+    if (velocity <= z.velocities.front())
+    {
+        c.envV0 = 0;
+        c.envVt = 0.0;
+    }
+    else if (velocity >= z.velocities.back())
+    {
+        c.envV0 = nv - 2;
+        c.envVt = 1.0;
+    }
+    else
+    {
+        int j = static_cast<int>(std::upper_bound(z.velocities.begin(), z.velocities.end(), velocity) -
+                                 z.velocities.begin()) - 1;
+        j = std::min(std::max(j, 0), nv - 2);
+        c.envV0 = j;
+        c.envVt = (velocity - z.velocities[size_t(j)]) / (z.velocities[size_t(j) + 1] - z.velocities[size_t(j)]);
+    }
+    const int nf = z.numFrames, nb = z.numBands;
+    const double* r0 = z.envelopes.data() + size_t(c.envV0) * size_t(nf) * size_t(nb);
+    const double* r1 = r0 + size_t(nf) * size_t(nb);
+    double peak = 0.0;
+    for (int i = 0; i < nf * nb; ++i)
+        peak = std::max(peak, r0[i] + (r1[i] - r0[i]) * c.envVt);
+    c.envScale = peak > 1e-12 ? 1.0 / peak : 1.0;
+    for (int band = 0; band < nb; ++band)
+    {
+        double m = 0.0;
+        for (int k = 0; k < nf; ++k)
+        {
+            const size_t at = size_t(k) * size_t(nb) + size_t(band);
+            m = std::max(m, r0[at] + (r1[at] - r0[at]) * c.envVt);
+        }
+        m *= c.envScale * (z.rmsCorrection.empty() ? 1.0 : z.rmsCorrection[size_t(band)]);
+        std::fill(c.emax.begin() + bandStart_[size_t(band)], c.emax.begin() + bandEnd_[size_t(band)],
+                  static_cast<float>(m));
+    }
+    std::copy(c.Br.begin(), c.Br.end(), c.Er.begin());
+    std::copy(c.Bi.begin(), c.Bi.end(), c.Ei.begin());
+    std::fill(c.fd.begin(), c.fd.end(), 1.0f);
+    c.frameBlocksLeft = frameBlocks_;
+}
+
+// The band envelope of one band at te seconds after the strike (lines 560-567: frame
+// values interpolated linearly, held after the last frame).
+double FastEngine::envelopeAt(const Component& c, int band, double te) const noexcept
+{
+    const EdgeNpz& z = bake_->edgeNpz;
+    const int nf = z.numFrames, nb = z.numBands;
+    const double kf = std::min(std::max(te / z.frameDurS, 0.0), static_cast<double>(nf - 1));
+    const int k0 = static_cast<int>(kf);
+    const int k1 = std::min(k0 + 1, nf - 1);
+    const double fr = kf - k0;
+    const double* r0 = z.envelopes.data() + size_t(c.envV0) * size_t(nf) * size_t(nb);
+    const double* r1 = r0 + size_t(nf) * size_t(nb);
+    auto at = [&](int k) {
+        const size_t i = size_t(k) * size_t(nb) + size_t(band);
+        return r0[i] + (r1[i] - r0[i]) * c.envVt;
+    };
+    const double corr = z.rmsCorrection.empty() ? 1.0 : z.rmsCorrection[size_t(band)];
+    return (at(k0) * (1.0 - fr) + at(k1) * fr) * c.envScale * corr;
+}
+
+// The in-frame decay (line 892: exp(-ln1000 (t mod 20 ms) / T60)) at `elapsed` seconds
+// after the strike, and the control blocks until it next restarts, rounded to a block.
+void FastEngine::restartFrames(Component& c, double elapsed) noexcept
+{
+    const double period = bake_->edgeNpz.frameDecayPeriodS;
+    const double phase = std::fmod(std::max(elapsed, 0.0), period);
+    int left = static_cast<int>(std::lround((period - phase) * sr_ / static_cast<double>(K_)));
+    if (left <= 0)
+    {
+        std::fill(c.fd.begin(), c.fd.end(), 1.0f);
+        c.frameBlocksLeft = frameBlocks_;
+        return;
+    }
+    c.frameBlocksLeft = std::min(left, frameBlocks_);
+    for (int k = 0; k < n_; ++k)
+        c.fd[size_t(k)] = static_cast<float>(std::exp(negLambda_[size_t(k)] * c.epsK[size_t(k)] * phase));
+}
+
+void FastEngine::reset() noexcept
+{
+    for (auto& c : components_)
+    {
+        c.used = c.pending = c.envOn = false;
+        c.settled = true;
+    }
+    activeContacts_ = 0;
+    std::fill(zr_.begin(), zr_.end(), 0.0);
+    std::fill(zi_.begin(), zi_.end(), 0.0);
+    hpZ0_ = hpZ1_ = 0.0;
+    lfS_ = mfS_ = 0.0;
+    lfTLast_ = mfTLast_ = 0.0;
+    lfScaleNow_ = mfScaleNow_ = 1.0;
+    wanderScale_ = wanderRateScale_ = 1.0;
+    nKinks_ = 0;
+    if (!isPrepared())
+        return;
+    sampleNow_ = static_cast<int64_t>(clock_);
+    baseSample_ = sampleNow_;
+    startFreePhase(); // nothing rings: no mode is above the threshold
+}
+
+bool FastEngine::isSilent() const noexcept
+{
+    if (nAct_ != 0 || activeContacts_ != 0)
+        return false;
+    for (const auto& c : components_)
+        if (c.used)
+            return false;
+    return true;
+}
+
+bool FastEngine::skip(int numSamples) noexcept
+{
+    if (numSamples <= 0 || !isPrepared() || !isSilent())
+        return false;
+    clock_ += static_cast<uint64_t>(numSamples);
+    freePos_ += numSamples;
+    sampleNow_ = static_cast<int64_t>(clock_);
+    return true;
+}
+
 void FastEngine::strike(int slotIndex, double velocity, double position) noexcept
 {
     if (!isPrepared() || slotIndex < 0 || slotIndex >= numSlots()) return;
@@ -1079,7 +1370,10 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
         scratchPhase_[i] = rng_.uniform(b.phaseLow, range);
 
     const double v = clamp01(velocity);
-    velocityParticipation(s.bowVp, v, scratchVel_.data());
+    if (s.hasBowVp)
+        velocityParticipation(s.bowVp, v, scratchVel_.data());
+    else
+        hertzVelocity(velocity, scratchVel_.data()); // line 979
 
     const double pos = clamp01(position);
     const double edgeFrac = clamp01(1.0 - pos / 0.5);
@@ -1138,9 +1432,21 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
         contact->k = 0;
     }
     comp.pending = contact != nullptr;
+    // Lines 1043-1061: an edge strike of a preset with NPZ data takes its coupling from the
+    // velw tables, with a second set of random phases (Python draws both).
+    const bool npzEdge = b.edgeNpz.present && edgeFrac > 0.1 && b.edgeNpz.useVelw;
+    double npzLevel = 0.0;
+    if (npzEdge)
+    {
+        npzCoupling(velocity, scratchBellVel_.data());
+        npzLevel = numpyScalarPower(velocity, b.edgeNpz.levelVelGainPower);
+        for (size_t i = 0; i < n; ++i)
+            scratchPhase_[i] = rng_.uniform(b.phaseLow, range);
+    }
     for (size_t i = 0; i < n; ++i)
     {
-        const double m = (b.excNorm[i] * numpyScalarPower(scratchVel_[i], s.velGainPower)) * scratchPosW_[i];
+        const double m = npzEdge ? scratchBellVel_[i] * npzLevel
+                                 : (b.excNorm[i] * numpyScalarPower(scratchVel_[i], s.velGainPower)) * scratchPosW_[i];
         const double cr = (m * std::cos(scratchPhase_[i])) * calib;
         const double ci = (m * std::sin(scratchPhase_[i])) * calib;
         comp.Br[i] = static_cast<float>(cr); // the coupling until its contact ends (startFreePhase)
@@ -1166,6 +1472,9 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     comp.eps = std::max(washDamp - oscWash_, 0.0); // 0 only for a velocity outside 0..1
     for (size_t i = 0; i < n; ++i)
         comp.epsK[i] = comp.eps;
+    if (!comp.pending)
+        for (int k = 0; k < n_; ++k) // without a contact phase the decay starts now
+            setDecay(comp, k);
 
     ++strikesApplied_;
     lastSlot_ = slotIndex;
@@ -1179,11 +1488,26 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     comp.onsetOn = false;
     comp.ptMax = 0.0;
     comp.gm1Max = 0.0;
+    // Lines 690-694 and 869-894: with an NPZ band envelope an edge strike's level follows
+    // the envelope for its onset window, and the onset ramp does not apply (line 896).
+    comp.envOn = envBake_ && edgeFrac > 0.1;
+    if (comp.envOn)
+        startEnvelope(comp, velocity);
     if (p.bandEnvOnset)
     {
         const double ef = clamp01(1.0 - rawPos / 0.5);
-        for (size_t i = 0; i < n; ++i)
-            scratchPkT_[i] = ef * b.pkTEdge[i] + (1.0 - ef) * b.pkTBow[i];
+        if (!b.pkTEdgeByVel.empty())
+        {
+            // Bettis format (lines 628-631): the edge pk_t interpolated by velocity per mode.
+            const int nv = static_cast<int>(b.pkTEdgeVelocities.size());
+            for (size_t i = 0; i < n; ++i)
+                scratchPkT_[i] = ef * numpyInterp(velocity, b.pkTEdgeVelocities.data(), b.pkTEdgeByVel.data() + i,
+                                                  nv, n_) +
+                                 (1.0 - ef) * b.pkTBow[i];
+        }
+        else
+            for (size_t i = 0; i < n; ++i)
+                scratchPkT_[i] = ef * b.pkTEdge[i] + (1.0 - ef) * b.pkTBow[i];
         if (p.velTilt && ef > 1e-3)
         {
             const int nv = static_cast<int>(b.velTiltVelocities.size());
@@ -1203,7 +1527,7 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
                 scratchPkT_[i] = scratchPkT_[i] * sm;
             }
         }
-        comp.rampOn = ef > 0.1; // lines 848-851
+        comp.rampOn = ef > 0.1 && !comp.envOn; // lines 848-851
         if (comp.rampOn)
             for (size_t i = 0; i < n; ++i)
             {
@@ -1227,7 +1551,7 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
             }
         }
     }
-    comp.settled = !comp.rampOn && !comp.onsetOn;
+    comp.settled = !comp.rampOn && !comp.onsetOn && !comp.envOn;
 
     // render() lines 652-672: LF accumulator, cymbal-wide (wander-rate boost).
     if (p.lfDepth > 0.0)
@@ -1290,7 +1614,11 @@ void FastEngine::startFreePhase() noexcept
         }
         for (auto& c : components_)
             if (c.used && !c.pending)
+            {
                 multiplyAmplitudes(c, rotR_.data(), rotI_.data());
+                if (c.envOn)
+                    multiplyAmplitudes(c.Er.data(), c.Ei.data(), rotR_.data(), rotI_.data());
+            }
     }
     for (auto& c : components_)
     {
@@ -1313,6 +1641,7 @@ void FastEngine::startFreePhase() noexcept
             c.Bi[s] = static_cast<float>(cr * hi + ci * hr);
         }
     }
+    const double tFree = timeBase_ + static_cast<double>(sampleNow_) / sr_;
     for (auto& c : components_)
     {
         if (!c.used)
@@ -1322,8 +1651,15 @@ void FastEngine::startFreePhase() noexcept
             for (int k = 0; k < n_; ++k)
                 setDecay(c, k);
             c.pending = false;
+            if (c.envOn) // the envelope scales what the contact left
+            {
+                std::copy(c.Br.begin(), c.Br.end(), c.Er.begin());
+                std::copy(c.Bi.begin(), c.Bi.end(), c.Ei.begin());
+            }
         }
         std::fill(c.D.begin(), c.D.end(), 1.0f);
+        if (c.envOn) // the new control grid starts here: find this strike's frame phase on it
+            restartFrames(c, tFree - c.tStrike);
     }
     baseSample_ = sampleNow_;
 
@@ -1350,7 +1686,11 @@ void FastEngine::startFreePhase() noexcept
             // Below the skip threshold for this segment (as Engine): what it holds is dropped.
             for (auto& c : components_)
                 if (c.used)
+                {
                     c.Br[k] = c.Bi[k] = 0.0f;
+                    if (c.envOn)
+                        c.Er[k] = c.Ei[k] = 0.0f;
+                }
             continue;
         }
         const size_t d = size_t(a);
