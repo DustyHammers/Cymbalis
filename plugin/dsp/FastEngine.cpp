@@ -9,10 +9,10 @@ namespace cymbalis
 
 namespace
 {
-// 128-bit float vectors (GCC/Clang vector extension): NEON on arm64, SSE on x86_64.
-// Nothing here needs AVX.
+// 128-bit vectors (GCC/Clang vector extension): NEON on arm64, SSE on x86_64. No AVX.
 typedef float v4f __attribute__((vector_size(16)));
 typedef double v2d __attribute__((vector_size(16)));
+typedef int32_t v4i __attribute__((vector_size(16)));
 
 inline v4f ld(const float* p) noexcept
 {
@@ -22,6 +22,15 @@ inline v4f ld(const float* p) noexcept
 }
 
 inline void st(float* p, v4f v) noexcept { std::memcpy(p, &v, sizeof v); }
+
+inline v4f splat(float x) noexcept { return v4f {x, x, x, x}; }
+
+inline v4f select(v4i mask, v4f a, v4f b) noexcept { return (v4f) (((v4i) a & mask) | ((v4i) b & ~mask)); }
+inline v4f vclamp01(v4f x) noexcept
+{
+    const v4f zero = splat(0.0f), one = splat(1.0f);
+    return select(x < zero, zero, select(x > one, one, x));
+}
 
 inline v2d ld2(const double* p) noexcept
 {
@@ -34,15 +43,17 @@ inline void st2(double* p, v2d v) noexcept { std::memcpy(p, &v, sizeof v); }
 
 constexpr int kGroup = 16;            // nPad_ is a multiple of this (and of every kernel group)
 constexpr double kHpCutoffHz = 120.0; // render() line 703: _hp(out[:,1], 120), 2nd-order Butterworth
-constexpr int kDropEvery = 8;         // control blocks between checks for modes below the threshold
+constexpr int kDropEvery = 4;         // control blocks between checks for quiet modes and components
 constexpr double kSmallAngle = 0.05;  // the series below are used for wander steps under this (rad)
+constexpr double kSettled = 1e-6;     // an onset envelope below this (times its largest gain) is over
+constexpr double kWashDampFloor = 0.3; // line 1129: wash_damp = max(0.3, ...)
 
 // Vectors of 4 modes per kernel group: enough independent oscillators to hide the
 // multiply latency without running out of registers (16 SSE registers, 32 NEON).
 #if defined(__aarch64__) || defined(__arm64__)
-constexpr int kVecPerGroup = 4;
-#else
 constexpr int kVecPerGroup = 2;
+#else
+constexpr int kVecPerGroup = 1;
 #endif
 
 double clamp01(double x) { return std::min(std::max(x, 0.0), 1.0); }
@@ -82,6 +93,33 @@ void butterworthHighPass2(double fc, double sr, double& b0, double& b1, double& 
     a1 = 2.0 * (k * k - 1.0) * norm;
     a2 = (1.0 - std::sqrt(2.0) * k + k * k) * norm;
 }
+
+// (r + i im)^m by squaring.
+void complexPower(double r, double im, int64_t m, double& outR, double& outI)
+{
+    double ar = 1.0, ai = 0.0;
+    while (m > 0)
+    {
+        if (m & 1)
+        {
+            const double t = ar * r - ai * im;
+            ai = ar * im + ai * r;
+            ar = t;
+        }
+        const double t = r * r - im * im;
+        im = 2.0 * r * im;
+        r = t;
+        m >>= 1;
+    }
+    outR = ar;
+    outI = ai;
+}
+
+// The ramp of lines 896-901: min(1, bf + (1 - bf) * te / pt), then max(., 0).
+inline double ramp(double bf, double te, double invPt) noexcept
+{
+    return std::max(std::min(1.0, bf + (1.0 - bf) * te * invPt), 0.0);
+}
 } // namespace
 
 FastEngine::FastEngine(std::shared_ptr<const BakeData> bake) : bake_(std::move(bake)), n_(bake_->numModes)
@@ -109,13 +147,17 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake) : bake_(std::move(b
     zi_.assign(n, 0.0);
     omega_.resize(n);
     cosLp_.resize(n);
+    negLambda_.resize(n);
     for (size_t i = 0; i < n; ++i)
     {
         omega_[i] = b.twoPi * b.freqHz[i];
         cosLp_[i] = std::cos(b.lfoPhase[i]);
+        negLambda_[i] = -b.log1000 / b.t60S[i];
     }
-    beoPkT_.assign(n, 0.0);
     scratchBandScale_.assign(size_t(std::max(b.velTiltBands, 1)), 1.0);
+    // The shared oscillator's decay: T60 / the smallest wash_damp a strike with a velocity
+    // in 0..1 can have, so every strike's own decay relative to it is >= 0 (it only falls).
+    oscWash_ = std::max(kWashDampFloor, 1.0 + p.velLenTilt * ((p.velLenTilt >= 0.0 ? 0.0 : 1.0) - p.velLenTiltRef));
     if (p.contactPermode)
     {
         contactPool_.resize(kMaxContacts);
@@ -125,12 +167,24 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake) : bake_(std::move(b
             c.ci.assign(n, 0.0);
         }
     }
+    components_.resize(kMaxComponents);
+    for (auto& c : components_)
+    {
+        for (auto* v : {&c.Br, &c.Bi, &c.D, &c.dmul, &c.invDmul, &c.gm1, &c.rsl})
+            v->assign(np, 0.0f);
+        c.rc0.assign(np, 1.0f);
+        for (auto* v : {&c.epsK, &c.pt})
+            v->assign(np, 0.0);
+    }
+
     actIdx_.assign(np, 0);
-    for (auto* v : {&yr_, &yi_, &sr32_, &si32_, &wl_, &wr_, &dwl_, &dwr_})
+    actPos_.assign(n, -1);
+    for (auto* v : {&yr_, &yi_, &sr32_, &si32_, &ar_, &ai_, &dar_, &dai_, &pl32_, &pr32_})
         v->assign(np, 0.0f);
-    for (auto* v : {&Yr_, &Yi_, &p1r_, &p1i_, &PKr_, &PKi_, &cr_, &ci_, &qr_, &qi_, &phiW_, &negDlr_, &cosLpA_,
-                    &pl_, &pr_, &mf_, &pt_, &invPt_, &bfA_, &gm1_, &gBound_})
+    for (auto* v : {&Yr_, &Yi_, &cr_, &ci_, &qr_, &qi_, &phiW_, &negDlr_, &mf_, &gBound_})
         v->assign(np, 0.0);
+    for (auto* v : {&A0r_, &A0i_, &A1r_, &A1i_, &dropW_, &dropE_, &rotR_, &rotI_, &sumR_, &sumI_})
+        v->assign(np, 0.0f);
     kinks_.resize(np);
     accL_.assign(size_t(kMaxControlBlock) * 4, 0.0f);
     accR_.assign(size_t(kMaxControlBlock) * 4, 0.0f);
@@ -138,6 +192,7 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake) : bake_(std::move(b
     scratchVel_.resize(n);
     scratchBellVel_.resize(n);
     scratchPosW_.resize(n);
+    scratchPkT_.resize(n);
     rng_ = b.renderStream; // plugin load: the strike-phase sequence starts here
 }
 
@@ -152,28 +207,39 @@ void FastEngine::prepare(double sampleRate)
         clock_ = 0;
     }
     sr_ = sampleRate;
-    // About 0.7 ms between control points at every supported rate.
-    K_ = sr_ > 50000.0 ? 64 : 32;
+    // About 2.8 ms between control points at every supported rate.
+    K_ = sr_ > 50000.0 ? 256 : 128;
 
-    // Per-sample steps at the host rate.
+    // Steps at the host rate: undamped per sample (contact phase), and the shared
+    // oscillator's per sample and per control block (decay T60 / oscWash_).
     stepR_.resize(n);
     stepI_.resize(n);
-    rot1R_.resize(n);
-    rot1I_.resize(n);
+    oscR_.resize(n);
+    oscI_.resize(n);
+    PKr_.resize(n);
+    PKi_.resize(n);
     for (size_t i = 0; i < n; ++i)
     {
-        const double ph = omega_[i] / sr_;
-        rot1R_[i] = std::cos(ph);
-        rot1I_[i] = std::sin(ph);
-        const double e = std::exp(-b.log1000 / (b.t60S[i] * sr_));
-        stepR_[i] = rot1R_[i] * e;
-        stepI_[i] = rot1I_[i] * e;
+        const double c1 = std::cos(omega_[i] / sr_), s1 = std::sin(omega_[i] / sr_);
+        const double e = std::exp(negLambda_[i] / sr_);
+        stepR_[i] = c1 * e;
+        stepI_[i] = s1 * e;
+        const double eo = std::exp(negLambda_[i] * oscWash_ / sr_);
+        oscR_[i] = c1 * eo;
+        oscI_[i] = s1 * eo;
+        const double eK = std::exp(negLambda_[i] * oscWash_ * K_ / sr_);
+        PKr_[i] = std::cos(omega_[i] * K_ / sr_) * eK;
+        PKi_[i] = std::sin(omega_[i] * K_ / sr_) * eK;
     }
 
     // Contact force (_apply_strike lines 1073-1091). The taus and sigmas are samples at the
     // bake's rate (44.1 kHz); here they are converted to samples at the host rate, so the
     // contact keeps its duration in seconds. At 44.1 kHz this is Python's matrix.
     force_.clear();
+    Hr_.assign(n, 0.0);
+    Hi_.assign(n, 0.0);
+    H32r_.assign(size_t(nPad_), 0.0f);
+    H32i_.assign(size_t(nPad_), 0.0f);
     contactLen_ = 0;
     if (p.contactPermode)
     {
@@ -206,26 +272,48 @@ void FastEngine::prepare(double sampleRate)
                 sum += row[k];
             }
             const double denom = sum + 1e-9;
+            // H: the contact's response, accumulated the way the contact phase steps the state.
+            double hr = 0.0, hi = 0.0;
             for (size_t k = 0; k < len; ++k)
+            {
                 force_[k * n + i] = row[k] / denom;
+                hr += force_[k * n + i];
+                const double t = hr * stepR_[i] - hi * stepI_[i];
+                hi = hr * stepI_[i] + hi * stepR_[i];
+                hr = t;
+            }
+            Hr_[i] = hr;
+            Hi_[i] = hi;
+            H32r_[i] = static_cast<float>(hr);
+            H32i_[i] = static_cast<float>(hi);
         }
     }
 
     butterworthHighPass2(kHpCutoffHz, sr_, hpB0_, hpB1_, hpB2_, hpA1_, hpA2_);
 
-    // Silence: no ringing, no running contact, a fresh (silent) segment.
+    // Silence: no ringing, no running contact, no components, a fresh (silent) segment.
     std::fill(zr_.begin(), zr_.end(), 0.0);
     std::fill(zi_.begin(), zi_.end(), 0.0);
+    for (auto& c : components_)
+        c.used = false;
     activeContacts_ = 0;
     hpZ0_ = hpZ1_ = 0.0;
-    segStartTime_ = timeSeconds();
-    segContactSamples_ = 0;
+    sampleNow_ = 0;
+    baseSample_ = 0;
     startFreePhase();
 }
 
 double FastEngine::timeSeconds() const noexcept
 {
     return sr_ > 0.0 ? timeBase_ + static_cast<double>(clock_) / sr_ : timeBase_;
+}
+
+int FastEngine::activeComponents() const noexcept
+{
+    int count = 0;
+    for (const auto& c : components_)
+        count += c.used ? 1 : 0;
+    return count;
 }
 
 void FastEngine::process(float* left, float* right, int numSamples) noexcept
@@ -237,6 +325,7 @@ void FastEngine::process(float* left, float* right, int numSamples) noexcept
         std::fill(right, right + numSamples, 0.0f);
         return;
     }
+    sampleNow_ = static_cast<int64_t>(clock_);
     int pos = 0;
     while (pos < numSamples)
     {
@@ -267,7 +356,9 @@ void FastEngine::process(float* left, float* right, int numSamples) noexcept
     clock_ += static_cast<uint64_t>(numSamples);
 }
 
-// Contact phase, one sample, as Engine::renderContactSample, with the host-rate force and step.
+// Contact phase, one sample, as Engine::renderContactSample, with the host-rate force and
+// step: the whole state (every component and the running injections) without any output
+// factor (PORT_MAP f.4, as in Python).
 void FastEngine::renderContactSample(float* left, float* right) noexcept
 {
     const BakeData& b = *bake_;
@@ -332,7 +423,7 @@ void FastEngine::renderContactSample(float* left, float* right) noexcept
         }
     }
     activeContacts_ = kept;
-    ++segContactSamples_;
+    ++sampleNow_;
     if (activeContacts_ == 0)
         startFreePhase();
 }
@@ -351,12 +442,7 @@ void FastEngine::renderFree(float* left, float* right, int n) noexcept
         std::fill(accL_.begin(), accL_.begin() + 4 * m, 0.0f);
         std::fill(accR_.begin(), accR_.begin() + 4 * m, 0.0f);
         if (nAct_ > 0)
-        {
-            if (flatGain_)
-                kernel<kVecPerGroup, false>(m);
-            else
-                kernel<kVecPerGroup, true>(m);
-        }
+            kernel<kVecPerGroup>(m);
         for (int k = 0; k < m; ++k)
         {
             const float* a = accL_.data() + 4 * k;
@@ -367,14 +453,15 @@ void FastEngine::renderFree(float* left, float* right, int n) noexcept
         if (nKinks_ > 0)
             renderKinks(left + pos, right + pos, j, m);
         freePos_ += m;
+        sampleNow_ += m;
         pos += m;
     }
 }
 
-// m samples of every ringing mode. Lanes are modes; G vectors (4G modes) per group keep
-// enough independent oscillators in flight. Per mode and sample:
-//   out += Re(y) * w;  y *= s;  w += dw (Ramp only)
-template <int G, bool Ramp>
+// m samples of every ringing mode. Lanes are modes; G vectors (4G modes) per group. Per
+// mode and sample: out = Re(y * a);  L += out * pickL;  R += out * pickR;  y *= s;  a += da.
+// y is the shared oscillator (frequency, undamped decay, wander), a the components' sum.
+template <int G>
 void FastEngine::kernel(int m) noexcept
 {
     const int groups = (nAct_ + 4 * G - 1) / (4 * G);
@@ -383,7 +470,7 @@ void FastEngine::kernel(int m) noexcept
     for (int g = 0; g < groups; ++g)
     {
         const size_t o = size_t(g) * 4 * G;
-        v4f yr[G], yi[G], sr[G], si[G], wl[G], wr[G], dl[G], dr[G];
+        v4f yr[G], yi[G], sr[G], si[G], ar[G], ai[G], dr[G], di[G], pl[G], pr[G];
         for (int q = 0; q < G; ++q)
         {
             const size_t k = o + size_t(4 * q);
@@ -391,35 +478,33 @@ void FastEngine::kernel(int m) noexcept
             yi[q] = ld(&yi_[k]);
             sr[q] = ld(&sr32_[k]);
             si[q] = ld(&si32_[k]);
-            wl[q] = ld(&wl_[k]);
-            wr[q] = ld(&wr_[k]);
-            if (Ramp)
-            {
-                dl[q] = ld(&dwl_[k]);
-                dr[q] = ld(&dwr_[k]);
-            }
+            ar[q] = ld(&ar_[k]);
+            ai[q] = ld(&ai_[k]);
+            dr[q] = ld(&dar_[k]);
+            di[q] = ld(&dai_[k]);
+            pl[q] = ld(&pl32_[k]);
+            pr[q] = ld(&pr32_[k]);
         }
         for (int j = 0; j < m; ++j)
         {
-            v4f al = yr[0] * wl[0];
-            v4f ar = yr[0] * wr[0];
+            v4f out = yr[0] * ar[0] - yi[0] * ai[0];
+            v4f al = out * pl[0];
+            v4f aR = out * pr[0];
             for (int q = 1; q < G; ++q)
             {
-                al += yr[q] * wl[q];
-                ar += yr[q] * wr[q];
+                out = yr[q] * ar[q] - yi[q] * ai[q];
+                al += out * pl[q];
+                aR += out * pr[q];
             }
             st(accL + 4 * j, ld(accL + 4 * j) + al);
-            st(accR + 4 * j, ld(accR + 4 * j) + ar);
+            st(accR + 4 * j, ld(accR + 4 * j) + aR);
             for (int q = 0; q < G; ++q)
             {
                 const v4f t = yr[q] * sr[q] - yi[q] * si[q];
                 yi[q] = yr[q] * si[q] + yi[q] * sr[q];
                 yr[q] = t;
-                if (Ramp)
-                {
-                    wl[q] += dl[q];
-                    wr[q] += dr[q];
-                }
+                ar[q] += dr[q];
+                ai[q] += di[q];
             }
         }
         for (int q = 0; q < G; ++q)
@@ -427,17 +512,41 @@ void FastEngine::kernel(int m) noexcept
             const size_t k = o + size_t(4 * q);
             st(&yr_[k], yr[q]);
             st(&yi_[k], yi[q]);
-            if (Ramp)
-            {
-                st(&wl_[k], wl[q]);
-                st(&wr_[k], wr[q]);
-            }
+            st(&ar_[k], ar[q]);
+            st(&ai_[k], ai[q]);
         }
     }
 }
 
-// The modes whose ramp corner lies in this block, samples j0 .. j0+m of the block, with
-// the ramp evaluated per sample (lines 896-901) and the onset envelope interpolated.
+// A component-mode whose ramp reaches 1 inside the current block: oscillator x amplitude at
+// the block start, for renderKinks(), which steps it with the shared oscillator's step
+// times the component's own decay per sample.
+void FastEngine::addKink(const Component& c, int mode, double d0, double te0) noexcept
+{
+    const size_t k = size_t(mode);
+    const int a = actPos_[k];
+    if (a < 0 || nKinks_ >= static_cast<int>(kinks_.size()))
+        return; // a silent mode holds nothing
+    const size_t sa = size_t(a);
+    const double mr = c.Br[k] * d0 * mf_[sa], mi = c.Bi[k] * d0 * mf_[sa];
+    const double yr = yr_[sa], yi = yi_[sa];
+    KinkMode& km = kinks_[size_t(nKinks_++)];
+    km.yr = yr * mr - yi * mi;
+    km.yi = yr * mi + yi * mr;
+    km.sa = a;
+    km.dps = 1.0 + (static_cast<double>(c.dmul[k]) - 1.0) / static_cast<double>(K_);
+    km.pl = pl32_[sa];
+    km.pr = pr32_[sa];
+    km.gm1 = c.onsetOn ? c.gm1[k] : 0.0;
+    km.pt = c.pt[k];
+    km.te0 = te0;
+    km.env0 = c.env0;
+    km.env1 = c.env1;
+}
+
+// The component-modes whose ramp corner lies in this block, samples j0 .. j0+m of the
+// block, with the ramp evaluated per sample (lines 896-901) and the onset envelope
+// interpolated.
 void FastEngine::renderKinks(float* left, float* right, int j0, int m) noexcept
 {
     const double bf = bake_->params.birthFrac;
@@ -446,17 +555,20 @@ void FastEngine::renderKinks(float* left, float* right, int j0, int m) noexcept
     {
         KinkMode& km = kinks_[size_t(q)];
         double yr = km.yr, yi = km.yi;
+        const double invPt = 1.0 / km.pt;
+        const double sr = static_cast<double>(sr32_[size_t(km.sa)]) * km.dps;
+        const double si = static_cast<double>(si32_[size_t(km.sa)]) * km.dps;
         for (int j = 0; j < m; ++j)
         {
             const int jb = j0 + j;
-            const double te = blockTe0_ + static_cast<double>(jb) / sr_;
-            double g = km.mf * std::max(std::min(1.0, bf + ((1.0 - bf) * te) / km.pt), 0.0);
+            const double te = km.te0 + static_cast<double>(jb) / sr_;
+            double g = ramp(bf, te, invPt);
             if (km.gm1 != 0.0)
-                g *= 1.0 + km.gm1 * (blockEnv0_ + (blockEnv1_ - blockEnv0_) * (static_cast<double>(jb) * invK));
+                g *= 1.0 + km.gm1 * (km.env0 + (km.env1 - km.env0) * (static_cast<double>(jb) * invK));
             left[j] += static_cast<float>(yr * km.pl * g);
             right[j] += static_cast<float>(yr * km.pr * g);
-            const double t = yr * km.sr - yi * km.si;
-            yi = yr * km.si + yi * km.sr;
+            const double t = yr * sr - yi * si;
+            yi = yr * si + yi * sr;
             yr = t;
         }
         km.yr = yr;
@@ -464,26 +576,70 @@ void FastEngine::renderKinks(float* left, float* right, int j0, int m) noexcept
     }
 }
 
-// Every kDropEvery blocks: modes whose amplitude, times the largest gain they can still
-// get, is below the skip threshold stop being rendered. |Y| only decays, so they never
-// come back within the segment. The others are compacted to the front.
+// Every kDropEvery blocks: modes whose total amplitude bound is below the skip threshold
+// stop being rendered (their components are cleared: what is left is below 1e-9 x level),
+// and components that are below it in every mode are released.
 void FastEngine::dropQuietModes() noexcept
 {
     const double thr2 = segThreshold_ * segThreshold_;
+    // Per mode: |oscillator|^2 x (bound of the output gains)^2, zero for silent modes.
+    std::fill(dropW_.begin(), dropW_.end(), 0.0f);
+    std::fill(dropE_.begin(), dropE_.end(), 0.0f);
+    for (int r = 0; r < nAct_; ++r)
+    {
+        const size_t s = size_t(r);
+        dropW_[size_t(actIdx_[s])] =
+            static_cast<float>((Yr_[s] * Yr_[s] + Yi_[s] * Yi_[s]) * (gBound_[s] * gBound_[s]));
+    }
+    // Per component: |B D|^2 summed into each mode's energy; released if below everywhere.
+    int nUsed = 0;
+    const v4f t2 = splat(static_cast<float>(thr2));
+    float* __restrict E = dropE_.data();
+    const float* __restrict W = dropW_.data();
+    for (auto& c : components_)
+    {
+        if (!c.used || c.pending)
+            continue;
+        ++nUsed;
+        const float* __restrict D = c.D.data();
+        const float* __restrict Br = c.Br.data();
+        const float* __restrict Bi = c.Bi.data();
+        v4i alive = {0, 0, 0, 0};
+        for (int o = 0; o < nPad_; o += 4)
+        {
+            const v4f d = ld(D + o), r = ld(Br + o), m = ld(Bi + o);
+            const v4f ce = (r * r + m * m) * (d * d);
+            st(E + o, ld(E + o) + ce);
+            alive |= (ce * ld(W + o) >= t2);
+        }
+        if (!(alive[0] | alive[1] | alive[2] | alive[3]))
+            c.used = false;
+    }
+
     int w = 0;
     for (int r = 0; r < nAct_; ++r)
     {
         const size_t s = size_t(r);
-        if ((Yr_[s] * Yr_[s] + Yi_[s] * Yi_[s]) * (gBound_[s] * gBound_[s]) < thr2)
+        const size_t k = size_t(actIdx_[s]);
+        // |sum B D G| <= sqrt(nUsed * sum |B D|^2) * gBound (Cauchy-Schwarz)
+        if (double(nUsed) * double(E[k]) * double(W[k]) < thr2)
+        {
+            for (auto& c : components_)
+                if (c.used && !c.pending)
+                    c.Br[k] = c.Bi[k] = 0.0f;
+            actPos_[k] = -1;
             continue;
+        }
         if (w != r)
         {
             const size_t d = size_t(w);
             actIdx_[d] = actIdx_[s];
-            for (auto* v : {&Yr_, &Yi_, &p1r_, &p1i_, &PKr_, &PKi_, &cr_, &ci_, &qr_, &qi_, &phiW_, &negDlr_,
-                            &cosLpA_, &pl_, &pr_, &mf_, &pt_, &invPt_, &bfA_, &gm1_, &gBound_})
+            for (auto* v : {&Yr_, &Yi_, &cr_, &ci_, &qr_, &qi_, &phiW_, &negDlr_, &mf_, &gBound_})
                 (*v)[d] = (*v)[s];
+            pl32_[d] = pl32_[s];
+            pr32_[d] = pr32_[s];
         }
+        actPos_[k] = w;
         ++w;
     }
     const int end = std::min(nPad_, roundUp(nAct_, kGroup));
@@ -491,191 +647,387 @@ void FastEngine::dropQuietModes() noexcept
     {
         const size_t s = size_t(k);
         yr_[s] = yi_[s] = sr32_[s] = si32_[s] = 0.0f;
-        wl_[s] = wr_[s] = dwl_[s] = dwr_[s] = 0.0f;
+        ar_[s] = ai_[s] = dar_[s] = dai_[s] = pl32_[s] = pr32_[s] = 0.0f;
     }
     nAct_ = w;
 }
 
-// Control point at the start of a block. Per ringing mode: the oscillator step for the
-// block (decay and frequency, times the wander phase increment spread over the block),
-// the output weights at both ends of the block, and the double-precision anchor for the
-// next block. The loops are branch-free so the compiler can vectorise them.
+// Control point at the start of a block. The shared oscillator of each ringing mode gets
+// its step for the block (frequency and undamped decay, times the wander phase increment
+// spread over the block) and its double-precision anchor for the next block. Then the
+// components are summed into each mode's amplitude at both ends of the block.
 void FastEngine::beginControlBlock() noexcept
 {
     const double invK = 1.0 / static_cast<double>(K_);
     const int64_t blk = freePos_ / K_;
-    const double t0 = segTBase_ + static_cast<double>(blk * K_) / sr_;
-    const double t1 = segTBase_ + static_cast<double>((blk + 1) * K_) / sr_;
-    const double te0 = t0 - beoTStrike_, te1 = t1 - beoTStrike_;
-    double env0 = 0.0, env1 = 0.0;
-    if (segOnsetOn_)
-    {
-        env0 = std::exp(-std::max(te0, 0.0) / segOnsetTau_);
-        env1 = std::exp(-std::max(te1, 0.0) / segOnsetTau_);
-    }
-    blockTe0_ = te0;
-    blockEnv0_ = env0;
-    blockEnv1_ = env1;
 
     if (blk % kDropEvery == 0)
         dropQuietModes();
     const int na = nAct_;
+    const int* idx = actIdx_.data();
 
-    // Modes whose onset ramp reaches 1 inside this block (lines 896-901: the ramp is
-    // min(1, ...)), with their oscillator at the start of the block.
-    nKinks_ = 0;
-    if (segRampOn_ && te0 < segMaxPt_)
+    // Shared oscillator.
     {
+        double* __restrict Yr = Yr_.data();
+        double* __restrict Yi = Yi_.data();
+        double* __restrict cr = cr_.data();
+        double* __restrict ci = ci_.data();
+        double* __restrict phiW = phiW_.data();
+        const double* __restrict qr = qr_.data();
+        const double* __restrict qi = qi_.data();
+        const double* __restrict negDlr = negDlr_.data();
+        float* __restrict yr = yr_.data();
+        float* __restrict yi = yi_.data();
+        float* __restrict s32r = sr32_.data();
+        float* __restrict s32i = si32_.data();
         for (int a = 0; a < na; ++a)
         {
-            const double pt = pt_[size_t(a)];
-            if (pt > 0.0 && te0 < pt && pt < te1)
-            {
-                KinkMode& km = kinks_[size_t(nKinks_++)];
-                km.yr = Yr_[size_t(a)];
-                km.yi = Yi_[size_t(a)];
-                km.pt = pt;
-                km.sr = static_cast<double>(a); // index, replaced by the step below
-            }
-        }
-    }
-
-    double* __restrict Yr = Yr_.data();
-    double* __restrict Yi = Yi_.data();
-    double* __restrict cr = cr_.data();
-    double* __restrict ci = ci_.data();
-    double* __restrict phiW = phiW_.data();
-    const double* __restrict qr = qr_.data();
-    const double* __restrict qi = qi_.data();
-    const double* __restrict negDlr = negDlr_.data();
-    const double* __restrict cosLp = cosLpA_.data();
-    const double* __restrict p1r = p1r_.data();
-    const double* __restrict p1i = p1i_.data();
-    const double* __restrict PKr = PKr_.data();
-    const double* __restrict PKi = PKi_.data();
-    float* __restrict yr = yr_.data();
-    float* __restrict yi = yi_.data();
-    float* __restrict s32r = sr32_.data();
-    float* __restrict s32i = si32_.data();
-
-    if (wanderSmall_)
-    {
-        for (int a = 0; a < na; ++a)
-        {
+            const size_t k = size_t(idx[a]);
             // LFO phasor to the next control point; wander phase there (line 867).
             const double cn = cr[a] * qr[a] - ci[a] * qi[a];
             const double sn = cr[a] * qi[a] + ci[a] * qr[a];
             cr[a] = cn;
             ci[a] = sn;
-            const double phiN = negDlr[a] * (cn - cosLp[a]);
+            const double phiN = negDlr[a] * (cn - cosLp_[k]);
             const double d = phiN - phiW[a];
             phiW[a] = phiN;
-            // exp(i d / K) for the per-sample step (|d/K| < 0.002), exp(i d) for the anchor.
-            const double x = d * invK, x2 = x * x;
-            const double c1 = 1.0 - 0.5 * x2;
-            const double s1 = x - x * x2 * (1.0 / 6.0);
-            const double d2 = d * d;
-            const double cK = 1.0 - d2 * (0.5 - d2 * (1.0 / 24.0 - d2 * (1.0 / 720.0)));
-            const double sK = d * (1.0 - d2 * (1.0 / 6.0 - d2 * (1.0 / 120.0 - d2 * (1.0 / 5040.0))));
-            s32r[a] = static_cast<float>(p1r[a] * c1 - p1i[a] * s1);
-            s32i[a] = static_cast<float>(p1r[a] * s1 + p1i[a] * c1);
+            double c1, s1, cK, sK;
+            if (wanderSmall_)
+            {
+                // exp(i d / K) for the per-sample step (|d/K| < 0.002), exp(i d) for the anchor.
+                const double x = d * invK, x2 = x * x;
+                c1 = 1.0 - 0.5 * x2;
+                s1 = x - x * x2 * (1.0 / 6.0);
+                const double d2 = d * d;
+                cK = 1.0 - d2 * (0.5 - d2 * (1.0 / 24.0 - d2 * (1.0 / 720.0)));
+                sK = d * (1.0 - d2 * (1.0 / 6.0 - d2 * (1.0 / 120.0 - d2 * (1.0 / 5040.0))));
+            }
+            else
+            {
+                c1 = std::cos(d * invK);
+                s1 = std::sin(d * invK);
+                cK = std::cos(d);
+                sK = std::sin(d);
+            }
+            s32r[a] = static_cast<float>(oscR_[k] * c1 - oscI_[k] * s1);
+            s32i[a] = static_cast<float>(oscR_[k] * s1 + oscI_[k] * c1);
             const double y0r = Yr[a], y0i = Yi[a];
             yr[a] = static_cast<float>(y0r);
             yi[a] = static_cast<float>(y0i);
-            const double ar = y0r * PKr[a] - y0i * PKi[a];
-            const double ai = y0r * PKi[a] + y0i * PKr[a];
-            Yr[a] = ar * cK - ai * sK;
-            Yi[a] = ar * sK + ai * cK;
-        }
-    }
-    else
-    {
-        for (int a = 0; a < na; ++a)
-        {
-            const double cn = cr[a] * qr[a] - ci[a] * qi[a];
-            const double sn = cr[a] * qi[a] + ci[a] * qr[a];
-            cr[a] = cn;
-            ci[a] = sn;
-            const double phiN = negDlr[a] * (cn - cosLp[a]);
-            const double d = phiN - phiW[a];
-            phiW[a] = phiN;
-            const double c1 = std::cos(d * invK), s1 = std::sin(d * invK);
-            const double cK = std::cos(d), sK = std::sin(d);
-            s32r[a] = static_cast<float>(p1r[a] * c1 - p1i[a] * s1);
-            s32i[a] = static_cast<float>(p1r[a] * s1 + p1i[a] * c1);
-            const double y0r = Yr[a], y0i = Yi[a];
-            yr[a] = static_cast<float>(y0r);
-            yi[a] = static_cast<float>(y0i);
-            const double ar = y0r * PKr[a] - y0i * PKi[a];
-            const double ai = y0r * PKi[a] + y0i * PKr[a];
-            Yr[a] = ar * cK - ai * sK;
-            Yi[a] = ar * sK + ai * cK;
+            const double pr = y0r * PKr_[k] - y0i * PKi_[k];
+            const double pi = y0r * PKi_[k] + y0i * PKr_[k];
+            Yr[a] = pr * cK - pi * sK;
+            Yi[a] = pr * sK + pi * cK;
         }
     }
 
-    // Output gain at both ends of the block: ramp (lines 896-901), onset gain (905-913),
-    // MF scale (917-919). Modes without a ramp have bfA = 1 and invPt = 0.
-    {
-        const double* __restrict mf = mf_.data();
-        const double* __restrict bfA = bfA_.data();
-        const double* __restrict invPt = invPt_.data();
-        const double* __restrict gm1 = gm1_.data();
-        const double* __restrict pl = pl_.data();
-        const double* __restrict pr = pr_.data();
-        float* __restrict wl = wl_.data();
-        float* __restrict wr = wr_.data();
-        float* __restrict dwl = dwl_.data();
-        float* __restrict dwr = dwr_.data();
-        int moving = 0; // modes whose gain changes by more than 1e-7 over the block
-        for (int a = 0; a < na; ++a)
-        {
-            const double r0 = std::max(std::min(1.0, bfA[a] + (1.0 - bfA[a]) * te0 * invPt[a]), 0.0);
-            const double r1 = std::max(std::min(1.0, bfA[a] + (1.0 - bfA[a]) * te1 * invPt[a]), 0.0);
-            const double g0 = mf[a] * r0 * (1.0 + gm1[a] * env0);
-            const double g1 = mf[a] * r1 * (1.0 + gm1[a] * env1);
-            const double dg = (g1 - g0) * invK;
-            wl[a] = static_cast<float>(pl[a] * g0);
-            wr[a] = static_cast<float>(pr[a] * g0);
-            dwl[a] = static_cast<float>(pl[a] * dg);
-            dwr[a] = static_cast<float>(pr[a] * dg);
-            moving += std::fabs(g1 - g0) > 1e-7 * std::fabs(g0) ? 1 : 0;
-        }
-        flatGain_ = moving == 0;
-    }
+    // Components: each mode's amplitude at both ends of the block.
+    sumComponents(segTBase_ + static_cast<double>(blk * K_) / sr_, segTBase_ + static_cast<double>((blk + 1) * K_) / sr_);
 
-    // The corner modes are rendered by renderKinks() for this block.
-    for (int q = 0; q < nKinks_; ++q)
+    // Shared MF scale (lines 917-919), then the per-sample increment.
+    for (int a = 0; a < na; ++a)
     {
-        KinkMode& km = kinks_[size_t(q)];
-        const size_t a = static_cast<size_t>(km.sr);
-        km.sr = sr32_[a];
-        km.si = si32_[a];
-        km.pl = pl_[a];
-        km.pr = pr_[a];
-        km.mf = mf_[a];
-        km.gm1 = gm1_[a];
-        wl_[a] = wr_[a] = dwl_[a] = dwr_[a] = 0.0f;
+        const size_t s = size_t(a);
+        const size_t k = size_t(idx[a]);
+        const double mf = mf_[s];
+        const double r0 = A0r_[k] * mf, i0 = A0i_[k] * mf;
+        ar_[s] = static_cast<float>(r0);
+        ai_[s] = static_cast<float>(i0);
+        dar_[s] = static_cast<float>((A1r_[k] * mf - r0) * invK);
+        dai_[s] = static_cast<float>((A1i_[k] * mf - i0) * invK);
     }
 }
 
-// Lines 924-926: state *= exp(1j*2pi*f*d) * exp(-LOG1000*d/T60), d = free-phase samples / SR.
-void FastEngine::advanceState(int64_t samples) noexcept
+// Every mode's amplitude at t0 and t1 (A0, A1, mode order): the components summed four
+// modes per vector over every mode (silent modes hold zero). Settled components only
+// decay; the others also carry their onset gains and, from the edge, their onset ramp.
+void FastEngine::sumComponents(double t0, double t1) noexcept
 {
-    if (samples <= 0) return;
-    const double d = static_cast<double>(samples) / sr_;
-    const double* t60 = bake_->t60S.data();
-    const double k = -bake_->log1000 * d;
-    for (size_t i = 0; i < size_t(n_); ++i)
+    int nS = 0, nO = 0, nR = 0;
+    for (auto& c : components_)
     {
-        const double ph = omega_[i] * d;
-        const double e = std::exp(k / t60[i]);
-        const double mr = std::cos(ph) * e;
-        const double mi = std::sin(ph) * e;
-        const double r = zr_[i] * mr - zi_[i] * mi;
-        const double im = zr_[i] * mi + zi_[i] * mr;
-        zr_[i] = r;
-        zi_[i] = im;
+        if (!c.used || c.pending)
+            continue;
+        if (!c.settled)
+        {
+            const double te0 = t0 - c.tStrike, te1 = t1 - c.tStrike;
+            c.env0 = c.onsetOn ? std::exp(-std::max(te0, 0.0) / c.onsetTau) : 0.0;
+            c.env1 = c.onsetOn ? std::exp(-std::max(te1, 0.0) / c.onsetTau) : 0.0;
+            if ((!c.onsetOn || c.env0 * c.gm1Max < kSettled) && (!c.rampOn || te0 >= c.ptMax))
+                c.settled = true;
+        }
+        if (c.settled)
+            settledList_[size_t(nS++)] = &c;
+        else if (c.rampOn)
+            rampList_[size_t(nR++)] = &c;
+        else
+            onsetList_[size_t(nO++)] = &c;
     }
+    nKinks_ = 0;
+    {
+        float* __restrict a0rP = A0r_.data();
+        float* __restrict a0iP = A0i_.data();
+        float* __restrict a1rP = A1r_.data();
+        float* __restrict a1iP = A1i_.data();
+        const v4f one = splat(1.0f);
+        const int np = nPad_;
+        for (int o = 0; o < np; o += 8)
+        {
+            v4f a0r[2] = {}, a0i[2] = {}, a1r[2] = {}, a1i[2] = {};
+            for (int q = 0; q < nS; ++q)
+            {
+                Component& c = *settledList_[size_t(q)];
+                float* D = c.D.data() + o;
+                const float* dm = c.dmul.data() + o;
+                const float* br = c.Br.data() + o;
+                const float* bi = c.Bi.data() + o;
+                for (int h = 0; h < 2; ++h)
+                {
+                    const v4f d0 = ld(D + 4 * h), d1 = d0 * ld(dm + 4 * h);
+                    st(D + 4 * h, d1);
+                    const v4f r = ld(br + 4 * h), m = ld(bi + 4 * h);
+                    a0r[h] += r * d0;
+                    a0i[h] += m * d0;
+                    a1r[h] += r * d1;
+                    a1i[h] += m * d1;
+                }
+            }
+            for (int q = 0; q < nO; ++q)
+            {
+                Component& c = *onsetList_[size_t(q)];
+                const v4f e0 = splat(static_cast<float>(c.env0)), e1 = splat(static_cast<float>(c.env1));
+                float* D = c.D.data() + o;
+                const float* dm = c.dmul.data() + o;
+                const float* br = c.Br.data() + o;
+                const float* bi = c.Bi.data() + o;
+                const float* gm = c.gm1.data() + o;
+                for (int h = 0; h < 2; ++h)
+                {
+                    const v4f d0 = ld(D + 4 * h), d1 = d0 * ld(dm + 4 * h);
+                    st(D + 4 * h, d1);
+                    const v4f g = ld(gm + 4 * h);
+                    const v4f x0 = d0 * (one + g * e0), x1 = d1 * (one + g * e1);
+                    const v4f r = ld(br + 4 * h), m = ld(bi + 4 * h);
+                    a0r[h] += r * x0;
+                    a0i[h] += m * x0;
+                    a1r[h] += r * x1;
+                    a1i[h] += m * x1;
+                }
+            }
+            for (int q = 0; q < nR; ++q)
+            {
+                Component& c = *rampList_[size_t(q)];
+                // env0/env1 are 0 without onset gains, so the gain factor is then 1.
+                const v4f e0 = splat(static_cast<float>(c.env0)), e1 = splat(static_cast<float>(c.env1));
+                const v4f te0 = splat(static_cast<float>(t0 - c.tStrike));
+                const v4f te1 = splat(static_cast<float>(t1 - c.tStrike));
+                float* D = c.D.data() + o;
+                const float* dm = c.dmul.data() + o;
+                const float* br = c.Br.data() + o;
+                const float* bi = c.Bi.data() + o;
+                const float* gm = c.gm1.data() + o;
+                const float* rc = c.rc0.data() + o;
+                const float* rs = c.rsl.data() + o;
+                for (int h = 0; h < 2; ++h)
+                {
+                    const v4f d0 = ld(D + 4 * h), d1 = d0 * ld(dm + 4 * h);
+                    st(D + 4 * h, d1);
+                    const v4f g = ld(gm + 4 * h);
+                    const v4f c0 = ld(rc + 4 * h), sl = ld(rs + 4 * h);
+                    const v4f l0 = c0 + sl * te0, l1 = c0 + sl * te1;
+                    // The ramp reaches 1 inside this block (te0 < pt < te1): those
+                    // component-modes are rendered per sample in renderKinks().
+                    const v4i kink = (l0 < one) & (l1 > one);
+                    const v4f r0 = vclamp01(l0), r1 = vclamp01(l1);
+                    v4f x0 = d0 * (one + g * e0) * r0, x1 = d1 * (one + g * e1) * r1;
+                    if (kink[0] | kink[1] | kink[2] | kink[3])
+                    {
+                        for (int l = 0; l < 4; ++l)
+                            if (kink[l])
+                                addKink(c, o + 4 * h + l, d0[l], t0 - c.tStrike);
+                        x0 = (v4f) ((v4i) x0 & ~kink);
+                        x1 = (v4f) ((v4i) x1 & ~kink);
+                    }
+                    const v4f r = ld(br + 4 * h), m = ld(bi + 4 * h);
+                    a0r[h] += r * x0;
+                    a0i[h] += m * x0;
+                    a1r[h] += r * x1;
+                    a1i[h] += m * x1;
+                }
+            }
+            for (int h = 0; h < 2; ++h)
+            {
+                st(a0rP + o + 4 * h, a0r[h]);
+                st(a0iP + o + 4 * h, a0i[h]);
+                st(a1rP + o + 4 * h, a1r[h]);
+                st(a1iP + o + 4 * h, a1i[h]);
+            }
+        }
+    }
+
+}
+
+// At a strike during the free phase: every component's amplitude is brought to this
+// sample (its own decay and the shared oscillator's rotation and decay since the segment's
+// reference time), and the whole state is their sum. That is where the contact phase
+// starts. Modes that are not ringing hold zero in every component.
+void FastEngine::rebaseComponents() noexcept
+{
+    const int j = static_cast<int>(freePos_ % K_);
+    // D holds each component's decay at the next control point. Inside a block that is the
+    // block's end, and the value here lies between it and the block's start (D / dmul), as
+    // the rendering interpolates it.
+    const float frac = static_cast<float>(j) / static_cast<float>(K_);
+    const double d = static_cast<double>(freePos_) / sr_;
+    // The shared oscillator's rotation and decay since the reference time (no wander).
+    std::fill(rotR_.begin(), rotR_.end(), 0.0f);
+    std::fill(rotI_.begin(), rotI_.end(), 0.0f);
+    for (int a = 0; a < nAct_; ++a)
+    {
+        const size_t s = size_t(actIdx_[size_t(a)]);
+        const double e = std::exp(negLambda_[s] * oscWash_ * d);
+        rotR_[s] = static_cast<float>(std::cos(omega_[s] * d) * e);
+        rotI_[s] = static_cast<float>(std::sin(omega_[s] * d) * e);
+    }
+    std::fill(sumR_.begin(), sumR_.end(), 0.0f);
+    std::fill(sumI_.begin(), sumI_.end(), 0.0f);
+    const v4f fr = splat(frac);
+    for (auto& c : components_)
+    {
+        if (!c.used || c.pending)
+            continue;
+        float* __restrict Br = c.Br.data();
+        float* __restrict Bi = c.Bi.data();
+        const float* __restrict D = c.D.data();
+        const float* __restrict inv = c.invDmul.data();
+        for (int o = 0; o < nPad_; o += 4)
+        {
+            v4f dt = ld(D + o);
+            if (j != 0)
+            {
+                const v4f d0 = dt * ld(inv + o);
+                dt = d0 + (dt - d0) * fr;
+            }
+            const v4f br = ld(Br + o) * dt, bi = ld(Bi + o) * dt;
+            const v4f ur = ld(rotR_.data() + o), ui = ld(rotI_.data() + o);
+            const v4f nr = br * ur - bi * ui, ni = br * ui + bi * ur;
+            st(Br + o, nr);
+            st(Bi + o, ni);
+            st(sumR_.data() + o, ld(sumR_.data() + o) + nr);
+            st(sumI_.data() + o, ld(sumI_.data() + o) + ni);
+        }
+    }
+    for (int k = 0; k < n_; ++k)
+    {
+        zr_[size_t(k)] = sumR_[size_t(k)];
+        zi_[size_t(k)] = sumI_[size_t(k)];
+    }
+    baseSample_ = sampleNow_;
+}
+
+// B *= u per mode (complex), four modes per vector.
+void FastEngine::multiplyAmplitudes(Component& c, const float* ur, const float* ui) noexcept
+{
+    float* __restrict Br = c.Br.data();
+    float* __restrict Bi = c.Bi.data();
+    for (int o = 0; o < nPad_; o += 4)
+    {
+        const v4f br = ld(Br + o), bi = ld(Bi + o), r = ld(ur + o), m = ld(ui + o);
+        st(Br + o, br * r - bi * m);
+        st(Bi + o, br * m + bi * r);
+    }
+}
+
+// Own decay of one mode of a component over a control block, relative to the shared
+// oscillator: exp(-ln1000 * eps * K / (T60 * SR)), eps = wash_damp - 0.3 >= 0.
+void FastEngine::setDecay(Component& c, int mode) noexcept
+{
+    const size_t s = size_t(mode);
+    const double dm = std::exp(negLambda_[s] * c.epsK[s] * static_cast<double>(K_) / sr_);
+    c.dmul[s] = static_cast<float>(dm);
+    c.invDmul[s] = static_cast<float>(1.0 / dm);
+}
+
+// Adds `from` into `into`; both refer to the same sample. The decay becomes the
+// energy-weighted mean per mode. dropEnvelopes: what is left of both onset envelopes is
+// dropped (used only when no settled pair exists).
+void FastEngine::mergeComponents(Component& into, Component& from, bool dropEnvelopes) noexcept
+{
+    double eInto = 0.0, eFrom = 0.0;
+    for (int k = 0; k < n_; ++k)
+    {
+        const size_t s = size_t(k);
+        const double ar = into.Br[s], ai = into.Bi[s], br = from.Br[s], bi = from.Bi[s];
+        const double ea = ar * ar + ai * ai;
+        const double eb = br * br + bi * bi;
+        if (ea + eb > 0.0)
+            into.epsK[s] = (ea * into.epsK[s] + eb * from.epsK[s]) / (ea + eb);
+        into.Br[s] = static_cast<float>(ar + br);
+        into.Bi[s] = static_cast<float>(ai + bi);
+        setDecay(into, k);
+        eInto += ea;
+        eFrom += eb;
+    }
+    if (eInto + eFrom > 0.0)
+        into.eps = (eInto * into.eps + eFrom * from.eps) / (eInto + eFrom);
+    into.order = std::max(into.order, from.order);
+    if (dropEnvelopes)
+    {
+        into.onsetOn = into.rampOn = false;
+        into.settled = true;
+    }
+    from.used = false;
+}
+
+// A free component slot. When the pool is full, the two settled components with the
+// closest decay are merged; failing that, the two oldest are merged.
+FastEngine::Component& FastEngine::allocateComponent() noexcept
+{
+    for (auto& c : components_)
+        if (!c.used)
+            return c;
+    Component* a = nullptr;
+    Component* b = nullptr;
+    double best = 1e300;
+    for (auto& x : components_)
+        for (auto& y : components_)
+            if (&x < &y && x.settled && y.settled && !x.pending && !y.pending && std::fabs(x.eps - y.eps) < best)
+            {
+                best = std::fabs(x.eps - y.eps);
+                a = &x;
+                b = &y;
+            }
+    bool dropEnvelopes = false;
+    if (a == nullptr)
+    {
+        dropEnvelopes = true;
+        for (auto& x : components_)
+        {
+            if (x.pending)
+                continue;
+            if (a == nullptr || x.order < a->order)
+            {
+                b = a;
+                a = &x;
+            }
+            else if (b == nullptr || x.order < b->order)
+                b = &x;
+        }
+    }
+    if (a == nullptr || b == nullptr)
+    {
+        // Every slot holds a contact that is still running (kMaxComponents strikes within
+        // one contact length): reuse the oldest; its strike joins the new one.
+        Component* oldest = &components_[0];
+        for (auto& x : components_)
+            if (x.order < oldest->order)
+                oldest = &x;
+        oldest->used = false;
+        return *oldest;
+    }
+    // Keep the newer one's identity in `into` so the freed slot is the other.
+    mergeComponents(*a, *b, dropEnvelopes);
+    return *b;
 }
 
 void FastEngine::velocityParticipation(const VelocityTable& t, double v, double* out) const noexcept
@@ -707,7 +1059,9 @@ void FastEngine::velocityParticipation(const VelocityTable& t, double v, double*
     }
 }
 
-// One strike, as Engine::applyStrike, with the position given by the caller.
+// One strike, as Engine::applyStrike, with the position given by the caller. Its coupling,
+// wash_damp and onset envelopes become a new component; the accumulators, wander scales and
+// MF state stay cymbal-wide.
 void FastEngine::strike(int slotIndex, double velocity, double position) noexcept
 {
     if (!isPrepared() || slotIndex < 0 || slotIndex >= numSlots()) return;
@@ -715,9 +1069,10 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     const BakeData& b = *bake_;
     const EngineParams& p = b.params;
     const size_t n = size_t(n_);
+    sampleNow_ = static_cast<int64_t>(clock_);
 
     if (freeStarted_)
-        advanceState(freePos_);
+        rebaseComponents();
 
     const double range = b.phaseHigh - b.phaseLow;
     for (size_t i = 0; i < n; ++i)
@@ -756,6 +1111,10 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
 
     // The slot's calibration level and its level trim scale its own strike.
     const double calib = s.calibScalar * s.levelTrim;
+    Component& comp = allocateComponent();
+    comp.used = true;
+    comp.order = ++componentOrder_;
+    comp.contactStart = sampleNow_;
     Contact* contact = nullptr;
     if (p.contactPermode)
     {
@@ -778,11 +1137,14 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
         contact = &contactPool_[size_t(activeContacts_++)];
         contact->k = 0;
     }
+    comp.pending = contact != nullptr;
     for (size_t i = 0; i < n; ++i)
     {
         const double m = (b.excNorm[i] * numpyScalarPower(scratchVel_[i], s.velGainPower)) * scratchPosW_[i];
         const double cr = (m * std::cos(scratchPhase_[i])) * calib;
         const double ci = (m * std::sin(scratchPhase_[i])) * calib;
+        comp.Br[i] = static_cast<float>(cr); // the coupling until its contact ends (startFreePhase)
+        comp.Bi[i] = static_cast<float>(ci);
         if (contact != nullptr)
         {
             contact->cr[i] = cr;
@@ -790,28 +1152,38 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
         }
         else
         {
-            zr_[i] += cr;
+            zr_[i] += cr; // line 1065: instantaneous injection
             zi_[i] += ci;
         }
     }
     wanderScale_ = 1.0 + velocity * edgeFrac * p.edgeWanderDepth;
     wanderRateScale_ = 1.0 + velocity * edgeFrac * p.edgeWanderRate;
     wanderRateScale_ = std::max(wanderRateScale_, 0.1);
-    washDamp_ = std::max(0.3, 1.0 + p.velLenTilt * (velocity - p.velLenTiltRef));
+
+    // Lines 1127-1130: this strike's velocity-dependent decay, T60 / wash_damp. It applies
+    // to this strike's energy only, relative to the shared oscillator's T60 / 0.3.
+    const double washDamp = std::max(kWashDampFloor, 1.0 + p.velLenTilt * (velocity - p.velLenTiltRef));
+    comp.eps = std::max(washDamp - oscWash_, 0.0); // 0 only for a velocity outside 0..1
+    for (size_t i = 0; i < n; ++i)
+        comp.epsK[i] = comp.eps;
 
     ++strikesApplied_;
     lastSlot_ = slotIndex;
     const double strikeTime = timeSeconds();
     const double rawPos = position;
+    comp.tStrike = strikeTime;
 
+    // render() lines 621-650 and 905-913: this strike's onset ramp (pk_t blended by
+    // edge_frac, with the velocity tilt) and its slot's onset band gains.
+    comp.rampOn = false;
+    comp.onsetOn = false;
+    comp.ptMax = 0.0;
+    comp.gm1Max = 0.0;
     if (p.bandEnvOnset)
     {
         const double ef = clamp01(1.0 - rawPos / 0.5);
         for (size_t i = 0; i < n; ++i)
-            beoPkT_[i] = ef * b.pkTEdge[i] + (1.0 - ef) * b.pkTBow[i];
-        beoTStrike_ = strikeTime;
-        beoEf_ = ef;
-        beoHas_ = true;
+            scratchPkT_[i] = ef * b.pkTEdge[i] + (1.0 - ef) * b.pkTBow[i];
         if (p.velTilt && ef > 1e-3)
         {
             const int nv = static_cast<int>(b.velTiltVelocities.size());
@@ -828,11 +1200,36 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
             {
                 double sm = scratchBandScale_[size_t(b.velTiltModeBand[i])];
                 sm = 1.0 + ef * (sm - 1.0);
-                beoPkT_[i] = beoPkT_[i] * sm;
+                scratchPkT_[i] = scratchPkT_[i] * sm;
+            }
+        }
+        comp.rampOn = ef > 0.1; // lines 848-851
+        if (comp.rampOn)
+            for (size_t i = 0; i < n; ++i)
+            {
+                // ramp = clamp(bf + (1 - bf) * te / pt, 0, 1) (lines 896-901); 1 without a peak time
+                const double pt = scratchPkT_[i] > 0.001 ? scratchPkT_[i] : 0.0;
+                comp.pt[i] = pt;
+                comp.rc0[i] = pt > 0.0 ? static_cast<float>(p.birthFrac) : 1.0f;
+                comp.rsl[i] = pt > 0.0 ? static_cast<float>((1.0 - p.birthFrac) / pt) : 0.0f;
+                comp.ptMax = std::max(comp.ptMax, pt);
+            }
+        comp.onsetOn = s.onsetGainsActive && ef < 0.9;
+        if (comp.onsetOn)
+        {
+            comp.onsetTau = s.onsetTauS;
+            for (size_t i = 0; i < n; ++i)
+            {
+                const double g0 = s.onsetGains[size_t(b.bowOnsetModeBand[i])];
+                const double gm1 = std::fabs(g0 - 1.0) > 1e-3 ? g0 - 1.0 : 0.0;
+                comp.gm1[i] = static_cast<float>(gm1);
+                comp.gm1Max = std::max(comp.gm1Max, std::fabs(gm1));
             }
         }
     }
+    comp.settled = !comp.rampOn && !comp.onsetOn;
 
+    // render() lines 652-672: LF accumulator, cymbal-wide (wander-rate boost).
     if (p.lfDepth > 0.0)
     {
         const double dt = lfTLast_ > 0.0 ? strikeTime - lfTLast_ : 0.0;
@@ -846,6 +1243,7 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
             wanderRateScale_ = std::max(wanderRateScale_, 1.0 + lfS_ * p.lfWanderRateBoost);
     }
 
+    // render() lines 674-688: MF accumulator, cymbal-wide damping.
     if (p.mfDepth > 0.0)
     {
         const double dt = mfTLast_ > 0.0 ? strikeTime - mfTLast_ : 0.0;
@@ -857,16 +1255,15 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
         mfTLast_ = strikeTime;
     }
 
-    segStartTime_ = strikeTime;
-    segContactSamples_ = 0;
     freeStarted_ = false;
     freePos_ = 0;
     if (activeContacts_ == 0)
         startFreePhase();
 }
 
-// Start of the free phase: the modes at or above the skip threshold (as Engine), and for
-// each one its oscillator, damped step, LFO phasor and output factors for the segment.
+// Start of the free phase: the components take their amplitudes at this sample (finished
+// contacts become components), the modes at or above the skip threshold (as Engine) get
+// their shared oscillator, and the segment's cymbal-wide factors are set.
 void FastEngine::startFreePhase() noexcept
 {
     const BakeData& b = *bake_;
@@ -874,49 +1271,91 @@ void FastEngine::startFreePhase() noexcept
     const double threshold =
         b.ampSkipThreshold *
         (lastSlot_ >= 0 ? b.slots[size_t(lastSlot_)].calibScalar * b.slots[size_t(lastSlot_)].levelTrim : 1.0);
+    const int64_t m = sampleNow_ - baseSample_; // contact samples since the components' base
+
+    // Older components step (undamped, as the contact phase did) to this sample; new ones
+    // take their contact's response (coupling x H x step^extra, extra: samples since the
+    // contact ended); then every component's own decay restarts here.
+    bool older = false;
+    for (const auto& c : components_)
+        older = older || (c.used && !c.pending);
+    if (m > 0 && older)
+    {
+        for (int k = 0; k < n_; ++k)
+        {
+            double ur, ui;
+            complexPower(stepR_[size_t(k)], stepI_[size_t(k)], m, ur, ui);
+            rotR_[size_t(k)] = static_cast<float>(ur);
+            rotI_[size_t(k)] = static_cast<float>(ui);
+        }
+        for (auto& c : components_)
+            if (c.used && !c.pending)
+                multiplyAmplitudes(c, rotR_.data(), rotI_.data());
+    }
+    for (auto& c : components_)
+    {
+        if (!c.used || !c.pending)
+            continue;
+        const int64_t extra = std::max<int64_t>(0, sampleNow_ - (c.contactStart + contactLen_));
+        if (extra == 0)
+        {
+            multiplyAmplitudes(c, H32r_.data(), H32i_.data());
+            continue;
+        }
+        for (int k = 0; k < n_; ++k)
+        {
+            const size_t s = size_t(k);
+            double er, ei;
+            complexPower(stepR_[s], stepI_[s], extra, er, ei);
+            const double hr = Hr_[s] * er - Hi_[s] * ei, hi = Hr_[s] * ei + Hi_[s] * er;
+            const double cr = c.Br[s], ci = c.Bi[s];
+            c.Br[s] = static_cast<float>(cr * hr - ci * hi);
+            c.Bi[s] = static_cast<float>(cr * hi + ci * hr);
+        }
+    }
+    for (auto& c : components_)
+    {
+        if (!c.used)
+            continue;
+        if (c.pending)
+        {
+            for (int k = 0; k < n_; ++k)
+                setDecay(c, k);
+            c.pending = false;
+        }
+        std::fill(c.D.begin(), c.D.end(), 1.0f);
+    }
+    baseSample_ = sampleNow_;
 
     segMfOn_ = !b.mfBandpass.empty() && std::fabs(mfScaleNow_ - 1.0) > 1e-6;
-    segRampOn_ = p.bandEnvOnset && beoHas_ && beoEf_ > 0.1;
-    const SlotData* lastSlot = lastSlot_ >= 0 ? &b.slots[size_t(lastSlot_)] : nullptr;
-    segOnsetOn_ = lastSlot != nullptr && lastSlot->onsetGainsActive && beoHas_ && beoEf_ < 0.9;
-    if (segOnsetOn_)
-        segOnsetTau_ = lastSlot->onsetTauS;
-
-    const double tBase = segStartTime_ + static_cast<double>(segContactSamples_) / sr_;
-    segTBase_ = tBase;
     segThreshold_ = threshold;
-    segMaxPt_ = 0.0;
-    double maxWanderStep = 0.0;
+    const double tBase = timeBase_ + static_cast<double>(sampleNow_) / sr_;
+    segTBase_ = tBase;
     const double K = static_cast<double>(K_);
     const double depth = p.wanderDepth;
-    const double damp = std::max(washDamp_, 0.1);
+    double gm1Max = 0.0;
+    for (const auto& c : components_)
+        if (c.used && c.onsetOn)
+            gm1Max = std::max(gm1Max, c.gm1Max);
+    double maxWanderStep = 0.0;
 
     const int oldAct = nAct_;
     int a = 0;
+    std::fill(actPos_.begin(), actPos_.end(), -1);
     for (int i = 0; i < n_; ++i)
     {
         const size_t k = size_t(i);
-        const double zr = zr_[k], zi = zi_[k];
-        if (std::hypot(zr, zi) < threshold)
+        if (std::hypot(zr_[k], zi_[k]) < threshold)
+        {
+            // Below the skip threshold for this segment (as Engine): what it holds is dropped.
+            for (auto& c : components_)
+                if (c.used)
+                    c.Br[k] = c.Bi[k] = 0.0f;
             continue;
+        }
         const size_t d = size_t(a);
         actIdx_[d] = i;
-
-        // Damped step: decay with T60 / wash_damp (line 861), and its K-th power.
-        const double T = washDamp_ == 1.0 ? b.t60S[k] : b.t60S[k] / damp;
-        const double e1 = std::exp(-b.log1000 / (T * sr_));
-        p1r_[d] = rot1R_[k] * e1;
-        p1i_[d] = rot1I_[k] * e1;
-        // p1^K by repeated squaring (K is a power of two).
-        double pr = p1r_[d], pi = p1i_[d];
-        for (int sq = K_; sq > 1; sq >>= 1)
-        {
-            const double t = pr * pr - pi * pi;
-            pi = 2.0 * pr * pi;
-            pr = t;
-        }
-        PKr_[d] = pr;
-        PKi_[d] = pi;
+        actPos_[k] = a;
 
         // LFO wander (lines 864-867), evaluated at absolute engine time.
         const double D = b.driftHz[k] * depth * wanderScale_;
@@ -954,26 +1393,14 @@ void FastEngine::startFreePhase() noexcept
             qr_[d] = 1.0;
         }
         negDlr_[d] = negDlr;
-        cosLpA_[d] = cosLp_[k];
-        Yr_[d] = zr * rotR - zi * rotI;
-        Yi_[d] = zr * rotI + zi * rotR;
-
-        pl_[d] = b.pickL[k];
-        pr_[d] = b.pickR[k];
+        // The shared oscillator starts at the wander phase; the components carry the amplitude.
+        Yr_[d] = rotR;
+        Yi_[d] = rotI;
+        pl32_[d] = static_cast<float>(b.pickL[k]);
+        pr32_[d] = static_cast<float>(b.pickR[k]);
         mf_[d] = segMfOn_ ? 1.0 + (mfScaleNow_ - 1.0) * b.mfBandpass[k] : 1.0;
-        const double pt = segRampOn_ ? beoPkT_[k] : 0.0;
-        pt_[d] = (segRampOn_ && pt > 0.001) ? pt : 0.0;
-        invPt_[d] = pt_[d] > 0.0 ? 1.0 / pt_[d] : 0.0;
-        bfA_[d] = pt_[d] > 0.0 ? p.birthFrac : 1.0;
-        segMaxPt_ = std::max(segMaxPt_, pt_[d]);
-        double gm1 = 0.0;
-        if (segOnsetOn_)
-        {
-            const double g0 = lastSlot->onsetGains[size_t(b.bowOnsetModeBand[k])];
-            gm1 = std::fabs(g0 - 1.0) > 1e-3 ? g0 - 1.0 : 0.0;
-        }
-        gm1_[d] = gm1;
-        gBound_[d] = std::fabs(mf_[d]) * std::max(1.0, 1.0 + gm1) * std::max(std::fabs(pl_[d]), std::fabs(pr_[d]));
+        gBound_[d] = std::fabs(mf_[d]) * std::max(1.0, 1.0 + gm1Max) *
+                     std::max(std::fabs(b.pickL[k]), std::fabs(b.pickR[k]));
         ++a;
     }
     const int end = std::min(nPad_, roundUp(std::max(oldAct, a), kGroup));
@@ -981,13 +1408,14 @@ void FastEngine::startFreePhase() noexcept
     {
         const size_t s = size_t(k);
         yr_[s] = yi_[s] = sr32_[s] = si32_[s] = 0.0f;
-        wl_[s] = wr_[s] = dwl_[s] = dwr_[s] = 0.0f;
+        ar_[s] = ai_[s] = dar_[s] = dai_[s] = pl32_[s] = pr32_[s] = 0.0f;
     }
     nAct_ = a;
     nKinks_ = 0;
     wanderSmall_ = maxWanderStep < kSmallAngle;
     freeStarted_ = true;
     freePos_ = 0;
+    freeStartSample_ = sampleNow_;
 }
 
 } // namespace cymbalis

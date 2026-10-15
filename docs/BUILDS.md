@@ -16,7 +16,7 @@ The run's **Artifacts** section has one artifact, `Cymbalis-macOS-<shortsha>`, w
 - `Cymbalis-VST3-macOS-<shortsha>.zip` and `Cymbalis-AU-macOS-<shortsha>.zip`
 - `Cymbalis-editor-<shortsha>-1536x1024.png` and `Cymbalis-editor-<shortsha>-960x640.png`, snapshots of the editor at its largest and smallest sizes
 
-The job summary also shows the CPU cost of the engine on the runner (`cymbalis_bench`, every slot playing). Pushing a `v*` tag also creates a GitHub Release with the zips attached.
+The job summary also shows the CPU cost of the engine on the runner (`cymbalis_bench`, every slot playing; it fails if the output is not finite). Pushing a `v*` tag also creates a GitHub Release with the zips attached.
 
 ## Playing it
 
