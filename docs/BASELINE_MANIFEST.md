@@ -44,3 +44,37 @@ Checked with numpy 2.5.3, scipy 1.18.1, soundfile 0.14.0.
 
 - `tip.json` and `shoulder.json` reference `nova_vel_participation_tip.json` and `nova_vel_participation_shoulder.json`, which are not in the package. Those two overlays cannot be loaded.
 - The bow-shoulder baseline render peaks at 1.28 (above full scale) at velocity 0.9. This is the locked behaviour.
+
+# Smoke Flat Ride (602) and Hammered Thin Ride (Bettis)
+
+Imported 2026-10-14 from `Cymbalis_V8_Package_602_final.zip`, unchanged. SPEAR files excluded. No baseline render check: the plugin is the reference (see `CLAUDE.md`).
+
+| File | MD5 |
+|---|---|
+| `presets/602/602_Baseline3.json` | `cc3a078daf1a6b2dc590216dd8e0a2ca` |
+| `presets/602/articulations/bow.json` | `5b29827f702c63a0e43e3f2a516f48b8` |
+| `presets/602/articulations/edge.json` | `1b6cb8868bf449a9ad0f070652de9379` |
+| `presets/602/data/602_edge_benv_trigger.json` | `4a99feb41f6a98cdad203d9b11b40836` |
+| `presets/602/data/602_edge_npz_gamma_tc.json` | `56896ca35bbbbfba029280f782fcf8a8` |
+| `presets/602/data/602_fingerprint_gamma.json` | `afc60b4e433c2865b5035abba76308d0` |
+| `presets/602/data/602_pkt_data.json` | `21cd5405816d1dac6819a73dd56a1977` |
+| `presets/bettis/Bettis_Baseline1.json` | `a22ce1165c84293b3ef5fff17e51e684` |
+| `presets/bettis/data/bettis_band_envelopes.json` | `2bde84a5187dafbd227a15291d1f2cc4` |
+| `presets/bettis/data/bettis_bell_excitation_ratios.json` | `3dcc4ce04272717c36c70a0e622f035a` |
+| `presets/bettis/data/bettis_bow_vel_tilt.json` | `9ac527647b348373ed21069ad139d4a5` |
+| `presets/bettis/data/bettis_clusters_full.json` | `7ac72a068981f1a9c5ba07a9a92eb48b` |
+| `presets/bettis/data/bettis_edge_band_envs.json` | `37df6178278b7ce00aab9ceb0b238265` |
+| `presets/bettis/data/bettis_edge_excitation_ratios.json` | `c07e54305fa73fea4e6cdec88a3930cc` |
+| `presets/bettis/data/bettis_edge_excitation_ratios_neutral.json` | `48094acc45dc239bd6f4d1c08807eab3` |
+| `presets/bettis/data/bettis_edge_npz_data.json` | `1a423771e81a1b783cea5cc726427514` |
+| `presets/bettis/data/bettis_edge_vel_tilt.json` | `331ce293c41c3ea4a4a589d4705d05ac` |
+| `presets/bettis/data/bettis_exc_norm_band4.json` | `16ad9f8f26a0aa9203cc33b8f47fb892` |
+| `presets/bettis/data/bettis_fingerprint.json` | `c55d620ec6fe37f169321b73f50550a8` |
+| `presets/bettis/data/bettis_pkt_data.json` | `7121b09e07e3c7619d6cf576da8a36e8` |
+
+## Notes
+
+- 602 has bow and edge only. Its two overlays (`bow.json`, `edge.json`) are empty.
+- Bettis has no articulation overlays. `Bettis_Baseline1.json` sets `nl_amount` 1.0; the plugin bakes every preset with `nl_amount` 0.
+- Bettis data files not referenced by `Bettis_Baseline1.json` (`bettis_band_envelopes.json`, `bettis_bow_vel_tilt.json`, `bettis_clusters_full.json`, `bettis_edge_excitation_ratios_neutral.json`, `bettis_exc_norm_band4.json`) are kept as delivered.
+- Photos: `resources/ui/SmokeFlatRide.png` (714 x 718) and `resources/ui/HammeredThinRide.png` (709 x 713).
