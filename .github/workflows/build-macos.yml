@@ -63,7 +63,7 @@ jobs:
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
-        run: cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU CymbalisSnapshot CymbalisUiTest cymbalis_bench cymbalis_trims --parallel
+        run: cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU CymbalisUiTest cymbalis_bench cymbalis_trims --parallel
 
       # CPU cost of the real-time engine on this runner (Apple Silicon), every slot playing.
       # Printed to the log and the job summary only; nothing is uploaded.
@@ -163,19 +163,11 @@ jobs:
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           ls -la dist
 
-      # PNG snapshots of the editor at its largest and smallest sizes, next to the zips.
-      - name: Editor snapshots
-        run: |
-          "build/${PRODUCT}Snapshot_artefacts/${BUILD_TYPE}/${PRODUCT}Snapshot" dist "${PRODUCT}-editor-${TAG}"
-          ls -la dist
-
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.PRODUCT }}-macOS-${{ env.TAG }}
-          path: |
-            dist/*.zip
-            dist/*.png
+          path: dist/*.zip
           if-no-files-found: error
           retention-days: 30
 

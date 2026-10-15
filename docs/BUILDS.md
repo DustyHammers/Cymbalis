@@ -13,8 +13,7 @@ Every push to `main` runs **Actions → Build macOS (VST3 + AU)**. It produces:
 
 The run's **Artifacts** section has one artifact, `Cymbalis-macOS-<shortsha>`, with:
 
-- `Cymbalis-VST3-macOS-<shortsha>.zip` and `Cymbalis-AU-macOS-<shortsha>.zip`
-- `Cymbalis-editor-<shortsha>-1536x1024.png` and `Cymbalis-editor-<shortsha>-960x640.png`, snapshots of the editor at its largest and smallest sizes, and `Cymbalis-editor-<shortsha>-<preset>.png` for each preset (`nova_ride`, `smoke_flat_ride`, `hammered_thin_ride`)
+- `Cymbalis-VST3-macOS-<shortsha>.zip` and `Cymbalis-AU-macOS-<shortsha>.zip`, and nothing else
 
 The job summary also shows the CPU cost of the engine on the runner for each preset (`cymbalis_bench`, every slot playing; it fails if the output is not finite). Pushing a `v*` tag also creates a GitHub Release with the zips attached.
 
