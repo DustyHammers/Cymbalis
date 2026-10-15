@@ -517,15 +517,21 @@ Every other key the two presets set either has its default effect or is not read
 2. **The shared oscillator does not decay for these two presets.** An envelope strike's level follows its envelope, not its T60, so every strike carries its whole decay (`oscWash_ = 0`). Nova keeps its oscillator decay.
 3. **The control block divides the 20 ms frame.** It is 126 samples at 44.1 kHz, 120 at 48 kHz, 252 at 88.2 kHz and 240 at 96 kHz (7 or 8 blocks per frame), so the in-frame decay restarts on a control point. At each later strike, the next restart of every running envelope is rounded to the new control grid (at most half a block, about 1.4 ms, once per strike). Nova keeps 128/256.
 4. **Slots.** SMOKE FLAT RIDE: BOW and BOW2 play the 602 bow, EDGE the 602 edge, and BELL and BELL2 are silent. HAMMERED THIN RIDE: BELL/BELL2 play the bell, BOW/BOW2 the bow, EDGE the edge. Stick boxes are fixed (`docs/UI_SPEC.md` section 8). Bake entries: 602 `BOW` (`bow.json`, 0.5) and `EDGE` (`edge.json`, 0.0); Bettis `BELL` (1.0), `BOW` (0.5) and `EDGE` (0.0), with no overlays.
-5. **Level trims** measured with `tools/cymbalis_trims --reference resources/presets/nova_ride.bake.json`: velocity 0.9, 1-second RMS matched to Nova BOW (tip), so all three presets sit at the same level at forte.
+5. **Level trims follow the SPEAR captures, capped by peak** (2026-10-15; they replaced trims that made every slot equally loud at velocity 0.9). All levels are at full velocity (1.0), the RMS of the first 500 ms (both channels).
+   - BOW is matched to Nova BOW (tip), so the presets stay level with each other. It is never lowered, even where it peaks above 0.9.
+   - EDGE and BELL go to their SPEAR target, the level the cymbal's loudest SPEAR captures have relative to its bow (mean over the first 500 ms; recording gain assumed equal). But they go no higher than the trim at which one hit peaks at 0.9 (about −1 dBFS) before the Volume knob.
+   - Each hit draws its own random phases, so its peak changes from hit to hit, and the highest of many hits keeps rising the more hits are measured. "The peak of one hit" is therefore the 99th percentile of the peaks of 1024 hits (first second of each), each with the next phase draw of the preset's sequence, as the plugin plays them.
+   - BOW2 and BELL2 share BOW's and BELL's bake entries and trims.
+   - Each bake records, next to the trim (`slots[].level_trim`): `spear_target_db`, and where capped, `capped`, `capped_level_db`, `uncapped_gain_db` and `cap_reason`.
+   - Measured with `tools/cymbalis_trims --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target SLOT=DB --peak-limit 0.9` (`docs/BUILDS.md`). Nova keeps its own trims (velocity 0.9, 1 s).
 
-   | Preset | Entry | Trim |
-   |---|---|---|
-   | SMOKE FLAT RIDE | BOW | −1.76 dB |
-   | SMOKE FLAT RIDE | EDGE | −4.90 dB |
-   | HAMMERED THIN RIDE | BELL | +9.43 dB |
-   | HAMMERED THIN RIDE | BOW | −1.31 dB |
-   | HAMMERED THIN RIDE | EDGE | +2.22 dB |
+   | Preset | Entry | SPEAR target vs BOW | Trim | Level vs BOW | Peak of one hit with trim (99th percentile) | Capped |
+   |---|---|---|---|---|---|---|
+   | SMOKE FLAT RIDE | BOW | 0 dB | −1.76 dB | 0 dB | 1.04 | no (BOW) |
+   | SMOKE FLAT RIDE | EDGE | +2.8 dB | −0.05 dB | +2.8 dB | 0.90 | no |
+   | HAMMERED THIN RIDE | BOW | 0 dB | −0.85 dB | 0 dB | 0.92 | no (BOW) |
+   | HAMMERED THIN RIDE | BELL | +2.7 dB | +10.44 dB | +0.8 dB | 0.90 | yes (+12.32 dB would peak at 1.12) |
+   | HAMMERED THIN RIDE | EDGE | +14.2 dB | +5.36 dB | +0.6 dB | 0.90 | yes (+18.95 dB would peak at 4.30) |
 
 6. **One engine; a preset is data loaded into it.** The three bakes are parsed at plugin load. The processor owns one `FastEngine`, loaded with the current preset's bake. Choosing a preset, or restoring a session with a different one, goes the same way:
    - A loader thread builds the engine state for the new bake at the current sample rate and hands it to the audio thread through an atomic pointer, without locks. It takes over at the next block.
@@ -540,7 +546,7 @@ Every other key the two presets set either has its default effect or is not read
 
 - **602 notes vs parameters.** The 602 JSON's notes say `t60_scale=2.5`, but the parameter is 3.5. They also say "same 2000-mode pool as B1/B2", but the fingerprint has 900 modes. The NPZ notes say it is for the 900-mode v3 fingerprint.
 - **602 pk_t length.** `602_pkt_data.json` has 2000 entries per array for 900 modes. Python reads them by position, so the first 900 are used (f.17). The bake does the same and records it.
-- **The NPZ velocity remap adds the lowest velocity twice.** At line 1051, `_evels[0] + np.interp(..., _evels)` gives a mapped velocity from 2 × v_min to v_min + v_max, so the softest velw rows are never used: 0.15–0.25 for 602, 0.273–0.355 for Bettis. The plugin does the same.
+- **The NPZ velocity remap adds the lowest velocity twice (fixed in the plugin, 2026-10-15).** At line 1051, `_evels[0] + np.interp(..., _evels)` gives a mapped velocity from 2 × v_min to v_min + v_max, so the softest velw rows are never used. That meant 0.15–0.25 for 602 (every strike was shifted up by about 0.15, and from about 0.87 up the 1.0 capture played), and 0.273–0.355 for Bettis (from about 0.72 up the 1.0 capture played). `FastEngine::npzCoupling` now does what the comment intends: the sqrt remap over the captured velocities, with no extra offset; each capture maps to itself, and below the softest capture its row is used. Only the velw coupling used the shifted velocity. The band envelopes always interpolated at the true velocity and are unchanged.
 - **The NPZ envelopes are shorter than their windows.** 602's run 8–9 s for a 10 s window; Bettis's run 12.8–16.2 s for a 20 s window. Velocities with fewer frames are zero-padded, and the last frame is held after the data ends. A strike's level therefore drops toward zero before the window ends, then jumps to its exponential decay when the window ends. The decay is from the strike, at the mode's T60. Ported as is.
 - **The in-frame decay is a 50 Hz sawtooth.** It restarts every 20 ms (`t_in_frame`, line 891), which amplitude-modulates every envelope mode at 50 Hz by up to e^(−6.9·0.02/T60) per frame: 37 % for a 0.3 s T60.
 - **The pk_t ramps have no effect in these presets.** With the NPZ envelope active, the edge pk_t ramp never applies (it is skipped whenever the envelope is active), and bow strikes never ramp. Bettis's velocity-bracketed pk_t and edge velocity tilt are therefore inaudible here.

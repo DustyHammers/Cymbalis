@@ -344,16 +344,24 @@
       "contact_force_python": null,
       "level_trim": {
         "gain_db": -1.76,
-        "measured_gain_db": -1.7575865039793814,
+        "spear_target_db": 0,
+        "measured_gain_db": -1.7578201941120954,
+        "level_db": 0.0,
         "measured_by": "tools/cymbalis_trims (FastEngine)",
         "sample_rate": 44100,
-        "velocity": 0.9,
+        "velocity": 1.0,
         "strike_time_s": 0.0,
-        "window_s": 1.0,
+        "window_s": 0.5,
         "position": 0.5,
-        "rms_1s": 0.08788780952972643,
+        "rms": 0.14594082533242236,
         "reference_slot": "Nova BOW",
-        "reference_rms_1s": 0.07178758033232538
+        "reference_rms": 0.1192026164949164,
+        "peak": 1.037697581534941,
+        "first_hit_peak": 0.9498661052860495,
+        "peak_limit": 0.9,
+        "peak_hits": 1024,
+        "peak_percentile": 99.0,
+        "peak_window_s": 1.0
       }
     },
     {
@@ -483,17 +491,26 @@
       },
       "contact_force_python": null,
       "level_trim": {
-        "gain_db": -4.9,
-        "measured_gain_db": -4.898784283218211,
+        "gain_db": -0.05,
+        "spear_target_db": 2.8,
+        "capped": false,
+        "measured_gain_db": -0.04777663215192396,
+        "level_db": 2.8,
         "measured_by": "tools/cymbalis_trims (FastEngine)",
         "sample_rate": 44100,
-        "velocity": 0.9,
+        "velocity": 1.0,
         "strike_time_s": 0.0,
-        "window_s": 1.0,
+        "window_s": 0.5,
         "position": 0.0,
-        "rms_1s": 0.1261794207711747,
+        "rms": 0.16545298996528154,
         "reference_slot": "Nova BOW",
-        "reference_rms_1s": 0.07178758033232538
+        "reference_rms": 0.1192026164949164,
+        "peak": 0.8958936667488285,
+        "first_hit_peak": 0.715775619120654,
+        "peak_limit": 0.9,
+        "peak_hits": 1024,
+        "peak_percentile": 99.0,
+        "peak_window_s": 1.0
       }
     }
   ],
