@@ -85,9 +85,9 @@ public:
     // Renders numSamples of stereo output, overwriting left and right.
     void process(float* left, float* right, int numSamples) noexcept;
 
-    // Takes over another engine's timeline when it replaces it (a preset switch): the engine
-    // clock continues from that engine's time, and the strike-phase sequence from its state.
-    // Both engines must be prepared at the same rate. Does not allocate.
+    // Takes over another engine's clock when it replaces it (a preset switch): the engine
+    // clock continues from that engine's time. The strike-phase sequence is this engine's own,
+    // from its preset's seed (as in Python). Does not allocate.
     void continueFrom(const FastEngine& previous) noexcept;
     // Nothing rings: no ringing mode, no running contact, no strike energy.
     bool isSilent() const noexcept;

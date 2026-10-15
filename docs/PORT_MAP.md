@@ -432,7 +432,7 @@ The weights fade out linearly towards `pos = 0.5`. Calibration uses them too.
 Kris decided the five questions above as follows. These decisions override anything earlier in this document that conflicts with them.
 
 1. **NL is off in the plugin** (`nl_amount = 0`). The plugin's reference sound is Python with the overrides `{'nl_amount': 0.0}`. Stage 10 of section e is therefore not ported, and f.1 does not apply to the plugin.
-2. **The engine clock and the strike-phase random sequence start when the plugin loads.** The clock is the time base for wander (f.5). Neither the clock nor the sequence restarts on playback. Python's `render()` creates a fresh RNG and starts at t = 0 on every call. A comparison therefore treats each Python render as one plugin load: a freshly loaded engine renders the same sequence from sample 0.
+2. **The engine clock and the strike-phase random sequence start when the plugin loads.** The clock is the time base for wander (f.5). Neither the clock nor the sequence restarts on playback. Loading another preset starts the sequence again from that preset's seed; the clock carries on ("602 and Bettis", decision 6). Python's `render()` creates a fresh RNG and starts at t = 0 on every call. A comparison therefore treats each Python render as one plugin load: a freshly loaded engine renders the same sequence from sample 0.
 3. **Every strike plays, at its exact sample.** Python's dropped close strikes and one-sample holes (f.6, f.7) are not reproduced. Comparison sequences use only strike times where Python has neither:
    - every gap is longer than 1e-4 s;
    - `int(a·SR) + int((b − a)·SR) == int(b·SR)` at every segment boundary;
@@ -529,11 +529,11 @@ Every other key the two presets set either has its default effect or is not read
 
 6. **One engine; a preset is data loaded into it.** The three bakes are parsed at plugin load. The processor owns one `FastEngine`, loaded with the current preset's bake. Choosing a preset, or restoring a session with a different one, goes the same way:
    - A loader thread builds the engine state for the new bake at the current sample rate and hands it to the audio thread through an atomic pointer, without locks. It takes over at the next block.
-   - It continues the old engine's clock (`FastEngine::continueFrom`), so the engine clock never restarts, and continues its strike-phase random sequence.
+   - It continues the old engine's clock (`FastEngine::continueFrom`), so the engine clock never restarts. Only the clock carries over.
    - If the old cymbal is still ringing, it fades out over 30 ms (raised cosine) alongside the new one. The audio thread then hands it back, and the loader thread frees it.
    - Outside that fade only one engine exists. Nothing on the audio thread allocates, frees, locks or touches files.
    - The preset is session state, not a parameter.
-   - The strike-phase sequence that starts at plugin load is the first preset's (NOVA RIDE, seed 7). After a switch it carries on, whatever the new preset's size, so the other presets' own seed (11) is not used for strike phases. Their pick vectors and wander tables still come from their own bakes.
+   - The strike-phase random sequence starts from the loaded preset's own seed (NOVA RIDE 7, SMOKE FLAT RIDE and HAMMERED THIN RIDE 11), as in Python. This happens each time a preset is loaded: at plugin load, on a switch and on a session restore. Each bake's pick vectors and wander tables also come from its own seed.
    - The MF and LF accumulators belong to the cymbal and start fresh with the new one.
 
 ### Things in the source data or engine that look wrong (ported as they are)

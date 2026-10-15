@@ -58,8 +58,9 @@ CymbalisProcessor::CymbalisProcessor()
         sticks[i].store ((int) cymbalis::kSlots[i].defaultStick);
     }
     parsePresets();
-    // The cymbal: one engine, loaded with the first preset. Its clock and its strike-phase
-    // sequence start here and carry over to every preset loaded later.
+    // The cymbal: one engine, loaded with the first preset. Its clock starts here and carries
+    // over to every preset loaded later; each preset's strike-phase sequence starts from its
+    // own seed when it is loaded.
     current = buildCymbal (0, 0.0).release();
     loader = std::make_unique<Loader> (*this);
     loader->startThread();
@@ -215,7 +216,7 @@ void CymbalisProcessor::prepareToPlay (double sampleRate, int)
     setLatencySamples (0);
     // The audio thread is stopped here. The cymbal ends up loaded with the chosen preset and
     // prepared at this rate. A new rate stops the ring; the same rate again keeps it. The
-    // clock and the strike-phase sequence continue either way.
+    // clock continues either way.
     const juce::ScopedLock sl (buildLock);
     delete pending.exchange (nullptr);
     delete retired.exchange (nullptr);
@@ -265,7 +266,7 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     float* right = buffer.getWritePointer (1);
 
     // Preset switch: take the cymbal the loader built, if any. It continues the engine clock
-    // and strike-phase sequence and plays from this block on. If the old cymbal is ringing it
+    // (its strike phases start from its preset's seed) and plays from this block on. If the old cymbal is ringing it
     // fades out alongside for kPresetFadeSeconds; then the loader frees it. While a fade or a
     // free is outstanding the next switch waits. Nothing here allocates, frees or locks.
     if (fading == nullptr && retired.load() == nullptr)

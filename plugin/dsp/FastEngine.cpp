@@ -233,7 +233,7 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake) : bake_(std::move(b
     scratchBellVel_.resize(n);
     scratchPosW_.resize(n);
     scratchPkT_.resize(n);
-    rng_ = b.renderStream; // plugin load: the strike-phase sequence starts here
+    rng_ = b.renderStream; // the strike-phase sequence starts from this preset's seed
 }
 
 void FastEngine::prepare(double sampleRate)
@@ -1316,7 +1316,6 @@ void FastEngine::continueFrom(const FastEngine& previous) noexcept
     clock_ = 0;
     sampleNow_ = 0;
     baseSample_ = 0;
-    rng_ = previous.rng_;
 }
 
 bool FastEngine::isSilent() const noexcept
