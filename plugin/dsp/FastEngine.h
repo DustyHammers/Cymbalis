@@ -1,28 +1,40 @@
 // FastEngine.h — the real-time Cymbalis engine used by the plugin.
 //
-// It renders the same model as Engine (the exact port of Python V19), with the same
-// segment structure, strike logic, live-engine decisions and engine-as-is behaviours
-// (docs/PORT_MAP.md), but computes the free ring differently:
+// It renders the model of Engine (the exact port of Python V19) with the same strike logic,
+// segment structure, live-engine decisions and contact phase, with one deliberate departure
+// that Kris asked for (docs/PORT_MAP.md, "Superposition in the plugin"):
 //
-//   - Each ringing mode is a recursive complex oscillator, y <- y * s, in float, instead
-//     of a per-sample exp() and cos(). At every control point (every 32 samples at 44.1
-//     and 48 kHz, 64 at 88.2 and 96 kHz, about 0.7 ms) the oscillator is re-anchored from
-//     a double-precision value, so float rounding never accumulates over a ring.
-//   - The LFO wander, onset ramp, onset gains and MF scale are evaluated at the control
-//     points only. Within a control block the wander phase is interpolated linearly (it
-//     becomes part of the oscillator step) and each mode's output gain is interpolated
-//     linearly. A mode whose onset ramp reaches 1 inside a block gets the exact ramp, sample
-//     by sample, for that block, because a straight line cannot follow the corner.
-//   - Modes whose amplitude falls below the skip threshold (1e-9 x calibration, the
-//     threshold the exact engine applies at each segment start) stop being rendered.
-//   - Every rate-dependent coefficient is computed from the host sample rate: the
-//     per-sample mode steps, the contact force (whose Python taus are samples at 44.1
-//     kHz) and the right-channel 120 Hz high-pass. Times (pk_t, LFO rates, T60s, the
-//     accumulator time constants) are in seconds and do not depend on the rate.
+//   Each strike's own effects apply only to the energy that strike added. The onset band
+//   gains and their tau, the edge onset ramp with its velocity tilt, and the
+//   velocity-dependent decay (wash_damp / vel_len_tilt) belong to the strike. What stays
+//   cymbal-wide, as in Python: the shared modal state (strikes add together), the MF
+//   accumulator's damping, the LF accumulator's wander-rate boost, and the wander itself.
+//   For a single strike on its own this is the same computation as before. During a
+//   strike's contact phase the whole state is output without any factor, as in Python
+//   (PORT_MAP f.4), so for those samples older strikes' gains and ramps pause too.
 //
-// The strike itself (velocity tables, position weight, phases, coupling, contact,
-// accumulators) is computed in double exactly as in Engine. The strike position is an
-// argument, so the plugin's blend knobs can move it (docs/UI_SPEC.md section 9).
+// How it is computed:
+//
+//   - Every strike becomes a component: per mode, its complex amplitude, its own decay
+//     and its own onset envelopes.
+//   - Per mode, one recursive complex oscillator in float carries what all components share:
+//     frequency, wander phase and the slowest decay a strike can have (T60 / the smallest
+//     wash_damp of a velocity in 0..1), so every component's own decay relative to it only
+//     ever falls. The oscillator is re-anchored from double at every control point (128
+//     samples at 44.1/48 kHz, 256 at 88.2/96 kHz: about 2.8 ms).
+//   - At each control point the components are summed into one complex amplitude per mode
+//     (times the shared MF scale), four modes per vector, in float; within the block it is
+//     interpolated linearly. The output of a mode is Re(oscillator x amplitude) times its
+//     pick. A component whose onset ramp reaches 1 inside a block is rendered sample by
+//     sample with the exact ramp there.
+//   - Components are kept in a fixed pool. When it is full, two components whose envelopes
+//     have settled and whose decays are closest are merged (amplitudes added, decay weighted
+//     by energy); failing that, the two oldest are merged and their remaining onset
+//     envelopes are dropped.
+//   - Modes and components below the skip threshold (1e-9 x level) stop being rendered.
+//   - Every rate-dependent coefficient comes from the host sample rate: mode steps, the
+//     contact force (Python's taus are 44.1 kHz samples) and the right-channel 120 Hz
+//     high-pass.
 //
 // Thread use: the constructor and prepare() allocate and must not run on the audio
 // thread. strike() and process() never allocate, lock or touch files.
@@ -31,6 +43,7 @@
 #include "Bake.h"
 #include "Pcg64.h"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -41,8 +54,9 @@ namespace cymbalis
 class FastEngine
 {
 public:
-    static constexpr int kMaxControlBlock = 64;
-    static constexpr int kMaxContacts = 64; // overlapping contacts before the oldest is flushed
+    static constexpr int kMaxControlBlock = 256;
+    static constexpr int kMaxContacts = 64;   // overlapping contacts before the oldest is flushed
+    static constexpr int kMaxComponents = 24; // strikes kept apart before merging
 
     // Throws BakeError if the bake needs something this engine does not do.
     explicit FastEngine(std::shared_ptr<const BakeData> bake);
@@ -70,6 +84,7 @@ public:
     double timeSeconds() const noexcept;
     uint64_t strikesApplied() const noexcept { return strikesApplied_; }
     int activeModes() const noexcept { return activeContacts_ > 0 ? n_ : nAct_; }
+    int activeComponents() const noexcept;
     int contactLength() const noexcept { return contactLen_; }
 
 private:
@@ -79,21 +94,54 @@ private:
         std::vector<double> cr, ci;
     };
 
-    // A mode whose onset ramp reaches 1 inside the current control block.
+    // One strike's energy and its own envelopes. Per-mode arrays are indexed by mode.
+    struct Component
+    {
+        bool used = false;
+        bool pending = false;     // its contact is still running; Br/Bi hold the coupling
+        uint64_t order = 0;       // creation order, for "oldest"
+        int64_t contactStart = 0; // engine sample where its contact began
+        double eps = 0.0;         // decay relative to the oscillator's (wash_damp - oscWash_), energy-weighted
+        double tStrike = 0.0;     // engine time of the strike
+        bool onsetOn = false;     // onset band gains (its slot's overlay, not at the edge)
+        double onsetTau = 0.08, gm1Max = 0.0;
+        bool rampOn = false;      // edge onset ramp
+        double ptMax = 0.0;
+        bool settled = true;      // its onset envelopes have run out: it only decays
+        double env0 = 0.0, env1 = 0.0; // onset envelope at the current block's ends
+        // Per mode, padded to nPad_. The arrays the control loop streams are float.
+        std::vector<float> Br, Bi;      // amplitude at the segment's reference time
+        std::vector<float> D;           // its own decay since then, at the next control point
+        std::vector<float> dmul, invDmul; // that decay over one control block, and its inverse
+        std::vector<float> gm1;         // onset gain - 1
+        std::vector<float> rc0, rsl;    // ramp = clamp(rc0 + rsl * t, 0, 1): bf, (1 - bf) / pt (1, 0: none)
+        std::vector<double> epsK;       // wash_damp - oscWash_ (merged components differ per mode)
+        std::vector<double> pt;         // ramp peak time (0 = none)
+    };
+
+    // A component of one mode whose onset ramp reaches 1 inside the current block.
     struct KinkMode
     {
-        double yr, yi, sr, si; // oscillator and its step for this block
-        double pl, pr, mf, gm1, pt;
+        double yr, yi;  // oscillator x amplitude
+        int sa;         // ringing slot of the mode (its oscillator step)
+        double dps;     // the component's own decay per sample
+        double pl, pr, gm1, pt, te0, env0, env1;
     };
 
     void renderContactSample(float* left, float* right) noexcept;
     void renderFree(float* left, float* right, int n) noexcept;
     void beginControlBlock() noexcept;
+    void sumComponents(double t0, double t1) noexcept;
     void dropQuietModes() noexcept;
     void renderKinks(float* left, float* right, int j0, int m) noexcept;
-    template <int G, bool Ramp>
+    void addKink(const Component& c, int mode, double d0, double te0) noexcept;
+    template <int G>
     void kernel(int m) noexcept;
-    void advanceState(int64_t samples) noexcept;
+    void rebaseComponents() noexcept;
+    void multiplyAmplitudes(Component& c, const float* ur, const float* ui) noexcept;
+    Component& allocateComponent() noexcept;
+    void mergeComponents(Component& into, Component& from, bool dropEnvelopes) noexcept;
+    void setDecay(Component& c, int mode) noexcept;
     void startFreePhase() noexcept;
     void velocityParticipation(const VelocityTable& t, double v, double* out) const noexcept;
 
@@ -107,62 +155,68 @@ private:
     double timeBase_ = 0.0;
     uint64_t clock_ = 0;
     uint64_t strikesApplied_ = 0;
+    uint64_t componentOrder_ = 0;
     Pcg64 rng_;
 
-    // Modal state (calibrated, double): the running state during a contact, and the
-    // state at the start of the free phase afterwards.
+    // Total modal state (calibrated, double) during a contact phase, as in Engine.
     std::vector<double> zr_, zi_;
     std::vector<double> omega_, cosLp_;
     std::vector<double> stepR_, stepI_; // undamped per-sample step at the host rate (contact phase)
-    std::vector<double> rot1R_, rot1I_; // exp(i omega / SR)
+    std::vector<double> oscR_, oscI_;   // shared oscillator: per-sample step (decay T60 / oscWash_)
+    std::vector<double> PKr_, PKi_;     // shared oscillator: step over one control block
+    std::vector<double> negLambda_;     // -ln(1000) / T60 per mode (undamped decay rate, 1/s)
+    double oscWash_ = 1.0;              // wash_damp of the shared oscillator's decay (the smallest a strike has)
 
-    // Contact force at the host rate, numModes x contactLen_, DC-normalised per mode.
+    // Contact force at the host rate (contactLen_ x numModes, DC-normalised per mode) and
+    // its response H = sum_j f_j step^(len - j): the state a unit coupling leaves at the
+    // end of a contact.
     std::vector<double> force_;
+    std::vector<double> Hr_, Hi_;
+    std::vector<float> H32r_, H32i_; // H in float (padded), for components
     int contactLen_ = 0;
     std::vector<Contact> contactPool_;
     int activeContacts_ = 0;
 
+    std::vector<Component> components_;
+    int64_t baseSample_ = 0; // engine sample the components' amplitudes refer to
+    int64_t sampleNow_ = 0;  // engine sample being rendered (between process() calls: the next one)
+
     // Current segment.
-    double segStartTime_ = 0.0;
-    int segContactSamples_ = 0;
     bool freeStarted_ = false;
     int64_t freePos_ = 0;
+    int64_t freeStartSample_ = 0;
     double segTBase_ = 0.0; // absolute time of the first free-phase sample
     int lastSlot_ = -1;
 
-    // Per-strike engine state that Python keeps on the engine object (as in Engine).
+    // Cymbal-wide state that Python keeps on the engine object.
     double wanderScale_ = 1.0, wanderRateScale_ = 1.0;
     double lfS_ = 0.0, lfTLast_ = 0.0, lfScaleNow_ = 1.0;
-    double washDamp_ = 1.0;
     double mfS_ = 0.0, mfTLast_ = 0.0, mfScaleNow_ = 1.0;
-    bool beoHas_ = false;
-    double beoTStrike_ = 0.0, beoEf_ = 0.0;
-    std::vector<double> beoPkT_;
     std::vector<double> scratchBandScale_;
 
-    // Segment flags (Engine::startFreePhase) and control-point state.
-    bool segMfOn_ = false, segRampOn_ = false, segOnsetOn_ = false;
-    double segOnsetTau_ = 0.08;
+    // Segment state.
+    bool segMfOn_ = false;
     double segThreshold_ = 0.0;
-    double segMaxPt_ = 0.0;   // latest ramp corner (pk_t) among the ringing modes
     bool wanderSmall_ = true; // the wander phase moves < 0.05 rad per block for every mode
-    bool flatGain_ = false;   // every mode's gain is constant in this block
-    double blockTe0_ = 0.0, blockEnv0_ = 0.0, blockEnv1_ = 0.0;
 
-    // Ringing modes of the free phase, compacted, structure of arrays (nAct_ used, nPad_ allocated).
+    // Ringing modes of the free phase, compacted (nAct_ used, nPad_ allocated).
     int nAct_ = 0;
-    std::vector<int> actIdx_;
-    // float oscillator, step, output weights and their per-sample increments
-    std::vector<float> yr_, yi_, sr32_, si32_, wl_, wr_, dwl_, dwr_;
-    // double control-rate state
-    std::vector<double> Yr_, Yi_;   // oscillator at the next control point
-    std::vector<double> p1r_, p1i_; // damped per-sample step
-    std::vector<double> PKr_, PKi_; // p1^K
+    std::vector<int> actIdx_; // mode of each ringing slot
+    std::vector<int> actPos_; // ringing slot of each mode, -1 when silent
+    // float oscillator and step; complex amplitude and its per-sample increment; pick
+    std::vector<float> yr_, yi_, sr32_, si32_, ar_, ai_, dar_, dai_, pl32_, pr32_;
+    // double control-rate state per active mode
+    std::vector<double> Yr_, Yi_;   // oscillator at the next control point (wander included)
     std::vector<double> cr_, ci_;   // LFO phasor exp(i (2 pi lr t + lp)) at the next control point
     std::vector<double> qr_, qi_;   // LFO step over one control block
     std::vector<double> phiW_;      // wander phase at the next control point
-    std::vector<double> negDlr_, cosLpA_;
-    std::vector<double> pl_, pr_, mf_, pt_, invPt_, bfA_, gm1_, gBound_;
+    std::vector<double> negDlr_, mf_, gBound_;
+    // the components' sum at the two ends of the block, per mode (mode order, nPad_)
+    std::vector<float> A0r_, A0i_, A1r_, A1i_;
+    std::vector<float> dropW_, dropE_; // dropQuietModes(): per-mode weight and energy (mode order)
+    std::vector<float> rotR_, rotI_, sumR_, sumI_; // per-mode scratch of strikes (mode order)
+    // components by how the control loop treats them (rebuilt every block)
+    std::array<Component*, kMaxComponents> settledList_ {}, onsetList_ {}, rampList_ {};
 
     std::vector<KinkMode> kinks_;
     int nKinks_ = 0;
@@ -175,7 +229,7 @@ private:
     double hpZ0_ = 0.0, hpZ1_ = 0.0;
 
     // Per-strike scratch (preallocated).
-    std::vector<double> scratchPhase_, scratchVel_, scratchBellVel_, scratchPosW_;
+    std::vector<double> scratchPhase_, scratchVel_, scratchBellVel_, scratchPosW_, scratchPkT_;
 };
 
 } // namespace cymbalis

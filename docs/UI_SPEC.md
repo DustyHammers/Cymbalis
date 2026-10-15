@@ -15,6 +15,7 @@ Approved by Kris, 2026-10-13. All coordinates are in 1536×1024 design units. `d
 
 - Resizable, aspect ratio fixed at 3:2. **Maximum 1536×1024 — never larger.** Minimum 960×640.
 - Opens at the largest size that fits the screen, up to the maximum. Size is saved with the session.
+- If a host gives the editor a size that is not 3:2, the whole design is scaled to fit and centred, so no control is cut off.
 - Paint everything in design units and scale with one transform.
 
 ## 3. Layout
@@ -30,7 +31,7 @@ Approved by Kris, 2026-10-13. All coordinates are in 1536×1024 design units. `d
 | Blend Position 1 knob (BELL ↔ BOW) | centre 1349,642 | |
 | Blend Position 2 knob (BOW ↔ EDGE) | centre 1350,881 | |
 | Articulation rows | box tops at y 140 / 220 / 300 / 380 / 460 (BELL, BOW, EDGE, BELL2, BOW2) | Each row has a stick box and a MIDI note box |
-| Stick box (under STICK ARTICULATION) | x1265, 99×25, 2 px border `#463C30` | Shows **TIP** or **SHOULDER** (fixed label) |
+| Stick box (under STICK ARTICULATION) | x1265, 99×25, 2 px border `#463C30` | Shows **TIP** or **SHOULDER**; selectable where the preset has both (section 6) |
 | MIDI note box (under MIDI NOTE) | x1424, 66×25, 2 px border `#463C30` | Note name + number, e.g. `C3 60` |
 | Preset and channel boxes | 2 px border `#534739` | Dropdown arrow: 13×9 triangle `#999489` at 306,398 and 877,963 |
 | Divider lines (1 px, `#353231`) | horizontal 338→1161 at y869; short 39→58 at y869; vertical x1188, y110→850 | |
@@ -84,8 +85,8 @@ Hover, open and selected states use only colours from this table.
 
 ## 6. Interactions
 - **Knobs:** vertical drag; double-click resets to the default.
-- **MIDI note box:** vertical drag changes the note. A click opens a small menu with MIDI LEARN and RESET DEFAULT, so no separate Learn button is added.
-- **Stick box:** shows TIP or SHOULDER as a fixed label from the preset; it is not a dropdown.
+- **MIDI note box:** vertical drag changes the note. A click opens a menu: MIDI LEARN, RESET DEFAULT, NONE (unassign) and a scrollable list of every note, C-2 (0) to G8 (127), each with its number; the current note is outlined and in view. No separate Learn button is added.
+- **Stick box:** where the preset has both stick versions, a click opens a TIP / SHOULDER popup. For Nova Ride, BELL and BELL2 choose TIP (`bell_tip`) or SHOULDER (`bell_shoulder`); BOW and BOW2 choose TIP (`bow_tip`) or SHOULDER (`bow_shoulder`). EDGE has no choice and shows a dash. The choice is saved with the session; it is not an automatable parameter.
 - **Dropdowns:** the preset dropdown is a list; the channel dropdown is a 4×4 grid.
 - Knob value readout while dragging: Velocity "100%", Volume "+0.0 dB", Blend 1 "BELL 100 · 0 BOW", Blend 2 "BOW 100 · 0 EDGE".
 - MIDI LEARN: the next note-on on the selected channel is assigned; the box pulses "LEARN" until then; clicking elsewhere cancels.
@@ -113,13 +114,15 @@ Blend 2 inherits the engine's hard bow-to-edge switch near position 0.45 (PORT_M
 
 ## 8. Slots
 
-| Slot | Overlay | Base position | Blend | Default note | Stick label |
+| Slot | Default overlay (stick) | Other stick choice | Base position | Blend | Default note |
 |---|---|---|---|---|---|
-| BELL | `bell_shoulder.json` | 1.0 | Blend 1: 1.0 → 0.5 | C3 (60) | SHOULDER |
-| BOW | `bow_tip.json` | 0.5 | Blend 2: 0.5 → 0.0 | D3 (62) | TIP |
-| EDGE | none (base preset) | 0.0 | — | unassigned | — |
-| BELL2 | `bell_tip.json` | 1.0 | Blend 1: 1.0 → 0.5 | C#3 (61) | TIP |
-| BOW2 | `bow_shoulder.json` | 0.5 | Blend 2: 0.5 → 0.0 | D#3 (63) | SHOULDER |
+| BELL | `bell_shoulder.json` (SHOULDER) | `bell_tip.json` (TIP) | 1.0 | Blend 1: 1.0 → 0.5 | C3 (60) |
+| BOW | `bow_tip.json` (TIP) | `bow_shoulder.json` (SHOULDER) | 0.5 | Blend 2: 0.5 → 0.0 | D3 (62) |
+| EDGE | none (base preset) | — | 0.0 | — | unassigned |
+| BELL2 | `bell_tip.json` (TIP) | `bell_shoulder.json` (SHOULDER) | 1.0 | Blend 1: 1.0 → 0.5 | C#3 (61) |
+| BOW2 | `bow_shoulder.json` (SHOULDER) | `bow_tip.json` (TIP) | 0.5 | Blend 2: 0.5 → 0.0 | D#3 (63) |
+
+The baked preset holds all four overlays and the no-overlay edge data, so any bell or bow row can play either stick.
 
 ## 9. Parameters — exactly these four, no others
 Placeholder ranges until Kris revises them. At the defaults the plugin sounds the same as the Python engine.
@@ -133,4 +136,4 @@ Placeholder ranges until Kris revises them. At the defaults the plugin sounds th
 
 EDGE always strikes at position 0.0. All four are automatable. No other parameters.
 
-Non-automatable state saved with the session: MIDI channel, note per slot, current preset, editor size.
+Non-automatable state saved with the session: MIDI channel, note and stick per slot, current preset, editor size.

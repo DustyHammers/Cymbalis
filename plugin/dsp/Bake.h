@@ -69,6 +69,11 @@ struct SlotData
     std::string overlay;       // empty = no overlay
     double position = 0.0;     // 0 edge, 0.5 bow, 1 bell
     double calibScalar = 1.0;  // the slot engine's _calib_scalar
+    // Level trim (plugin bake only), as a gain: level_trim.gain_db of the bake, measured
+    // with FastEngine so that a velocity-0.9 strike at the base position matches BOW (tip)
+    // by 1-second RMS, and editable by hand. 1.0 when the bake has none. FastEngine applies
+    // it with the calibration; Engine, the Python-matching path, does not.
+    double levelTrim = 1.0;
     VelocityTable bowVp;
     bool hasBellVp = false;
     VelocityTable bellVp;

@@ -8,12 +8,14 @@
 // renders --seconds of audio in host-sized blocks, split at each strike as the plugin
 // does, and reports the time spent in the engine as a percentage of one core
 // (render time / audio time x 100). Denormals are flushed to zero, as in the plugin.
-// Nothing is written to disk.
+// It also reports the output's peak and fails if any sample is not finite. Nothing is
+// written to disk.
 #include "Bake.h"
 #include "FastEngine.h"
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
@@ -71,8 +73,9 @@ int main(int argc, char** argv)
         auto bake = cymbalis::loadBake(bakePath);
         const int slots = static_cast<int>(bake->slots.size());
         std::printf("| Sample rate | Control block | Host block | Strikes | CPU (%% of one core) | Mean strike (us) | "
-                    "Block p99 (us) | Worst block (us) | Block budget (us) |\n");
-        std::printf("|---|---|---|---|---|---|---|---|---|\n");
+                    "Block p99 (us) | Worst block (us) | Block budget (us) | Peak |\n");
+        std::printf("|---|---|---|---|---|---|---|---|---|---|\n");
+        bool allFinite = true;
         for (const double sr : rates)
         {
             cymbalis::FastEngine engine(bake);
@@ -91,6 +94,8 @@ int main(int argc, char** argv)
             std::vector<float> L(static_cast<size_t>(block)), R(static_cast<size_t>(block));
             size_t h = 0;
             double engineSeconds = 0.0, strikeSeconds = 0.0, worstBlock = 0.0;
+            float peak = 0.0f;
+            bool finite = true;
             std::vector<double> blockTimes;
             blockTimes.reserve(static_cast<size_t>(total / block + 1));
             using clock = std::chrono::steady_clock;
@@ -116,13 +121,25 @@ int main(int argc, char** argv)
                 engineSeconds += dt;
                 worstBlock = std::max(worstBlock, dt);
                 blockTimes.push_back(dt);
+                for (int i = 0; i < n; ++i)
+                {
+                    finite = finite && std::isfinite(L[size_t(i)]) && std::isfinite(R[size_t(i)]);
+                    peak = std::max({peak, std::fabs(L[size_t(i)]), std::fabs(R[size_t(i)])});
+                }
             }
             std::sort(blockTimes.begin(), blockTimes.end());
             const double p99 = blockTimes[std::min(blockTimes.size() - 1, blockTimes.size() * 99 / 100)];
             const double audio = static_cast<double>(total) / sr;
-            std::printf("| %.0f Hz | %d | %d | %zu | %.2f %% | %.0f | %.0f | %.0f | %.0f |\n", sr,
+            std::printf("| %.0f Hz | %d | %d | %zu | %.2f %% | %.0f | %.0f | %.0f | %.0f | %s |\n", sr,
                         engine.controlBlock(), block, hits.size(), 100.0 * engineSeconds / audio,
-                        1e6 * strikeSeconds / double(hits.size()), 1e6 * p99, 1e6 * worstBlock, 1e6 * block / sr);
+                        1e6 * strikeSeconds / double(hits.size()), 1e6 * p99, 1e6 * worstBlock, 1e6 * block / sr,
+                        finite ? std::to_string(peak).c_str() : "NOT FINITE");
+            allFinite = allFinite && finite;
+        }
+        if (!allFinite)
+        {
+            std::fprintf(stderr, "cymbalis_bench: the engine produced a sample that is not finite\n");
+            return 1;
         }
         return 0;
     }
