@@ -8,35 +8,49 @@ Every push to `main` runs **Actions → Build macOS (VST3 + AU)**. It produces:
 - JUCE 7.0.12, built with Xcode 15
 - The Intel slice capped at SSE4.1, and the build fails if any AVX instructions appear
 - Validation with pluginval (VST3) and auval (AU, native and under Rosetta)
-- An editor mouse test in an AU and a VST3 host (`tools/cymbalis_uitest`): real mouse events change the MIDI channel, notes and a stick, checked in the plugin's saved state
+- An editor mouse test in an AU and a VST3 host (`tools/cymbalis_uitest`): real mouse events change the MIDI channel, notes, a stick and the preset, checked in the plugin's saved state
 - Ad-hoc code signing
 
 The run's **Artifacts** section has one artifact, `Cymbalis-macOS-<shortsha>`, with:
 
 - `Cymbalis-VST3-macOS-<shortsha>.zip` and `Cymbalis-AU-macOS-<shortsha>.zip`
-- `Cymbalis-editor-<shortsha>-1536x1024.png` and `Cymbalis-editor-<shortsha>-960x640.png`, snapshots of the editor at its largest and smallest sizes
+- `Cymbalis-editor-<shortsha>-1536x1024.png` and `Cymbalis-editor-<shortsha>-960x640.png`, snapshots of the editor at its largest and smallest sizes, and `Cymbalis-editor-<shortsha>-<preset>.png` for each preset (`nova_ride`, `smoke_flat_ride`, `hammered_thin_ride`)
 
-The job summary also shows the CPU cost of the engine on the runner (`cymbalis_bench`, every slot playing; it fails if the output is not finite). Pushing a `v*` tag also creates a GitHub Release with the zips attached.
+The job summary also shows the CPU cost of the engine on the runner for each preset (`cymbalis_bench`, every slot playing; it fails if the output is not finite). Pushing a `v*` tag also creates a GitHub Release with the zips attached.
 
 ## Playing it
 
-The plugin is an instrument. Note-ons on MIDI channel 16 (selectable in the editor) strike the slots: BELL C3 (60), BELL2 C#3 (61), BOW D3 (62), BOW2 D#3 (63); EDGE has no note until one is assigned. Note-off and sustain are ignored. Click a note box to pick a note from the list, learn one from MIDI, reset it or unassign it; click a stick box to choose TIP or SHOULDER. `docs/UI_SPEC.md` describes the controls.
+The plugin is an instrument. Note-ons on MIDI channel 16 (selectable in the editor) strike the slots: BELL C3 (60), BELL2 C#3 (61), BOW D3 (62), BOW2 D#3 (63); EDGE has no note until one is assigned. Note-off and sustain are ignored. Click a note box to pick a note from the list, learn one from MIDI, reset it or unassign it; click a stick box to choose TIP or SHOULDER (NOVA RIDE; the other presets' sticks are fixed). `docs/UI_SPEC.md` describes the controls.
 
-## The compiled-in preset
+## The compiled-in presets
 
-The plugin plays `resources/presets/nova_ride.bake.json`, the Nova Ride preset baked from the Python engine's data with NL off. After a change to the preset data, regenerate it:
+The plugin plays three presets, baked from the Python engine's data with NL off. Choose one in the CYMBAL box:
+
+| Preset | Bake | Source |
+|---|---|---|
+| NOVA RIDE | `resources/presets/nova_ride.bake.json` | `presets/nova/` |
+| SMOKE FLAT RIDE | `resources/presets/smoke_flat_ride.bake.json` | `presets/602/` |
+| HAMMERED THIN RIDE | `resources/presets/hammered_thin_ride.bake.json` | `presets/bettis/` |
+
+After a change to a preset's data, regenerate its bake (`--preset nova`, `602` or `bettis`):
 
 ```
-python tools/bake_preset.py --overrides '{"nl_amount": 0.0}' --out resources/presets/nova_ride.bake.json
+python tools/bake_preset.py --preset nova --overrides '{"nl_amount": 0.0}' --out resources/presets/nova_ride.bake.json
+python tools/bake_preset.py --preset 602 --overrides '{"nl_amount": 0.0}' --out resources/presets/smoke_flat_ride.bake.json
+python tools/bake_preset.py --preset bettis --overrides '{"nl_amount": 0.0}' --out resources/presets/hammered_thin_ride.bake.json
 ```
 
-The bake also holds each slot's level trim, in `slots[].level_trim.gain_db`. The plugin uses only that number; edit it to adjust a slot's level by ear. Re-baking drops the trims. To measure them again with the plugin's engine (the gain that gives a velocity-0.9 hit at the slot's base position the same 1-second RMS as one on BOW (tip)) and store them:
+Each bake also holds its slots' level trims, in `slots[].level_trim.gain_db`. The plugin uses only that number; edit it to adjust a slot's level by ear. Re-baking drops the trims. A trim is the gain that gives a velocity-0.9 hit at the slot's base position the same 1-second RMS as one on Nova's BOW (tip), so all presets sit at the same level at forte. To measure trims again with the plugin's engine and store them:
 
 ```
 cmake --build build --target cymbalis_trims
 build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/nova_ride.bake.json --json trims.json
 python tools/set_level_trims.py resources/presets/nova_ride.bake.json trims.json
+build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/smoke_flat_ride.bake.json --reference resources/presets/nova_ride.bake.json --json trims.json
+python tools/set_level_trims.py resources/presets/smoke_flat_ride.bake.json trims.json
 ```
+
+(and the same for `hammered_thin_ride`).
 
 ## Installing a CI build
 

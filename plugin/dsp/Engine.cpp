@@ -47,6 +47,20 @@ Engine::Engine(std::shared_ptr<const BakeData> bake, EngineConfig config)
       sr_(bake_->sampleRate),
       negLog1000_(-bake_->log1000)
 {
+    // This is the Python-matching path of the retired A/B pipeline. Mechanisms ported later,
+    // for the 602 and Bettis presets, exist only in FastEngine (PORT_MAP, "602 and Bettis").
+    {
+        std::string missing;
+        for (const auto& s : bake_->slots)
+            if (!s.hasBowVp)
+                missing = " hertz_vel_scale (slot " + s.name + ")";
+        if (bake_->edgeNpz.present)
+            missing += " NPZ edge data";
+        if (!bake_->pkTEdgeByVel.empty())
+            missing += " velocity-bracketed edge pk_t";
+        if (!missing.empty())
+            throw BakeError("Engine does not implement:" + missing + "; use FastEngine");
+    }
     const size_t n = static_cast<size_t>(n_);
     zr_.assign(n, 0.0);
     zi_.assign(n, 0.0);

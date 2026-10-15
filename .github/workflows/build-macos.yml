@@ -71,14 +71,19 @@ jobs:
         run: |
           CPU=$(sysctl -n machdep.cpu.brand_string)
           BENCH=build/tools/cymbalis_bench/cymbalis_bench
-          BAKE=resources/presets/nova_ride.bake.json
           {
             echo "### Fast engine CPU on ${CPU}"
-            echo
-            "$BENCH" --bake "$BAKE" --seconds 60 --block 256
-            echo
-            "$BENCH" --bake "$BAKE" --seconds 60 --block 64 --sample-rate 48000
+            for PRESET in nova_ride smoke_flat_ride hammered_thin_ride; do
+              BAKE="resources/presets/${PRESET}.bake.json"
+              echo
+              echo "#### ${PRESET}"
+              echo
+              "$BENCH" --bake "$BAKE" --seconds 60 --block 256
+              echo
+              "$BENCH" --bake "$BAKE" --seconds 60 --block 64 --sample-rate 48000
+            done
           } | tee -a "$GITHUB_STEP_SUMMARY"
+          test "${PIPESTATUS[0]}" -eq 0
 
       - name: Locate bundles
         run: |
@@ -136,13 +141,13 @@ jobs:
           fi
 
       # Real mouse events through the AU and VST3 wrappers: change the MIDI channel, the slot
-      # notes (drag, menu, note list) and a stick in the editor, and check the plugin's saved
-      # state (tools/cymbalis_uitest).
+      # notes (drag, menu, note list), a stick and the preset in the editor, and check the
+      # plugin's saved state (tools/cymbalis_uitest).
       - name: Editor mouse test (AU and VST3)
         timeout-minutes: 5
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
-          STEPS="channel drag reset none list stick"
+          STEPS="channel drag reset none list stick preset"
           echo "--- VST3 ---"
           "$UITEST" "$PWD/$VST3" $STEPS
           echo "--- AU ---"

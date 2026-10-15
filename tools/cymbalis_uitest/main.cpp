@@ -14,6 +14,7 @@
 //   none      click the BELL note box, then NONE                      -> note_BELL -1
 //   list      click the BELL2 note box, then the note row below C#3   -> note_BELL2 62
 //   stick     click the BELL stick box, then TIP                      -> stick_BELL TIP
+//   preset    click the CYMBAL box, then HAMMERED THIN RIDE            -> preset hammered_thin_ride
 //
 // Exit code 0 when every step passed.
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -223,6 +224,13 @@ private:
             s.actions = { click (1314.0f, 152.0f), wait, click (1314.0f, 165.0f + 3.0f + 8.0f + 17.0f), wait };
             s.key = "stick_BELL";
             s.expected = "TIP";
+        }
+        else if (name == "preset")
+        {
+            // List below the CYMBAL box (61, 371, 277 x 62): 4 units down, inset 8, rows of 40.
+            s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + 2.0f * 40.0f + 20.0f), wait };
+            s.key = "preset";
+            s.expected = "hammered_thin_ride";
         }
         else
         {

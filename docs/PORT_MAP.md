@@ -432,13 +432,13 @@ The weights fade out linearly towards `pos = 0.5`. Calibration uses them too.
 Kris decided the five questions above as follows. These decisions override anything earlier in this document that conflicts with them.
 
 1. **NL is off in the plugin** (`nl_amount = 0`). The plugin's reference sound is Python with the overrides `{'nl_amount': 0.0}`. Stage 10 of section e is therefore not ported, and f.1 does not apply to the plugin.
-2. **The engine clock and the strike-phase random sequence start when the plugin loads.** The clock is the time base for wander (f.5). Neither the clock nor the sequence restarts on playback. Python's `render()` creates a fresh RNG and starts at t = 0 on every call. A comparison therefore treats each Python render as one plugin load: a freshly loaded engine renders the same sequence from sample 0.
+2. **The engine clock and the strike-phase random sequence start when the plugin loads.** The clock is the time base for wander (f.5). Neither the clock nor the sequence restarts on playback. Loading another preset starts the sequence again from that preset's seed; the clock carries on ("602 and Bettis", decision 6). Python's `render()` creates a fresh RNG and starts at t = 0 on every call. A comparison therefore treats each Python render as one plugin load: a freshly loaded engine renders the same sequence from sample 0.
 3. **Every strike plays, at its exact sample.** Python's dropped close strikes and one-sample holes (f.6, f.7) are not reproduced. Comparison sequences use only strike times where Python has neither:
    - every gap is longer than 1e-4 s;
    - `int(a·SR) + int((b − a)·SR) == int(b·SR)` at every segment boundary;
    - every strike time is a whole number of samples.
 4. **One shared cymbal.** All five slots ring the same modal state. Each slot's overlay data is applied to that slot's own strikes. The overlay data is the velocity tables and the onset gains, plus the slot's calibration level. For a sequence that uses only one slot, this matches Python, which gives each overlay its own engine. Python has no reference for sequences that mix slots.
-5. **Slots:**
+5. **Slots** (Nova Ride; the 602 and Bettis slots are in "602 and Bettis" below):
 
 | Slot | Overlay | Position |
 |---|---|---|
@@ -453,7 +453,7 @@ Kris decided the five questions above as follows. These decisions override anyth
 - **Calibration is applied when the strike is injected.** Python multiplies the whole output by one scalar at the end. With NL off, every remaining mechanism is linear in amplitude, so the two give the same result to within rounding.
 - **The skip threshold is scaled to match.** Python skips a mode for a segment when `|z| < 1e-9` in its uncalibrated units (line 859). The C++ state holds calibrated amplitudes, so it uses `1e-9 × calibration` of the slot that struck most recently. For a single-slot sequence this is the same test as Python's.
 - **Contacts in the live engine run in full.** In Python, a strike that lands while an earlier contact is still running cuts that contact short (f.7). `EngineConfig::truncateContactsLikePython` selects between the two behaviours. With `false`, the default and the live engine, every contact plays all its force samples. The contact phase of the new segment lasts until every running contact has finished. If more than 64 contacts overlap, the oldest one's remaining force is applied at once, so it still enters in full. With `true`, used with `cymbalis_render --python-contact-truncation`, a new strike discards the rest of a running contact, as Python does. The A/B sequences never overlap contacts, so both settings render them identically.
-- **The plugin uses a faster engine.** `FastEngine` (`plugin/dsp/FastEngine.h`) keeps `Engine`'s segments, strike logic and the decisions above, with the superposition described in the next section. It renders the free ring with one recursive complex oscillator per mode in float, re-anchored from double every control block (128 samples at 44.1/48 kHz, 256 at 88.2/96 kHz, about 2.8 ms). Wander, onset ramp, onset gains, MF scale and each strike's own decay are evaluated at the control points and interpolated; a mode whose ramp reaches 1 inside a block gets the exact ramp for that block. Every rate-dependent value is computed from the host rate: mode steps, the 120 Hz high-pass, and the contact force, whose Python taus and sigma floor are samples at 44.1 kHz (13 samples at 44.1 kHz, 14 at 48 kHz, 26 at 88.2 kHz, 28 at 96 kHz for Nova). The strike position is an argument, so the blend knobs can move it. It requires tip and shoulder taus to be equal (Nova's are), so the contact length does not depend on position.
+- **The plugin uses a faster engine.** `FastEngine` (`plugin/dsp/FastEngine.h`) keeps `Engine`'s segments, strike logic and the decisions above, with the superposition described in the next section. It renders the free ring with one recursive complex oscillator per mode in float, re-anchored from double every control block (128 samples at 44.1/48 kHz, 256 at 88.2/96 kHz, about 2.8 ms; for the 602 and Bettis presets a seventh or an eighth of the band envelope's 20 ms frame, see "602 and Bettis"). Wander, onset ramp, onset gains, MF scale and each strike's own decay are evaluated at the control points and interpolated; a mode whose ramp reaches 1 inside a block gets the exact ramp for that block. Every rate-dependent value is computed from the host rate: mode steps, the 120 Hz high-pass, and the contact force, whose Python taus and sigma floor are samples at 44.1 kHz (13 samples at 44.1 kHz, 14 at 48 kHz, 26 at 88.2 kHz, 28 at 96 kHz for Nova). The strike position is an argument, so the blend knobs can move it. It requires tip and shoulder taus to be equal (Nova's are), so the contact length does not depend on position.
 - **Level trims (plugin only).** Each slot of the plugin's bake carries a level trim, `level_trim.gain_db`: the gain that gives a velocity-0.9 hit at its base position the same 1-second RMS (both channels) as one on BOW (tip). It is measured with `FastEngine` itself (`tools/cymbalis_trims`), stored by `tools/set_level_trims.py`, and can be edited by hand. `FastEngine` multiplies a strike's coupling by calibration × trim, and scales the skip threshold the same way; blends use their slot's trim. `Engine`, the Python-matching path, ignores it. Nova Ride: BELL shoulder +10.48 dB, BOW tip 0, EDGE −8.61 dB, BELL tip +17.48 dB, BOW shoulder −7.91 dB.
 - **The comparison pipeline** is `tools/bake_preset.py`, `tools/render_reference.py`, `cymbalis_render`, `tools/compare_ab.py` and `tools/run_ab.py`. The sequences are in `tests/sequences/`. Each stage's sequences switch on everything up to that stage and nothing after it.
 
@@ -475,3 +475,76 @@ How `FastEngine` does it:
 - A single strike is computed as before. The f.2 jump at the next strike no longer exists, because each strike's decay is applied to its own energy rather than to the output.
 - The pool holds 24 components. When it is full, the two settled components (no onset envelope or ramp left) with the closest decays are merged, decay weighted by energy per mode; if none are settled, the two oldest are merged and what remains of their envelopes is dropped. Components and modes below the skip threshold are released.
 - `strike()` and `process()` do not allocate. `cymbalis_bench` reports the cost.
+
+## 602 and Bettis (Smoke Flat Ride, Hammered Thin Ride)
+
+Added 2026-10-15. The plugin is the reference (`CLAUDE.md`): these presets were ported with the Python engine as a guide and are checked by ear, with no render comparison. Both are baked with `nl_amount = 0`, as Nova is (Bettis's JSON sets 1.0). Nova Ride's bake is unchanged, and so is every code path it uses: each new mechanism is used only when a bake carries its data.
+
+### What each preset uses
+
+| | 602 (`602_Baseline3.json`) | Bettis (`Bettis_Baseline1.json`) |
+|---|---|---|
+| Modes | 900 | 780 |
+| Velocity response | `hertz_vel_scale`, `tau_ref_ms` 0.2 (no participation tables) | same |
+| Edge strikes (`edge_frac > 0.1`) | NPZ velw coupling and NPZ band envelope, 10 s window | same, 20 s window, with `edge_rms_correction` |
+| Bow and bell strikes | standard coupling; no position weights (no ratio files) | standard coupling with edge and bell ratio weights |
+| Onset ramp data | velocity-bracketed edge pk_t (2000 entries; see below) | velocity-bracketed edge pk_t, edge velocity tilt |
+| Contact | none (`tip_contact_ms` 0): instantaneous strikes | none |
+| MF / LF accumulators | off | MF in boost mode (depth 0.4, tau 3 s, max 1.4; bow 1, edge 1, bell 0.2); LF in boost mode, inert (see below) |
+| Wander, `vel_len_tilt`, onset gains, bloom, sparkle, NL | off | off |
+
+Every other key the two presets set either has its default effect or is not read by the engine (`alpha_contact`, `stick_hp`).
+
+### What was ported, and where
+
+- **Bake tool** (`tools/bake_preset.py --preset 602|bettis`, entries in `tools/ab_common.py` `PRESETS`). New fields, written only when a preset uses them, so a Nova re-bake keeps its layout:
+  - `shared.pk_t_edge_by_vel_s` and `pk_t_edge_velocities`: the velocity-bracketed edge pk_t, one row per velocity. Previously rejected.
+  - `edge_npz`: the NPZ velocities, velw table, band envelopes (velocities × frames × bands, zero-padded as Python pads them), each mode's band, frame length, and the switches `edge_use_velw`, `edge_velw_normalize`, `edge_rms_correction`, `edge_band_env_onset_s`, the NPZ level exponent (`vel_gain_power`, default 0.7 there) and whether an edge band envelope file is set.
+  - `effective.tau_ref_ms` and `bow_vp: null` when a preset has no velocity participation table.
+  - `notes`: facts about the data (602's pk_t length).
+- **Loader** (`plugin/dsp/Bake.{h,cpp}`): reads those fields (`EdgeNpz`, `pkTEdgeByVel`, `EngineParams::tauRefMs`, `SlotData::hasBowVp`). The stage gate now accepts `hertz_vel_scale`, NPZ edge data and the edge band envelope. An edge band envelope without NPZ data is accepted and reported as having no effect, because Python never applies it (`_eb_active` is never set).
+- **FastEngine** (`plugin/dsp/FastEngine.cpp`):
+  - `hertzVelocity()`: `hertz_vel_scale` (v² × H(f, τ(v)) / H(f, τ_ref), with v clipped to 1e-4..1).
+  - `npzCoupling()`: for an edge strike, the velw row at the remapped velocity, peak-normalised, times v^p and a second set of random phases (Python draws both sets, lines 1033-1060).
+  - Envelope strikes (`startEnvelope()`, `envelopeAt()`, `restartFrames()`): for its onset window, an edge strike's level in each mode is |coupling| × its band envelope × the in-frame decay `exp(−ln1000·(t mod 20 ms)/T60)` (lines 869-894). The band envelope is interpolated between the NPZ velocities, peak-normalised, and multiplied by the RMS correction. After the window the strike rings with its own decaying amplitude, as in Python.
+  - The bracketed edge pk_t is interpolated per strike, then the velocity tilt is applied as before.
+  - A strike without a contact phase now gets its own decay at once. Before this, `FastEngine` set it only when a contact ended, which every Nova strike has.
+- **`Engine`**, the Python-matching A/B path, rejects bakes that need any of these. It is retired, and they exist only in `FastEngine`.
+
+### Live-engine decisions for these presets
+
+1. **The band envelope belongs to its strike** (the superposition decision above). In Python, one envelope, that of the latest edge strike, replaces the level of every ringing mode, including energy from later bow strikes, and the onset ramp never applies again after it (lines 869-896). In the plugin, each edge strike's envelope drives only its own energy, and other strikes ring normally. A strike with an envelope has no onset ramp, as in Python.
+2. **The shared oscillator does not decay for these two presets.** An envelope strike's level follows its envelope, not its T60, so every strike carries its whole decay (`oscWash_ = 0`). Nova keeps its oscillator decay.
+3. **The control block divides the 20 ms frame.** It is 126 samples at 44.1 kHz, 120 at 48 kHz, 252 at 88.2 kHz and 240 at 96 kHz (7 or 8 blocks per frame), so the in-frame decay restarts on a control point. At each later strike, the next restart of every running envelope is rounded to the new control grid (at most half a block, about 1.4 ms, once per strike). Nova keeps 128/256.
+4. **Slots.** SMOKE FLAT RIDE: BOW and BOW2 play the 602 bow, EDGE the 602 edge, and BELL and BELL2 are silent. HAMMERED THIN RIDE: BELL/BELL2 play the bell, BOW/BOW2 the bow, EDGE the edge. Stick boxes are fixed (`docs/UI_SPEC.md` section 8). Bake entries: 602 `BOW` (`bow.json`, 0.5) and `EDGE` (`edge.json`, 0.0); Bettis `BELL` (1.0), `BOW` (0.5) and `EDGE` (0.0), with no overlays.
+5. **Level trims** measured with `tools/cymbalis_trims --reference resources/presets/nova_ride.bake.json`: velocity 0.9, 1-second RMS matched to Nova BOW (tip), so all three presets sit at the same level at forte.
+
+   | Preset | Entry | Trim |
+   |---|---|---|
+   | SMOKE FLAT RIDE | BOW | −1.76 dB |
+   | SMOKE FLAT RIDE | EDGE | −4.90 dB |
+   | HAMMERED THIN RIDE | BELL | +9.43 dB |
+   | HAMMERED THIN RIDE | BOW | −1.31 dB |
+   | HAMMERED THIN RIDE | EDGE | +2.22 dB |
+
+6. **One engine; a preset is data loaded into it.** The three bakes are parsed at plugin load. The processor owns one `FastEngine`, loaded with the current preset's bake. Choosing a preset, or restoring a session with a different one, goes the same way:
+   - A loader thread builds the engine state for the new bake at the current sample rate and hands it to the audio thread through an atomic pointer, without locks. It takes over at the next block.
+   - It continues the old engine's clock (`FastEngine::continueFrom`), so the engine clock never restarts. Only the clock carries over.
+   - If the old cymbal is still ringing, it fades out over 30 ms (raised cosine) alongside the new one. The audio thread then hands it back, and the loader thread frees it.
+   - Outside that fade only one engine exists. Nothing on the audio thread allocates, frees, locks or touches files.
+   - The preset is session state, not a parameter.
+   - The strike-phase random sequence starts from the loaded preset's own seed (NOVA RIDE 7, SMOKE FLAT RIDE and HAMMERED THIN RIDE 11), as in Python. This happens each time a preset is loaded: at plugin load, on a switch and on a session restore. Each bake's pick vectors and wander tables also come from its own seed.
+   - The MF and LF accumulators belong to the cymbal and start fresh with the new one.
+
+### Things in the source data or engine that look wrong (ported as they are)
+
+- **602 notes vs parameters.** The 602 JSON's notes say `t60_scale=2.5`, but the parameter is 3.5. They also say "same 2000-mode pool as B1/B2", but the fingerprint has 900 modes. The NPZ notes say it is for the 900-mode v3 fingerprint.
+- **602 pk_t length.** `602_pkt_data.json` has 2000 entries per array for 900 modes. Python reads them by position, so the first 900 are used (f.17). The bake does the same and records it.
+- **The NPZ velocity remap adds the lowest velocity twice.** At line 1051, `_evels[0] + np.interp(..., _evels)` gives a mapped velocity from 2 × v_min to v_min + v_max, so the softest velw rows are never used: 0.15–0.25 for 602, 0.273–0.355 for Bettis. The plugin does the same.
+- **The NPZ envelopes are shorter than their windows.** 602's run 8–9 s for a 10 s window; Bettis's run 12.8–16.2 s for a 20 s window. Velocities with fewer frames are zero-padded, and the last frame is held after the data ends. A strike's level therefore drops toward zero before the window ends, then jumps to its exponential decay when the window ends. The decay is from the strike, at the mode's T60. Ported as is.
+- **The in-frame decay is a 50 Hz sawtooth.** It restarts every 20 ms (`t_in_frame`, line 891), which amplitude-modulates every envelope mode at 50 Hz by up to e^(−6.9·0.02/T60) per frame: 37 % for a 0.3 s T60.
+- **The pk_t ramps have no effect in these presets.** With the NPZ envelope active, the edge pk_t ramp never applies (it is skipped whenever the envelope is active), and bow strikes never ramp. Bettis's velocity-bracketed pk_t and edge velocity tilt are therefore inaudible here.
+- **Bettis's LF accumulator is inert.** It is in boost mode (`lf_max_scale` 1.7), which never scales amplitude (line 914), and `lf_wander_rate_boost` is 0 with `wander_depth` 0.
+- **Bettis's `edge_band_env_path` file is never used.** It is a 4-band, 200-frame envelope that the NPZ path overrides. 602's file is an all-zero trigger: it only switches the NPZ envelope on.
+- **NPZ edge coupling ignores the excitation table.** It skips `exc_norm`, the edge position weights and `edge_level_boost`. The calibration strike (Python's `_compute_calib_scalar`) is rendered without the band envelope, so the calibration scalar does not reflect the envelope's level. The trims make up for it.
+- **`hertz_vel_scale` scales amplitude by v².** Its docstring says the Hertz peak force goes as v^(6/5); the code comments that v² is a perceptual calibration.

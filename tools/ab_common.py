@@ -27,17 +27,37 @@ SLOTS = [
 ]
 SLOT_BY_NAME = {name: (name, overlay, pos) for name, overlay, pos in SLOTS}
 
+# Presets the plugin bakes: base preset JSON, articulation folder and bake entries
+# (name, overlay, base position). Nova is the A/B pipeline's preset and the default.
+PRESETS = {
+    'nova': {
+        'preset': PRESET,
+        'articulations': ARTICULATION_DIR,
+        'slots': SLOTS,
+    },
+    '602': {
+        'preset': os.path.join(REPO, 'presets', '602', '602_Baseline3.json'),
+        'articulations': os.path.join(REPO, 'presets', '602', 'articulations'),
+        'slots': [('BOW', 'bow', 0.5), ('EDGE', 'edge', 0.0)],
+    },
+    'bettis': {
+        'preset': os.path.join(REPO, 'presets', 'bettis', 'Bettis_Baseline1.json'),
+        'articulations': None,
+        'slots': [('BELL', None, 1.0), ('BOW', None, 0.5), ('EDGE', None, 0.0)],
+    },
+}
 
-def overlay_path(overlay):
-    return None if overlay is None else os.path.join(ARTICULATION_DIR, overlay + '.json')
+
+def overlay_path(overlay, preset='nova'):
+    return None if overlay is None else os.path.join(PRESETS[preset]['articulations'], overlay + '.json')
 
 
-def load_python_engine(overlay, overrides):
+def load_python_engine(overlay, overrides, preset='nova'):
     """Load the V19 engine through prototype/load_preset.py (the only supported way)."""
     if PROTOTYPE not in sys.path:
         sys.path.insert(0, PROTOTYPE)
     from load_preset import load_engine
-    return load_engine(PRESET, articulation=overlay_path(overlay),
+    return load_engine(PRESETS[preset]['preset'], articulation=overlay_path(overlay, preset),
                        overrides=dict(overrides) if overrides else None)
 
 

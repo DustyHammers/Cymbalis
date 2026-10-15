@@ -4,6 +4,10 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "../SlotTable.h"
+
+#include <array>
+
 namespace cymbalis::ui
 {
 
@@ -34,7 +38,7 @@ public:
     Assets();
 
     juce::Image background; // CYMBALIS_Background_logo.png, logo included
-    juce::Image photo;      // Nova.png
+    std::array<juce::Image, kNumPresets> photos; // one per preset (kPresets[].photoFile)
     juce::Image knobStrip;  // knob.png, 91 frames of 128 x 128
     juce::Typeface::Ptr typeface;
     bool isCalibriLight = false; // false: Carlito Regular stands in

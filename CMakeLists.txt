@@ -66,14 +66,18 @@ juce_add_plugin(Cymbalis
 )
 
 # ---------------------------------------------------------------------------
-# Compiled-in resources: the baked Nova Ride preset (nl_amount 0, written by
-# tools/bake_preset.py) and the UI artwork and font. Calibri Light is used when
+# Compiled-in resources: the baked presets (nl_amount 0, written by tools/bake_preset.py),
+# their photos, and the UI artwork and font. Calibri Light is used when
 # resources/ui/calibril.ttf exists; Carlito Regular stands in until then.
 # ---------------------------------------------------------------------------
 set(CYMBALIS_RESOURCES
     resources/presets/nova_ride.bake.json
+    resources/presets/smoke_flat_ride.bake.json
+    resources/presets/hammered_thin_ride.bake.json
     resources/ui/CYMBALIS_Background_logo.png
     resources/ui/Nova.png
+    resources/ui/SmokeFlatRide.png
+    resources/ui/HammeredThinRide.png
     resources/ui/knob.png
     resources/ui/Carlito-Regular.ttf
 )
@@ -126,7 +130,8 @@ target_link_libraries(Cymbalis
 )
 
 # ---------------------------------------------------------------------------
-# CymbalisSnapshot: renders the editor to PNG (CI uploads 1536x1024 and 960x640)
+# CymbalisSnapshot: renders the editor to PNG (CI uploads 1536x1024 and 960x640, and one
+# 1536x1024 PNG per preset)
 # ---------------------------------------------------------------------------
 juce_add_console_app(CymbalisSnapshot)
 target_sources(CymbalisSnapshot PRIVATE tools/cymbalis_snapshot/main.cpp ${CYMBALIS_PLUGIN_SOURCES})

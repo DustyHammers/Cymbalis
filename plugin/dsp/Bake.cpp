@@ -120,12 +120,73 @@ double eff(const json::Value& effective, const char* key)
     return v.number();
 }
 
+// A key that only bakes of presets using that mechanism have.
+double effOpt(const json::Value& effective, const char* key, double fallback)
+{
+    const json::Value* v = effective.find(key);
+    if (v == nullptr || v->isNull()) return fallback;
+    if (v->isBool()) return v->boolean() ? 1.0 : 0.0;
+    return v->number();
+}
+
+std::vector<size_t> shapeOf(const json::Value& v)
+{
+    std::vector<size_t> out;
+    for (const auto& d : v.at("shape").array())
+        out.push_back(static_cast<size_t>(d.number()));
+    return out;
+}
+
+// The NPZ edge block written by tools/bake_preset.py (602 and Bettis).
+void readEdgeNpz(const json::Value& z, size_t numModes, EdgeNpz& out, std::vector<std::string>& rep)
+{
+    out.present = true;
+    out.velocities = readArray(z.at("velocities"), "edge_npz.velocities", {0}, rep);
+    const size_t nv = out.velocities.size();
+    if (nv < 2)
+        throw BakeError("edge_npz: need at least two velocities");
+    for (size_t i = 1; i < nv; ++i)
+        if (!(out.velocities[i] > out.velocities[i - 1]))
+            throw BakeError("edge_npz: velocities must be ascending");
+    out.velw = readArray(z.at("velw"), "edge_npz.velw", {nv, numModes}, rep);
+    const auto shape = shapeOf(z.at("envelopes"));
+    if (shape.size() != 3 || shape[0] != nv || shape[1] < 1 || shape[2] < 1)
+        throw BakeError("edge_npz.envelopes: expected velocities x frames x bands");
+    out.numFrames = static_cast<int>(shape[1]);
+    out.numBands = static_cast<int>(shape[2]);
+    out.envelopes = readArray(z.at("envelopes"), "edge_npz.envelopes", {nv, shape[1], shape[2]}, rep);
+    const auto band = readArray(z.at("band_index"), "edge_npz.band_index", {numModes}, rep);
+    out.bandIndex.resize(numModes);
+    for (size_t i = 0; i < numModes; ++i)
+    {
+        out.bandIndex[i] = static_cast<int>(band[i]);
+        if (out.bandIndex[i] < 0 || out.bandIndex[i] >= out.numBands)
+            throw BakeError("edge_npz.band_index out of range");
+    }
+    out.frameDurS = z.at("frame_dur_s").number();
+    out.useVelw = z.at("use_velw").boolean();
+    out.normalize = z.at("velw_normalize").boolean();
+    out.levelVelGainPower = z.at("level_vel_gain_power").number();
+    if (!z.at("rms_correction").isNull())
+        out.rmsCorrection = readArray(z.at("rms_correction"), "edge_npz.rms_correction", {shape[2]}, rep);
+    out.envelopeActive = z.at("envelope_active").boolean();
+    out.onsetS = z.at("onset_s").number();
+    out.frameDecayPeriodS = z.at("frame_decay_period_s").number();
+    if (!(out.frameDurS > 0.0) || !(out.frameDecayPeriodS > 0.0) || !(out.onsetS >= 0.0))
+        throw BakeError("edge_npz: frame lengths must be positive and onset_s >= 0");
+    rep.push_back("edge npz     " + std::to_string(nv) + " velocities, " + std::to_string(out.numFrames) + " frames x " +
+                  std::to_string(out.numBands) + " bands of " + fmt("%.3f s", out.frameDurS) +
+                  (out.envelopeActive ? fmt(", band envelope for %.1f s after an edge strike", out.onsetS)
+                                      : std::string(", no band envelope")));
+}
+
 // Mechanisms present in the Python engine but not implemented here (PORT_MAP stages 3+).
 std::vector<std::string> unsupportedMechanisms(const json::Value& e)
 {
     std::vector<std::string> out;
     if (e.at("articulation").string() != "stick") out.push_back("brush articulation");
-    if (!e.at("vel_participation").boolean()) out.push_back("hertz_vel_scale (no velocity participation table)");
+    if (!e.at("vel_participation").boolean() && e.find("tau_ref_ms") == nullptr)
+        out.push_back("hertz_vel_scale (no velocity participation table, and the bake has no tau_ref_ms)");
     if (eff(e, "contact_tau_ms") > 0.0) out.push_back("contact sinc stick profile (contact_tau_ms)");
     if (eff(e, "tip_contact_ms") > 0.0 && !e.at("permode_contact").boolean())
         out.push_back("Gaussian contact force (tip_contact_ms > 0 without permode_contact)");
@@ -139,8 +200,8 @@ std::vector<std::string> unsupportedMechanisms(const json::Value& e)
     if (eff(e, "sparkle_clusters") > 0 && eff(e, "sparkle_depth") > 0.0) out.push_back("sparkle");
     if (eff(e, "stick_gain") > 0.0) out.push_back("stick click transient");
     if (eff(e, "atk_noise") > 0.0) out.push_back("attack noise burst");
-    if (e.at("edge_band_env").boolean()) out.push_back("edge band envelope");
-    if (e.at("edge_npz").boolean()) out.push_back("NPZ edge velw");
+    // An edge band envelope without NPZ data does nothing in Python (_eb_active is never
+    // set, lines 574 and 610), so only the NPZ case needs the edge_npz block.
     return out;
 }
 
@@ -378,7 +439,18 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
         if (ep.bandEnvOnset)
         {
             b.pkTBow = readArray(sh.at("pk_t_bow_s"), "shared.pk_t_bow_s (used)", {n}, rep);
-            b.pkTEdge = readArray(sh.at("pk_t_edge_s"), "shared.pk_t_edge_s (used)", {n}, rep);
+            if (const json::Value* byVel = sh.find("pk_t_edge_by_vel_s"); byVel != nullptr && !byVel->isNull())
+            {
+                b.pkTEdgeVelocities = readArray(sh.at("pk_t_edge_velocities"), "shared.pk_t_edge_velocities (used)",
+                                                {0}, rep);
+                const size_t nv = b.pkTEdgeVelocities.size();
+                if (nv < 1)
+                    throw BakeError("shared.pk_t_edge_velocities is empty");
+                b.pkTEdgeByVel = readArray(*byVel, "shared.pk_t_edge_by_vel_s (used)", {nv, n}, rep);
+                rep.push_back("edge pk_t    velocity-bracketed at " + std::to_string(nv) + " velocities");
+            }
+            else
+                b.pkTEdge = readArray(sh.at("pk_t_edge_s"), "shared.pk_t_edge_s (used)", {n}, rep);
         }
         if (ep.velTilt)
         {
@@ -396,6 +468,18 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
                     throw BakeError("vel_tilt_mode_band out of range");
             }
         }
+        ep.tauRefMs = effOpt(e0, "tau_ref_ms", 0.0);
+        if (e0.at("edge_npz").boolean())
+        {
+            const json::Value* z = root.find("edge_npz");
+            if (z == nullptr || z->isNull())
+                throw BakeError("the preset uses NPZ edge data but the bake has no edge_npz block");
+            readEdgeNpz(*z, n, b.edgeNpz, rep);
+            if (b.edgeNpz.envelopeActive != e0.at("edge_band_env").boolean())
+                throw BakeError("edge_npz.envelope_active does not match edge_band_env");
+        }
+        else if (e0.at("edge_band_env").boolean())
+            rep.push_back("edge env     edge band envelope without NPZ data: no effect, as in Python");
         if (ep.mfDepth > 0.0)
         {
             if (sh.at("mf_bandpass").isNull())
@@ -422,7 +506,17 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
                 slot.levelTrim = std::pow(10.0, db / 20.0);
                 rep.push_back("level trim   slot " + slot.name + ": " + fmt("%+.2f dB", db));
             }
-            slot.bowVp = readVelocityTable(s.at("bow_vp"), "slot " + slot.name + ".bow_vp", n, rep);
+            if (s.at("bow_vp").isNull())
+            {
+                if (s.at("effective").at("vel_participation").boolean())
+                    throw BakeError("slot " + slot.name + ": velocity participation is on but bow_vp is missing");
+                slot.hasBowVp = false;
+                if (!(ep.tauRefMs > 0.0))
+                    throw BakeError("slot " + slot.name + ": hertz_vel_scale needs tau_ref_ms > 0");
+                rep.push_back("velocity     slot " + slot.name + fmt(": hertz_vel_scale, tau_ref %.3f ms", ep.tauRefMs));
+            }
+            else
+                slot.bowVp = readVelocityTable(s.at("bow_vp"), "slot " + slot.name + ".bow_vp", n, rep);
             if (!s.at("bell_vp").isNull())
             {
                 slot.hasBellVp = true;

@@ -19,9 +19,15 @@ Every numeric array is written as {"shape", "fnv1a64", "data"}. The checksum is
 FNV-1a 64 over the little-endian float64 bytes of the values, so the C++ loader
 can prove that it parsed every value exactly.
 
+  * for presets with NPZ edge data (602, Bettis): the NPZ velw tables, band
+    envelopes and their switches ("edge_npz"); a velocity-bracketed edge pk_t is
+    written as one row per velocity. Presets without velocity participation tables
+    record tau_ref_ms for hertz_vel_scale.
+
 Usage:
     python tools/bake_preset.py --overrides-from tests/sequences/edge_3hits_15s.json --out bake.json
     python tools/bake_preset.py --overrides '{"nl_amount": 0.0}' --out bake.json
+    python tools/bake_preset.py --preset 602 --overrides '{"nl_amount": 0.0}' --out bake.json
 """
 import argparse
 import hashlib
@@ -40,6 +46,8 @@ BAKE_FORMAT = 'cymbalis-bake'
 BAKE_FORMAT_VERSION = 1
 AMP_SKIP_THRESHOLD = 1e-9          # multi_strike_engine_v19.py line 859: `if A < 1e-9: continue`
 BOW_ONSET_EDGES = [50, 89, 178, 356, 713, 1425, 2851, 5702, 11404, 22050]   # lines 431-432
+# Shared arrays written only when a preset has them (absent from older bakes).
+OPTIONAL_SHARED = ('pk_t_edge_by_vel_s', 'pk_t_edge_velocities')
 
 
 class BakeError(SystemExit):
@@ -96,8 +104,9 @@ def engine_globals(eng):
     return type(eng).render.__globals__
 
 
-def shared_arrays(eng):
-    """Arrays that depend only on the fingerprint, the base preset and the overrides."""
+def shared_arrays(eng, notes=None):
+    """Arrays that depend only on the fingerprint, the base preset and the overrides.
+    Facts worth knowing about the data are appended to `notes`."""
     sp = eng._spear
     body_mask = sp.births < float(eng._params.get('birth_gate_s', 0.30))
     out = {
@@ -123,10 +132,25 @@ def shared_arrays(eng):
     }
     if eng._beo_pk_t is not None:
         bow_pk, edge_pk, edge_vs = eng._beo_pk_t
-        if edge_vs is not None:
-            raise BakeError('velocity-bracketed edge pk_t (Bettis format) is not supported by this bake format')
+        n = len(eng._bF)
+        # The ramp reads pk_t by mode position (line 897: _pk_t_arr[i] for i < n_body),
+        # so entries beyond the mode pool are never used (PORT_MAP f.17).
+        if bow_pk.shape[-1] != n or edge_pk.shape[-1] != n:
+            if bow_pk.shape[-1] < n or edge_pk.shape[-1] < n:
+                raise BakeError(f'FAIL: pk_t data has {bow_pk.shape[-1]} entries for {n} modes')
+            if notes is not None:
+                notes.append(f'pk_t data has {bow_pk.shape[-1]} entries per array for {n} modes; '
+                             f'the first {n} are used, by position, as in Python')
+            bow_pk = bow_pk[:n]
+            edge_pk = edge_pk[..., :n]
         out['pk_t_bow_s'] = (bow_pk, False)
-        out['pk_t_edge_s'] = (edge_pk, False)
+        if edge_vs is None:
+            out['pk_t_edge_s'] = (edge_pk, False)
+        else:
+            # Bettis format: one edge pk_t row per measured velocity (render() lines 628-631).
+            out['pk_t_edge_s'] = (None, False)
+            out['pk_t_edge_by_vel_s'] = (np.ascontiguousarray(edge_pk), False)
+            out['pk_t_edge_velocities'] = (edge_vs, False)
     else:
         out['pk_t_bow_s'] = (None, False)
         out['pk_t_edge_s'] = (None, False)
@@ -223,6 +247,42 @@ def effective_params(eng):
         'atk_noise': float(p['atk_noise']),
         'edge_band_env': eng._edge_benv is not None,
         'edge_npz': eng._edge_npz is not None,
+        **({} if eng._vel_curves is not None else {
+            # hertz_vel_scale (line 979) is used when there is no velocity participation table.
+            'tau_ref_ms': float(p['tau_ref_ms']),
+        }),
+    }
+
+
+def edge_npz_block(eng):
+    """The NPZ edge data (__init__ lines 329-345) and the switches render() and
+    _apply_strike() read with it (lines 533-573, 869-894, 1043-1061). None without NPZ."""
+    if eng._edge_npz is None:
+        return None
+    p = eng._params
+    evels, velw, env, band, fdur = eng._edge_npz
+    n = len(eng._bF)
+    if velw.shape != (len(evels), n) or band.shape != (n,):
+        raise BakeError(f'FAIL: NPZ edge data is for {velw.shape[1]} modes, the preset has {n}')
+    if band.min() < 0 or band.max() >= env.shape[2]:
+        raise BakeError('FAIL: NPZ our_band_idx is outside the envelope bands')
+    corr = p.get('edge_rms_correction', None)
+    if corr is not None and len(corr) != env.shape[2]:
+        raise BakeError(f'FAIL: edge_rms_correction has {len(corr)} values for {env.shape[2]} NPZ bands')
+    return {
+        'velocities': enc(evels),
+        'velw': enc(velw),
+        'envelopes': enc(env),              # velocities x frames x bands, zero-padded as in Python
+        'band_index': enc(band, True),
+        'frame_dur_s': float(fdur),
+        'use_velw': bool(p.get('edge_use_velw', True)),
+        'velw_normalize': bool(p.get('edge_velw_normalize', True)),
+        'level_vel_gain_power': float(p.get('vel_gain_power', 0.7)),   # line 1058 default
+        'rms_correction': enc_opt(None if corr is None else np.array(corr, dtype=np.float64)),
+        # The envelope is built only when an edge band envelope file is also set (line 691).
+        'envelope_active': eng._edge_benv is not None,
+        'onset_s': float(p.get('edge_band_env_onset_s', 1.5)),         # line 533
+        'frame_decay_period_s': 0.020,                                   # line 889
     }
 
 
@@ -263,17 +323,18 @@ def repo_rel(path):
         return path
 
 
-def slot_block(eng, name, overlay, position):
+def slot_block(eng, name, overlay, position, preset):
     p = eng._params
     raw_params = {k: (repo_rel(v) if k.endswith('_path') and isinstance(v, str) else v) for k, v in p.items()}
     gains = eng._bow_onset_band_gains
     return {
         'name': name,
         'overlay': overlay,
-        'overlay_file': None if overlay is None else repo_rel(ab.overlay_path(overlay)),
+        'overlay_file': None if overlay is None else repo_rel(ab.overlay_path(overlay, preset)),
         'position': float(position),
         'calib_scalar': float(eng._calib_scalar),
-        'bow_vp': {'vel_norms': enc(eng._vel_norms), 'curves': enc(eng._vel_curves)},
+        'bow_vp': (None if eng._vel_curves is None else
+                   {'vel_norms': enc(eng._vel_norms), 'curves': enc(eng._vel_curves)}),
         'bell_vp': (None if eng._bell_vel_curves is None else
                     {'vel_norms': enc(eng._bell_vel_norms), 'curves': enc(eng._bell_vel_curves)}),
         'onset_gains': enc_opt(gains),
@@ -340,14 +401,15 @@ def manifest_md5s():
     return table
 
 
-def source_files(slots):
-    with open(ab.PRESET) as f:
+def source_files(slots, preset_key):
+    preset_path = ab.PRESETS[preset_key]['preset']
+    with open(preset_path) as f:
         preset = json.load(f)
-    base = os.path.dirname(ab.PRESET)
+    base = os.path.dirname(preset_path)
     files = [os.path.join(ab.PROTOTYPE, 'engine', n) for n in sorted(os.listdir(os.path.join(ab.PROTOTYPE, 'engine')))
              if n.endswith('.py')]
     files.append(os.path.join(ab.PROTOTYPE, 'load_preset.py'))
-    files.append(ab.PRESET)
+    files.append(preset_path)
     data = set(preset['data_files'].values())
     for k in ('band_env_onset_path', 'vel_tilt_path', 'edge_band_env_path', 'edge_npz_path'):
         if k in preset['parameters']:
@@ -355,18 +417,18 @@ def source_files(slots):
     for _, overlay, _ in slots:
         if overlay is None:
             continue
-        files.append(ab.overlay_path(overlay))
-        with open(ab.overlay_path(overlay)) as f:
+        files.append(ab.overlay_path(overlay, preset_key))
+        with open(ab.overlay_path(overlay, preset_key)) as f:
             data.update(json.load(f).get('data_files', {}).values())
     files += [os.path.join(base, d) for d in sorted(data)]
     return files
 
 
-def provenance(slots, allow_mismatch):
+def provenance(slots, preset_key, allow_mismatch):
     manifest = manifest_md5s()
     out = {}
     bad = []
-    for path in source_files(slots):
+    for path in source_files(slots, preset_key):
         rel = repo_rel(path)
         digest = md5(path)
         locked = manifest.get(rel)
@@ -388,21 +450,26 @@ def same(a, b):
     return a.shape == b.shape and a.dtype == b.dtype and np.array_equal(a, b)
 
 
-def bake(overrides, slots=ab.SLOTS, allow_manifest_mismatch=False):
+def bake(overrides, preset='nova', allow_manifest_mismatch=False):
     from scipy.signal import butter, sosfilt
     import scipy
 
+    slots = ab.PRESETS[preset]['slots']
     engines = []
     strike_event = None
     for name, overlay, pos in slots:
-        eng, SE = ab.load_python_engine(overlay, overrides)
+        eng, SE = ab.load_python_engine(overlay, overrides, preset)
         strike_event = SE
         engines.append((name, overlay, pos, eng))
 
     ref_name, _, _, ref_eng = engines[0]
-    ref_arrays = shared_arrays(ref_eng)
+    notes = []
+    ref_arrays = shared_arrays(ref_eng, notes)
     ref_scalars = scalar_shared(ref_eng)
+    ref_npz = edge_npz_block(ref_eng)
     for name, _, _, eng in engines[1:]:
+        if edge_npz_block(eng) != ref_npz:
+            raise BakeError(f'FAIL: NPZ edge data differs between slots {ref_name} and {name}')
         arrays = shared_arrays(eng)
         for key, (val, _) in arrays.items():
             if not same(val, ref_arrays[key][0]):
@@ -421,21 +488,22 @@ def bake(overrides, slots=ab.SLOTS, allow_manifest_mismatch=False):
     if not np.array_equal(g['_hp'](probe, 120), sosfilt(sos, probe)):
         raise BakeError('FAIL: baked high-pass SOS does not reproduce dsp_filters._hp exactly')
 
-    shared = {k: (None if v is None else enc(v, integer)) for k, (v, integer) in ref_arrays.items()}
+    shared = {k: (None if v is None else enc(v, integer)) for k, (v, integer) in ref_arrays.items()
+              if not (v is None and k in OPTIONAL_SHARED)}
     shared['bow_onset_band_edges_hz'] = enc(np.array(BOW_ONSET_EDGES, dtype=np.float64))
 
-    slot_blocks = [slot_block(eng, name, overlay, pos) for name, overlay, pos, eng in engines]
+    slot_blocks = [slot_block(eng, name, overlay, pos, preset) for name, overlay, pos, eng in engines]
     for blk, (name, overlay, pos, eng) in zip(slot_blocks, engines):
         blk['contact_force_python'] = enc_opt(python_contact_force(eng, strike_event, pos))
 
-    return {
+    out = {
         'format': BAKE_FORMAT,
         'format_version': BAKE_FORMAT_VERSION,
         'generator': 'tools/bake_preset.py',
         'created_utc': ab.utc_stamp(),
         'python': {'version': platform.python_version(), 'numpy': np.__version__,
                    'scipy': scipy.__version__, 'platform': platform.platform()},
-        'preset': repo_rel(ab.PRESET),
+        'preset': repo_rel(ab.PRESETS[preset]['preset']),
         'overrides': json_safe(dict(overrides)),
         'sample_rate': sr,
         'constants': {
@@ -449,8 +517,14 @@ def bake(overrides, slots=ab.SLOTS, allow_manifest_mismatch=False):
         'shared': shared,
         'rng': rng_block(ref_scalars['seed'], ref_scalars['n_body']),
         'slots': slot_blocks,
-        'sources': provenance([(n, o, p) for n, o, p, _ in engines], allow_manifest_mismatch),
+        'sources': provenance([(n, o, p) for n, o, p, _ in engines], preset, allow_manifest_mismatch),
     }
+    # Keys only for the mechanisms a preset uses, so the Nova bake keeps its layout.
+    if ref_npz is not None:
+        out['edge_npz'] = ref_npz
+    if notes:
+        out['notes'] = notes
+    return out
 
 
 def main():
@@ -459,6 +533,8 @@ def main():
     src.add_argument('--overrides', help='overrides as a JSON object')
     src.add_argument('--overrides-from', help='take the overrides from a sequence JSON file')
     ap.add_argument('--out', required=True, help='output bake JSON path')
+    ap.add_argument('--preset', choices=sorted(ab.PRESETS), default='nova',
+                    help='which preset to bake (default nova); the bake entries are listed in ab_common.PRESETS')
     ap.add_argument('--allow-manifest-mismatch', action='store_true',
                     help='record, but do not fail on, locked files whose MD5 differs from the manifest')
     args = ap.parse_args()
@@ -470,7 +546,7 @@ def main():
         if not isinstance(overrides, dict):
             raise SystemExit('--overrides must be a JSON object')
 
-    data = bake(overrides, allow_manifest_mismatch=args.allow_manifest_mismatch)
+    data = bake(overrides, preset=args.preset, allow_manifest_mismatch=args.allow_manifest_mismatch)
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, 'w') as f:
         f.write(dump_json(data) + '\n')
@@ -478,6 +554,8 @@ def main():
           f'({os.path.getsize(args.out) / 1e6:.1f} MB)')
     for s in data['slots']:
         print(f'  {s["name"]:6s} overlay={str(s["overlay"]):14s} pos={s["position"]:.1f} calib={s["calib_scalar"]!r}')
+    for note in data.get('notes', []):
+        print(f'  note: {note}')
 
 
 if __name__ == '__main__':
