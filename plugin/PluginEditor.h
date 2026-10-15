@@ -75,7 +75,7 @@ private:
 };
 
 // A stick box (STICK ARTICULATION column). Rows with a choice open a TIP / SHOULDER popup;
-// EDGE shows a dash and does nothing.
+// the others show their fixed stick, or a dash, and do nothing.
 class StickBox final : public juce::Component
 {
 public:
@@ -224,6 +224,7 @@ private:
     std::array<int, kNumSlots> shownNotes {};
     std::array<int, kNumSlots> shownSticks {};
     int shownChannel = -1;
+    int shownPreset = -1;
     int shownLearn = -1;
     double learnStartMs = 0.0;
 };

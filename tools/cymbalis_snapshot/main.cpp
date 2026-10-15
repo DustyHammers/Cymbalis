@@ -4,7 +4,8 @@
 //
 // Writes OUT_DIR/PREFIX-1536x1024.png and OUT_DIR/PREFIX-960x640.png (PREFIX defaults to
 // "Cymbalis-editor"), the largest and smallest editor sizes, with every parameter and
-// setting at its default.
+// setting at its default, then OUT_DIR/PREFIX-<preset id>.png at the largest size for each
+// preset.
 //
 // JUCE shows its splash logo in the editors a process opens during the two seconds after
 // the first one is painted. The first editor here is painted only to start that time and
@@ -13,6 +14,7 @@
 #include "PluginProcessor.h"
 
 #include <cstdio>
+#include <vector>
 
 int main (int argc, char** argv)
 {
@@ -36,13 +38,22 @@ int main (int argc, char** argv)
         juce::Thread::sleep (2500);
     }
 
+    struct Shot { int preset, w, h; juce::String suffix; };
+    std::vector<Shot> shots { { 0, 1536, 1024, "1536x1024" }, { 0, 960, 640, "960x640" } };
+    for (int k = 0; k < cymbalis::kNumPresets; ++k)
+        shots.push_back ({ k, 1536, 1024, cymbalis::kPresets[(size_t) k].id });
+
     int failures = 0;
-    for (const auto size : { juce::Point<int> { 1536, 1024 }, juce::Point<int> { 960, 640 } })
+    for (const auto& shot : shots)
     {
+        processor.setPreset (shot.preset);
+        if (processor.presetError().isNotEmpty())
+            std::fprintf (stderr, "warning: %s failed to load: %s\n", processor.presetName().toRawUTF8(),
+                          processor.presetError().toRawUTF8());
         std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
-        editor->setSize (size.x, size.y);
+        editor->setSize (shot.w, shot.h);
         const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f);
-        const auto file = dir.getChildFile (prefix + "-" + juce::String (size.x) + "x" + juce::String (size.y) + ".png");
+        const auto file = dir.getChildFile (prefix + "-" + shot.suffix + ".png");
         file.deleteFile();
         juce::FileOutputStream out (file);
         juce::PNGImageFormat png;

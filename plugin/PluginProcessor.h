@@ -8,10 +8,12 @@
 #include <array>
 #include <atomic>
 #include <memory>
+#include <vector>
 
-// Cymbalis: the Nova Ride preset (baked, nl_amount 0, compiled in) played by the real-time
+// Cymbalis: three baked presets (nl_amount 0, compiled in), each played by its own real-time
 // engine. MIDI note-ons on the selected channel strike the slots whose notes they match,
-// at their exact sample. Parameters: exactly the four of docs/UI_SPEC.md section 9.
+// at their exact sample, on the current preset. Parameters: exactly the four of
+// docs/UI_SPEC.md section 9; the preset is session state, like the MIDI channel.
 class CymbalisProcessor final : public juce::AudioProcessor
 {
 public:
@@ -45,9 +47,17 @@ public:
     // ---- for the editor (message thread)
     juce::AudioProcessorValueTreeState& parameters() noexcept { return apvts; }
 
-    // The preset: its display name and, if it failed to load, why (the plugin is then silent).
-    juce::String presetName() const { return "NOVA RIDE"; }
-    const juce::String& presetError() const noexcept { return loadError; }
+    // The current preset (cymbalis::kPresets), its display name and, if it failed to load,
+    // why (that preset is then silent).
+    int presetIndex() const noexcept { return presetTarget.load(); }
+    void setPreset (int index) noexcept;
+    juce::String presetName() const { return cymbalis::kPresets[(size_t) presetIndex()].name; }
+    juce::String presetError() const { return presets[(size_t) presetIndex()].error; }
+
+    // What a row's stick box shows in the current preset (Stick::none: a dash) and whether
+    // it opens the TIP / SHOULDER popup.
+    cymbalis::Stick shownStick (int slot) const noexcept;
+    bool stickSelectable (int slot) const noexcept;
 
     int midiChannel() const noexcept { return channel.load(); }
     void setMidiChannel (int newChannel) noexcept;
@@ -56,7 +66,8 @@ public:
     int slotNote (int slot) const noexcept { return notes[(size_t) slot].load(); }
     void setSlotNote (int slot, int note) noexcept;
 
-    // Stick choice of a slot (TIP or SHOULDER); Stick::none for EDGE. Not a parameter.
+    // Nova Ride's stick choice of a slot (TIP or SHOULDER); Stick::none for EDGE. Kept while
+    // another preset plays. Not a parameter.
     cymbalis::Stick slotStick (int slot) const noexcept { return (cymbalis::Stick) sticks[(size_t) slot].load(); }
     void setSlotStick (int slot, cymbalis::Stick stick) noexcept;
 
@@ -75,8 +86,19 @@ public:
     static constexpr const char* paramBlend2 = "blend_2";
 
 private:
+    struct Preset
+    {
+        std::shared_ptr<const cymbalis::BakeData> bake;
+        std::unique_ptr<cymbalis::FastEngine> engine; // null when the preset failed to load
+        // Bake entry of each slot for TIP [0] and SHOULDER [1]; -1 = the slot is silent.
+        std::array<std::array<int, 2>, cymbalis::kNumSlots> entry {};
+        juce::String error;
+    };
+
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
-    void loadPreset();
+    void loadPresets();
+    void strikeSlots (Preset& preset, int note, double velocity, double b1, double b2, float* left, float* right,
+                      int& pos, int at);
 
     juce::AudioProcessorValueTreeState apvts;
     std::atomic<float>* velocitySensitivity = nullptr;
@@ -84,11 +106,13 @@ private:
     std::atomic<float>* blend1 = nullptr;
     std::atomic<float>* blend2 = nullptr;
 
-    std::shared_ptr<const cymbalis::BakeData> bake;
-    std::unique_ptr<cymbalis::FastEngine> engine; // null when the preset failed to load
-    // Bake entry (overlay) of each slot for TIP [0] and SHOULDER [1].
-    std::array<std::array<int, 2>, cymbalis::kNumSlots> engineSlot {};
-    juce::String loadError;
+    std::array<Preset, cymbalis::kNumPresets> presets;
+    std::atomic<int> presetTarget { 0 }; // set by the editor or the session; read by the audio thread
+    // Audio thread only: the preset playing, and the one fading out after a switch.
+    int presetActive = 0;
+    int presetFading = -1;
+    int fadePos = 0, fadeLength = 1;
+    std::vector<float> fadeLeft, fadeRight; // allocated in prepareToPlay
 
     std::atomic<int> channel { cymbalis::kDefaultMidiChannel };
     std::array<std::atomic<int>, cymbalis::kNumSlots> notes;

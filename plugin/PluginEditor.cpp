@@ -101,7 +101,19 @@ void DropdownBox::paint (juce::Graphics& g)
     const auto outline = open ? palette::openOutline : (isMouseOver() ? palette::bronze : palette::boxOutline);
     drawBoxOutline (g, getLocalBounds(), outline);
     drawTriangle (g, arrow);
-    drawValue (g, assets.font (kHeaderSize, kBoxValueSpacing), text, getLocalBounds().toFloat(), palette::label);
+    // Centred in the box. A name too long for that is centred between the left edge and
+    // the arrow instead, with tighter letter spacing until it fits.
+    auto area = getLocalBounds().toFloat();
+    auto font = assets.font (kHeaderSize, kBoxValueSpacing);
+    const float right = arrow.x - 10.0f;
+    if (area.getCentreX() + inkBounds (font, text).getWidth() * 0.5f > right)
+    {
+        area = area.withLeft (12.0f).withRight (right);
+        for (float spacing = kBoxValueSpacing - 0.25f; spacing >= 0.5f && inkBounds (font, text).getWidth() > area.getWidth();
+             spacing -= 0.25f)
+            font = assets.font (kHeaderSize, spacing);
+    }
+    drawValue (g, font, text, area, palette::label);
 }
 
 void DropdownBox::mouseDown (const juce::MouseEvent&)
@@ -544,13 +556,22 @@ void Content::refresh()
             noteBoxes[(size_t) s]->setNote (n);
         }
     }
+    const int preset = processor.presetIndex();
+    if (preset != shownPreset)
+    {
+        shownPreset = preset;
+        presetBox.setText (processor.presetName());
+        repaint(); // photo and error
+    }
     for (int s = 0; s < kNumSlots; ++s)
     {
-        const auto stick = processor.slotStick (s);
-        if ((int) stick != shownSticks[(size_t) s])
+        const auto stick = processor.shownStick (s);
+        const bool selectable = processor.stickSelectable (s);
+        const int key = (int) stick + 4 * (selectable ? 1 : 0);
+        if (key != shownSticks[(size_t) s])
         {
-            shownSticks[(size_t) s] = (int) stick;
-            stickBoxes[(size_t) s]->setStick (stick, hasStickChoice (kSlots[(size_t) s]));
+            shownSticks[(size_t) s] = key;
+            stickBoxes[(size_t) s]->setStick (stick, selectable);
         }
     }
     const int ch = processor.midiChannel();
@@ -647,9 +668,16 @@ void Content::closePopup()
 
 void Content::openPresetMenu()
 {
-    auto panel = std::make_unique<PopupPanel> (assets, juce::StringArray { processor.presetName() }, 0, 1,
+    juce::StringArray names;
+    for (const auto& preset : kPresets)
+        names.add (preset.name);
+    auto panel = std::make_unique<PopupPanel> (assets, names, processor.presetIndex(), 1,
                                                juce::Point<int> { kPresetBox.getWidth() - 2 * (PopupPanel::border + PopupPanel::padding), 40 });
-    panel->onChoose = [this] (int) { closePopup(); }; // Nova Ride is the only preset
+    panel->onChoose = [this] (int i) {
+        processor.setPreset (i);
+        closePopup();
+        refresh();
+    };
     const auto b = kPresetBox.withY (kPresetBox.getBottom() + 4).withHeight (panel->getHeight());
     presetBox.setOpen (true);
     showPopup (std::move (panel), b, [this] { presetBox.setOpen (false); });
@@ -726,8 +754,10 @@ void Content::paint (juce::Graphics& g)
         g.drawImage (assets.background, getLocalBounds().toFloat());
     if (processor.presetError().isEmpty())
     {
-        if (assets.photo.isValid())
-            g.drawImage (assets.photo, kPhoto.toFloat());
+        // Fitted to the photo area, aspect ratio kept, centred (UI_SPEC section 3).
+        const auto& photo = assets.photos[(size_t) processor.presetIndex()];
+        if (photo.isValid())
+            g.drawImage (photo, kPhoto.toFloat(), juce::RectanglePlacement::centred);
     }
     else
         paintError (g);
