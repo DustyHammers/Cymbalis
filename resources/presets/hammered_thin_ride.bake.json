@@ -375,17 +375,18 @@
       },
       "contact_force_python": null,
       "level_trim": {
-        "gain_db": 9.43,
-        "measured_gain_db": 9.430760694335998,
+        "gain_db": 12.32,
+        "measured_gain_db": 12.324322291651164,
         "measured_by": "tools/cymbalis_trims (FastEngine)",
         "sample_rate": 44100,
-        "velocity": 0.9,
+        "velocity": 1.0,
         "strike_time_s": 0.0,
-        "window_s": 1.0,
+        "window_s": 0.5,
         "position": 1.0,
-        "rms_1s": 0.024238809227116662,
+        "target_db": 2.7,
+        "rms": 0.0393613217593588,
         "reference_slot": "Nova BOW",
-        "reference_rms_1s": 0.07178758033232538
+        "reference_rms": 0.1192026164949164
       }
     },
     {
@@ -523,17 +524,18 @@
       },
       "contact_force_python": null,
       "level_trim": {
-        "gain_db": -1.31,
-        "measured_gain_db": -1.3141869984098464,
+        "gain_db": -0.85,
+        "measured_gain_db": -0.85195324286868,
         "measured_by": "tools/cymbalis_trims (FastEngine)",
         "sample_rate": 44100,
-        "velocity": 0.9,
+        "velocity": 1.0,
         "strike_time_s": 0.0,
-        "window_s": 1.0,
+        "window_s": 0.5,
         "position": 0.5,
-        "rms_1s": 0.08351388077075159,
+        "target_db": 0.0,
+        "rms": 0.13148719187696165,
         "reference_slot": "Nova BOW",
-        "reference_rms_1s": 0.07178758033232538
+        "reference_rms": 0.1192026164949164
       }
     },
     {
@@ -671,17 +673,18 @@
       },
       "contact_force_python": null,
       "level_trim": {
-        "gain_db": 2.22,
-        "measured_gain_db": 2.2165288689023197,
+        "gain_db": 18.95,
+        "measured_gain_db": 18.948528349435986,
         "measured_by": "tools/cymbalis_trims (FastEngine)",
         "sample_rate": 44100,
-        "velocity": 0.9,
+        "velocity": 1.0,
         "strike_time_s": 0.0,
-        "window_s": 1.0,
+        "window_s": 0.5,
         "position": 0.0,
-        "rms_1s": 0.05561896101848922,
+        "target_db": 14.2,
+        "rms": 0.06900163329764741,
         "reference_slot": "Nova BOW",
-        "reference_rms_1s": 0.07178758033232538
+        "reference_rms": 0.1192026164949164
       }
     }
   ],

@@ -7,7 +7,7 @@ plugin's engine:
     cymbalis_trims --bake resources/presets/nova_ride.bake.json --json trims.json
     python tools/set_level_trims.py resources/presets/nova_ride.bake.json trims.json
 
-Each slot of the bake gets a "level_trim" object. The plugin uses only its "gain_db"
+(docs/BUILDS.md has the commands for every preset.) Each slot of the bake gets a "level_trim" object. The plugin uses only its "gain_db"
 (rounded to 0.01 dB here); edit that number to adjust a slot's level by ear. The other
 fields record the measurement. The bake is rewritten in place; nothing else in it changes.
 """
@@ -47,9 +47,10 @@ def main():
             'strike_time_s': float(trims['strike_time_s']),
             'window_s': float(trims['window_s']),
             'position': float(t['position']),
-            'rms_1s': float(t['rms_1s']),
+            'target_db': float(t.get('target_db', 0.0)),   # level relative to the reference
+            'rms': float(t['rms']),                        # over window_s, both channels
             'reference_slot': trims['reference_slot'],
-            'reference_rms_1s': float(trims['reference_rms_1s']),
+            'reference_rms': float(trims['reference_rms']),
         }
 
     with open(args.bake, 'w') as f:
