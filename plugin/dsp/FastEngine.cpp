@@ -1203,15 +1203,18 @@ void FastEngine::hertzVelocity(double velocity, double* out) const noexcept
 }
 
 // Lines 1047-1057: the NPZ velw row for this velocity, peak-normalised. The velocity is
-// remapped through sqrt of its 0..1 position among the NPZ velocities first (as in Python,
-// whose remap adds the lowest velocity twice).
+// remapped through sqrt of its 0..1 position among the captured velocities, so the rows in
+// between are reached more gradually; below the softest capture its row is used. Python
+// adds the lowest captured velocity to the remapped value a second time (line 1051), which
+// shifts every strike toward the louder captures and never reaches the softest; the plugin
+// does not (PORT_MAP, "602 and Bettis").
 void FastEngine::npzCoupling(double velocity, double* out) const noexcept
 {
     const EdgeNpz& z = bake_->edgeNpz;
     const int nv = static_cast<int>(z.velocities.size());
     const double v0 = z.velocities.front(), v1 = z.velocities.back();
     const double x = std::sqrt(clamp01((velocity - v0) / (v1 - v0)));
-    const double mapped = v0 + numpyInterp(x, sqrtVelsNorm_.data(), z.velocities.data(), nv, 1);
+    const double mapped = numpyInterp(x, sqrtVelsNorm_.data(), z.velocities.data(), nv, 1);
     double peak = 0.0;
     for (int i = 0; i < n_; ++i)
     {
