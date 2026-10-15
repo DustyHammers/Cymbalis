@@ -527,7 +527,14 @@ Every other key the two presets set either has its default effect or is not read
    | HAMMERED THIN RIDE | BOW | −1.31 dB |
    | HAMMERED THIN RIDE | EDGE | +2.22 dB |
 
-6. **Preset switching.** Each preset has its own engine, built and prepared off the audio thread. A switch takes effect at the next audio block. If the old preset is still ringing it fades out over 30 ms (raised cosine) alongside the new one, then is reset without allocating. Silent engines keep their clocks with the plugin's. The preset is session state, not a parameter.
+6. **One engine; a preset is data loaded into it.** The three bakes are parsed at plugin load. The processor owns one `FastEngine`, loaded with the current preset's bake. Choosing a preset, or restoring a session with a different one, goes the same way:
+   - A loader thread builds the engine state for the new bake at the current sample rate and hands it to the audio thread through an atomic pointer, without locks. It takes over at the next block.
+   - It continues the old engine's clock (`FastEngine::continueFrom`), so the engine clock never restarts, and continues its strike-phase random sequence.
+   - If the old cymbal is still ringing, it fades out over 30 ms (raised cosine) alongside the new one. The audio thread then hands it back, and the loader thread frees it.
+   - Outside that fade only one engine exists. Nothing on the audio thread allocates, frees, locks or touches files.
+   - The preset is session state, not a parameter.
+   - The strike-phase sequence that starts at plugin load is the first preset's (NOVA RIDE, seed 7). After a switch it carries on, whatever the new preset's size, so the other presets' own seed (11) is not used for strike phases. Their pick vectors and wander tables still come from their own bakes.
+   - The MF and LF accumulators belong to the cymbal and start fresh with the new one.
 
 ### Things in the source data or engine that look wrong (ported as they are)
 

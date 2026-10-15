@@ -102,10 +102,14 @@ constexpr std::array<PresetInfo, kNumPresets> kPresets {{
 
 constexpr int kDefaultMidiChannel = 16;
 
-// Nova Ride's TIP / SHOULDER rows, whose choice is saved with the session.
+// Rows that offer a TIP / SHOULDER choice in some preset; their choice is saved with the
+// session.
 inline bool hasStickChoice (int slot) noexcept
 {
-    return kPresets[0].slots[(size_t) slot].stick == StickDisplay::choice;
+    for (const auto& preset : kPresets)
+        if (preset.slots[(size_t) slot].stick == StickDisplay::choice)
+            return true;
+    return false;
 }
 
 inline const char* stickName (Stick s) noexcept

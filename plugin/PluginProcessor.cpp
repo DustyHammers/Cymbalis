@@ -25,6 +25,25 @@ juce::String percentText (float v) { return juce::String (juce::roundToInt (v * 
 const juce::String middleDot = juce::String::fromUTF8 ("\xc2\xb7");
 } // namespace
 
+// Builds the next cymbal and frees retired ones, off the audio thread. It polls: the audio
+// thread only stores atomics and never wakes it (that would lock).
+class CymbalisProcessor::Loader final : public juce::Thread
+{
+public:
+    explicit Loader (CymbalisProcessor& p) : juce::Thread ("Cymbalis loader"), owner (p) {}
+    void run() override
+    {
+        while (! threadShouldExit())
+        {
+            owner.loaderTick();
+            wait (10);
+        }
+    }
+
+private:
+    CymbalisProcessor& owner;
+};
+
 CymbalisProcessor::CymbalisProcessor()
     : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "CymbalisParameters", createParameterLayout())
@@ -38,10 +57,23 @@ CymbalisProcessor::CymbalisProcessor()
         notes[i].store (cymbalis::kSlots[i].defaultNote);
         sticks[i].store ((int) cymbalis::kSlots[i].defaultStick);
     }
-    loadPresets();
+    parsePresets();
+    // The cymbal: one engine, loaded with the first preset. Its clock and its strike-phase
+    // sequence start here and carry over to every preset loaded later.
+    current = buildCymbal (0, 0.0).release();
+    loader = std::make_unique<Loader> (*this);
+    loader->startThread();
 }
 
-CymbalisProcessor::~CymbalisProcessor() = default;
+CymbalisProcessor::~CymbalisProcessor()
+{
+    loader->stopThread (2000);
+    delete pending.exchange (nullptr);
+    delete retired.exchange (nullptr);
+    delete fading;
+    delete current;
+}
+
 
 // Exactly the four parameters of docs/UI_SPEC.md section 9.
 juce::AudioProcessorValueTreeState::ParameterLayout CymbalisProcessor::createParameterLayout()
@@ -87,9 +119,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout CymbalisProcessor::createPar
     return { params.begin(), params.end() };
 }
 
-// The baked presets are compiled in. Each gets its own engine, built here, off the audio
-// thread. A preset that cannot be loaded stays silent and the editor shows its error.
-void CymbalisProcessor::loadPresets()
+// The baked presets are compiled in and parsed here: they are data. A preset that cannot be
+// loaded stays silent and the editor shows its error.
+void CymbalisProcessor::parsePresets()
 {
     for (size_t k = 0; k < presets.size(); ++k)
     {
@@ -101,11 +133,11 @@ void CymbalisProcessor::loadPresets()
             const char* data = findResource (info.bakeFile, size);
             if (data == nullptr)
                 throw cymbalis::BakeError (std::string ("the ") + info.name + " preset is missing from the plugin");
-            preset.bake = cymbalis::loadBakeFromText (std::string (data, (size_t) size), info.name);
+            auto bake = cymbalis::loadBakeFromText (std::string (data, (size_t) size), info.name);
             auto entryFor = [&] (const char* name) {
                 if (*name == 0)
                     return -1; // a silent row
-                const int e = preset.bake->slotIndex (name);
+                const int e = bake->slotIndex (name);
                 if (e < 0)
                     throw cymbalis::BakeError (std::string ("the ") + info.name + " preset has no " + name + " entry");
                 return e;
@@ -115,12 +147,11 @@ void CymbalisProcessor::loadPresets()
                 preset.entry[s][0] = entryFor (info.slots[s].tipEntry);
                 preset.entry[s][1] = entryFor (info.slots[s].shoulderEntry);
             }
-            // The engine clock and the strike-phase sequence start here.
-            preset.engine = std::make_unique<cymbalis::FastEngine> (preset.bake);
+            preset.bake = std::move (bake);
         }
         catch (const std::exception& e)
         {
-            preset.engine.reset();
+            preset.bake.reset();
             preset.error = juce::String (e.what());
             if (preset.error.isEmpty())
                 preset.error = "unknown error";
@@ -128,24 +159,82 @@ void CymbalisProcessor::loadPresets()
     }
 }
 
+// The engine loaded with a preset's bake, prepared at sampleRate (if known). Allocates: never
+// on the audio thread.
+std::unique_ptr<CymbalisProcessor::Cymbal> CymbalisProcessor::buildCymbal (int preset, double sampleRate)
+{
+    auto c = std::make_unique<Cymbal>();
+    c->preset = preset;
+    const auto& bake = presets[(size_t) preset].bake;
+    if (bake == nullptr)
+        return c;
+    try
+    {
+        c->engine = std::make_unique<cymbalis::FastEngine> (bake);
+        if (sampleRate > 0.0)
+            c->engine->prepare (sampleRate);
+    }
+    catch (const std::exception& e)
+    {
+        c->engine.reset();
+        if (! buildFailed[(size_t) preset].load())
+        {
+            buildError[(size_t) preset] = juce::String (e.what());
+            buildFailed[(size_t) preset].store (true);
+        }
+    }
+    return c;
+}
+
+// Loader thread: frees the cymbal the audio thread retired, and builds the chosen preset's
+// cymbal at the prepared rate when it is not the newest one.
+void CymbalisProcessor::loaderTick()
+{
+    delete retired.exchange (nullptr);
+    const juce::ScopedLock sl (buildLock);
+    const double rate = preparedRate.load();
+    const int target = presetTarget.load();
+    if (rate <= 0.0 || target == scheduledPreset.load())
+        return;
+    auto c = buildCymbal (target, rate);
+    scheduledPreset.store (target);
+    // A cymbal still pending was never taken by the audio thread: it is ours to free.
+    delete pending.exchange (c.release());
+}
+
+juce::String CymbalisProcessor::presetError() const
+{
+    const int k = presetIndex();
+    if (presets[(size_t) k].error.isNotEmpty())
+        return presets[(size_t) k].error;
+    return buildFailed[(size_t) k].load() ? buildError[(size_t) k] : juce::String();
+}
+
 void CymbalisProcessor::prepareToPlay (double sampleRate, int)
 {
     setLatencySamples (0);
-    // A new rate recomputes every engine's coefficients (and stops its ring). The same rate
-    // again keeps the current cymbal ringing. Either way the clocks and random sequences
-    // continue. Only the current preset may ring.
-    presetActive = presetTarget.load();
-    presetFading = -1;
-    for (size_t k = 0; k < presets.size(); ++k)
+    // The audio thread is stopped here. The cymbal ends up loaded with the chosen preset and
+    // prepared at this rate. A new rate stops the ring; the same rate again keeps it. The
+    // clock and the strike-phase sequence continue either way.
+    const juce::ScopedLock sl (buildLock);
+    delete pending.exchange (nullptr);
+    delete retired.exchange (nullptr);
+    delete fading;
+    fading = nullptr;
+    const int target = presetTarget.load();
+    if (current == nullptr || current->preset != target)
     {
-        auto* e = presets[k].engine.get();
-        if (e == nullptr)
-            continue;
-        if (! juce::exactlyEqual (e->sampleRate(), sampleRate))
-            e->prepare (sampleRate);
-        else if ((int) k != presetActive)
-            e->reset();
+        auto c = buildCymbal (target, sampleRate);
+        if (c->engine != nullptr && current != nullptr && current->engine != nullptr)
+            c->engine->continueFrom (*current->engine); // also from a cymbal never prepared: time 0
+        delete current;
+        current = c.release();
     }
+    else if (current->engine != nullptr && ! juce::exactlyEqual (current->engine->sampleRate(), sampleRate))
+        current->engine->prepare (sampleRate);
+    scheduledPreset.store (target);
+    preparedRate.store (sampleRate);
+
     fadeLength = std::max (1, juce::roundToInt (kPresetFadeSeconds * sampleRate));
     fadePos = 0;
     fadeLeft.assign (kFadeChunk, 0.0f);
@@ -175,22 +264,36 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     float* left = buffer.getWritePointer (0);
     float* right = buffer.getWritePointer (1);
 
-    // Preset switch: the new preset plays from this block on. If the old one is ringing it
-    // fades out over kPresetFadeSeconds alongside it, then stops. A further switch waits
-    // for that fade to finish. Nothing here allocates or locks.
-    const int target = presetTarget.load();
-    if (target != presetActive && presetFading < 0)
+    // Preset switch: take the cymbal the loader built, if any. It continues the engine clock
+    // and strike-phase sequence and plays from this block on. If the old cymbal is ringing it
+    // fades out alongside for kPresetFadeSeconds; then the loader frees it. While a fade or a
+    // free is outstanding the next switch waits. Nothing here allocates, frees or locks.
+    if (fading == nullptr && retired.load() == nullptr)
     {
-        auto* old = presets[(size_t) presetActive].engine.get();
-        if (old != nullptr && old->isPrepared() && ! old->isSilent())
+        Cymbal* next = pending.load();
+        if (next != nullptr && pending.compare_exchange_strong (next, nullptr))
         {
-            presetFading = presetActive;
-            fadePos = 0;
+            const double rate = preparedRate.load();
+            if (next->engine != nullptr && ! juce::exactlyEqual (next->engine->sampleRate(), rate))
+                retired.store (next); // built for another rate: the loader frees it and builds again
+            else
+            {
+                if (next->engine != nullptr && current != nullptr && current->engine != nullptr)
+                    next->engine->continueFrom (*current->engine);
+                Cymbal* old = current;
+                current = next;
+                if (old != nullptr && old->engine != nullptr && old->engine->isPrepared() && ! old->engine->isSilent()
+                    && ! fadeLeft.empty())
+                {
+                    fading = old;
+                    fadePos = 0;
+                }
+                else if (old != nullptr)
+                    retired.store (old);
+            }
         }
-        presetActive = target;
     }
-    Preset& current = presets[(size_t) presetActive];
-    auto* engine = current.engine.get();
+    auto* engine = current != nullptr ? current->engine.get() : nullptr;
     const bool playing = engine != nullptr && engine->isPrepared();
 
     const int ch = channel.load();
@@ -214,7 +317,7 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             continue;
         const double vIn = (d[2] & 0x7f) / 127.0;
         const double velocity = kVelocityFloor + sens * (vIn - kVelocityFloor);
-        strikeSlots (current, note, velocity, b1, b2, left, right, pos, juce::jlimit (0, n, meta.samplePosition));
+        strikeSlots (*current, note, velocity, b1, b2, left, right, pos, juce::jlimit (0, n, meta.samplePosition));
     }
     if (playing)
     {
@@ -224,15 +327,13 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     else
         buffer.clear (0, n);
 
-    int finishedFade = -1;
-    if (presetFading >= 0)
+    if (fading != nullptr)
     {
-        auto* old = presets[(size_t) presetFading].engine.get();
         int done = 0;
-        while (done < n && fadePos < fadeLength && ! fadeLeft.empty())
+        while (done < n && fadePos < fadeLength)
         {
             const int m = std::min ({ n - done, (int) fadeLeft.size(), fadeLength - fadePos });
-            old->process (fadeLeft.data(), fadeRight.data(), m);
+            fading->engine->process (fadeLeft.data(), fadeRight.data(), m);
             for (int i = 0; i < m; ++i)
             {
                 // raised cosine from 1 to 0
@@ -243,19 +344,12 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             done += m;
             fadePos += m;
         }
-        if (fadePos >= fadeLength || fadeLeft.empty())
+        if (fadePos >= fadeLength)
         {
-            old->reset();
-            if (done < n)
-                old->skip (n - done);
-            finishedFade = presetFading;
-            presetFading = -1;
+            retired.store (fading); // freed by the loader
+            fading = nullptr;
         }
     }
-    // The silent presets' clocks keep time with the plugin's.
-    for (size_t k = 0; k < presets.size(); ++k)
-        if ((int) k != presetActive && (int) k != presetFading && (int) k != finishedFade && presets[k].engine != nullptr)
-            presets[k].engine->skip (n);
 
     gain.setTargetValue (juce::Decibels::decibelsToGain (volumeDb->load(), -1000.0f));
     if (gain.isSmoothing())
@@ -274,26 +368,29 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     }
 }
 
-// Strikes every slot whose note is `note` on `preset`, at sample `at` of the block, after
-// rendering the block up to there. Silent slots (no bake entry) are skipped.
-void CymbalisProcessor::strikeSlots (Preset& preset, int note, double velocity, double b1, double b2, float* left,
+// Strikes every slot whose note is `note`, at sample `at` of the block, after rendering the
+// block up to there. A slot plays its preset's entry for the chosen stick where the slot
+// table offers a choice (StickDisplay::choice), else its fixed entry; silent slots are skipped.
+void CymbalisProcessor::strikeSlots (Cymbal& c, int note, double velocity, double b1, double b2, float* left,
                                      float* right, int& pos, int at)
 {
-    const bool nova = &preset == &presets[0];
+    const auto& info = cymbalis::kPresets[(size_t) c.preset];
+    const auto& preset = presets[(size_t) c.preset];
     for (size_t s = 0; s < cymbalis::kSlots.size(); ++s)
     {
         if (notes[s].load() != note)
             continue;
-        const int stick = nova && sticks[s].load() == (int) cymbalis::Stick::shoulder ? 1 : 0;
+        const bool choice = info.slots[s].stick == cymbalis::StickDisplay::choice;
+        const int stick = choice && sticks[s].load() == (int) cymbalis::Stick::shoulder ? 1 : 0;
         const int entry = preset.entry[s][(size_t) stick];
         if (entry < 0)
             continue;
         if (at > pos)
         {
-            preset.engine->process (left + pos, right + pos, at - pos);
+            c.engine->process (left + pos, right + pos, at - pos);
             pos = at;
         }
-        preset.engine->strike (entry, velocity, cymbalis::slotPosition (cymbalis::kSlots[s], b1, b2));
+        c.engine->strike (entry, velocity, cymbalis::slotPosition (cymbalis::kSlots[s], b1, b2));
     }
 }
 
@@ -357,7 +454,7 @@ void CymbalisProcessor::getStateInformation (juce::MemoryBlock& destData)
     for (size_t i = 0; i < notes.size(); ++i)
     {
         session->setAttribute (juce::String ("note_") + cymbalis::kSlots[i].label, notes[i].load());
-        if (cymbalis::hasStickChoice ((int) i)) // Nova Ride's choice, whatever preset plays
+        if (cymbalis::hasStickChoice ((int) i)) // kept whatever preset plays
             session->setAttribute (juce::String ("stick_") + cymbalis::kSlots[i].label,
                                    cymbalis::stickName ((cymbalis::Stick) sticks[i].load()));
     }

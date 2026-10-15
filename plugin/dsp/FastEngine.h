@@ -85,12 +85,11 @@ public:
     // Renders numSamples of stereo output, overwriting left and right.
     void process(float* left, float* right, int numSamples) noexcept;
 
-    // Stops the ringing cymbal at once: no ring, no running contact, accumulators cleared.
-    // The clock and the strike-phase sequence continue. Does not allocate.
-    void reset() noexcept;
-    // While silent (after reset(), before the next strike): advances the clock by
-    // numSamples without rendering. Returns false, doing nothing, if the engine is not silent.
-    bool skip(int numSamples) noexcept;
+    // Takes over another engine's timeline when it replaces it (a preset switch): the engine
+    // clock continues from that engine's time, and the strike-phase sequence from its state.
+    // Both engines must be prepared at the same rate. Does not allocate.
+    void continueFrom(const FastEngine& previous) noexcept;
+    // Nothing rings: no ringing mode, no running contact, no strike energy.
     bool isSilent() const noexcept;
 
     // Engine time of the next sample, in seconds since construction.

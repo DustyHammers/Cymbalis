@@ -1310,27 +1310,13 @@ void FastEngine::restartFrames(Component& c, double elapsed) noexcept
         c.fd[size_t(k)] = static_cast<float>(std::exp(negLambda_[size_t(k)] * c.epsK[size_t(k)] * phase));
 }
 
-void FastEngine::reset() noexcept
+void FastEngine::continueFrom(const FastEngine& previous) noexcept
 {
-    for (auto& c : components_)
-    {
-        c.used = c.pending = c.envOn = false;
-        c.settled = true;
-    }
-    activeContacts_ = 0;
-    std::fill(zr_.begin(), zr_.end(), 0.0);
-    std::fill(zi_.begin(), zi_.end(), 0.0);
-    hpZ0_ = hpZ1_ = 0.0;
-    lfS_ = mfS_ = 0.0;
-    lfTLast_ = mfTLast_ = 0.0;
-    lfScaleNow_ = mfScaleNow_ = 1.0;
-    wanderScale_ = wanderRateScale_ = 1.0;
-    nKinks_ = 0;
-    if (!isPrepared())
-        return;
-    sampleNow_ = static_cast<int64_t>(clock_);
-    baseSample_ = sampleNow_;
-    startFreePhase(); // nothing rings: no mode is above the threshold
+    timeBase_ = previous.timeSeconds();
+    clock_ = 0;
+    sampleNow_ = 0;
+    baseSample_ = 0;
+    rng_ = previous.rng_;
 }
 
 bool FastEngine::isSilent() const noexcept
@@ -1343,15 +1329,6 @@ bool FastEngine::isSilent() const noexcept
     return true;
 }
 
-bool FastEngine::skip(int numSamples) noexcept
-{
-    if (numSamples <= 0 || !isPrepared() || !isSilent())
-        return false;
-    clock_ += static_cast<uint64_t>(numSamples);
-    freePos_ += numSamples;
-    sampleNow_ = static_cast<int64_t>(clock_);
-    return true;
-}
 
 void FastEngine::strike(int slotIndex, double velocity, double position) noexcept
 {

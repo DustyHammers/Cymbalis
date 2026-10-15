@@ -88,9 +88,9 @@ Hover, open and selected states use only colours from this table.
 ## 6. Interactions
 - **Knobs:** vertical drag; double-click resets to the default.
 - **MIDI note box:** vertical drag changes the note. A click opens a menu: MIDI LEARN, RESET DEFAULT, NONE (unassign) and a scrollable list of every note, C-2 (0) to G8 (127), each with its number; the current note is outlined and in view. No separate Learn button is added.
-- **Stick box:** where the preset has both stick versions, a click opens a TIP / SHOULDER popup. For Nova Ride, BELL and BELL2 choose TIP (`bell_tip`) or SHOULDER (`bell_shoulder`); BOW and BOW2 choose TIP (`bow_tip`) or SHOULDER (`bow_shoulder`). EDGE has no choice and shows a dash. The other presets' stick boxes are fixed and open nothing (section 8). Nova Ride's choices are saved with the session and kept while another preset plays; they are not automatable parameters.
+- **Stick box:** where the preset has both stick versions, a click opens a TIP / SHOULDER popup. For Nova Ride, BELL and BELL2 choose TIP (`bell_tip`) or SHOULDER (`bell_shoulder`); BOW and BOW2 choose TIP (`bow_tip`) or SHOULDER (`bow_shoulder`). EDGE has no choice and shows a dash. The other presets' stick boxes are fixed and open nothing (section 8). Which rows offer the choice comes from the slot table (`StickDisplay::choice` in `plugin/SlotTable.h`). The choices are saved with the session and kept while a preset without them plays; they are not automatable parameters.
 - **Dropdowns:** the preset dropdown is a list of NOVA RIDE, SMOKE FLAT RIDE and HAMMERED THIN RIDE; the channel dropdown is a 4×4 grid.
-- **Preset switch:** the new preset plays from the next audio block. If the old one is still ringing it fades out over 30 ms; it does not carry over. Notes, the MIDI channel, the knobs and Nova Ride's stick choices stay as they are.
+- **Preset switch:** the chosen preset's data is loaded into the one cymbal engine and plays from the next audio block (PORT_MAP, "602 and Bettis", decision 6). If the old cymbal is still ringing it fades out over 30 ms; it does not carry over. Notes, the MIDI channel, the knobs and the stick choices stay as they are.
 - Knob value readout while dragging: Velocity "100%", Volume "+0.0 dB", Blend 1 "BELL 100 · 0 BOW", Blend 2 "BOW 100 · 0 EDGE".
 - MIDI LEARN: the next note-on on the selected channel is assigned; the box pulses "LEARN" until then; clicking elsewhere cancels.
 - Popups: background `#141313`, 2 px border `#534739`; hover outline `#76624C`; open outline `#A5A299`.
@@ -173,4 +173,4 @@ Placeholder ranges until Kris revises them. At the defaults the plugin sounds th
 
 EDGE always strikes at position 0.0. All four are automatable. No other parameters.
 
-Non-automatable state saved with the session: MIDI channel, note per slot, Nova Ride's stick per slot, current preset, editor size.
+Non-automatable state saved with the session: MIDI channel, note per slot, stick per slot (rows with a choice), current preset, editor size.
