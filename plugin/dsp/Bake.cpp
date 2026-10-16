@@ -193,8 +193,6 @@ std::vector<std::string> unsupportedMechanisms(const json::Value& e)
     if (eff(e, "release_gain") > 0.0 && eff(e, "tip_contact_ms") > 0.0 && !e.at("permode_contact").boolean())
         out.push_back("contact release pulse");
     if (eff(e, "rate_jitter") > 0.0) out.push_back("wander rate jitter (draws extra random numbers)");
-    if (eff(e, "lf_sens_depth") > 0.0 && eff(e, "lf_max_scale") <= 1.0)
-        out.push_back("LF amplitude scaling (lf_max_scale <= 1)");
     if (eff(e, "nl_amount") > 1e-6) out.push_back("NL redistribution (nl_amount > 0; off in the plugin)");
     if (eff(e, "hf_bloom_modes") > 0) out.push_back("HF bloom bank");
     if (eff(e, "sparkle_clusters") > 0 && eff(e, "sparkle_depth") > 0.0) out.push_back("sparkle");
@@ -485,6 +483,12 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
             if (sh.at("mf_bandpass").isNull())
                 throw BakeError("mf_sens_depth > 0 but the bake has no mf_bandpass");
             b.mfBandpass = readArray(sh.at("mf_bandpass"), "shared.mf_bandpass (used)", {n}, rep);
+        }
+        if (ep.lfDepth > 0.0)
+        {
+            if (sh.at("lf_sigmoid").isNull())
+                throw BakeError("lf_sens_depth > 0 but the bake has no lf_sigmoid");
+            b.lfSigmoid = readArray(sh.at("lf_sigmoid"), "shared.lf_sigmoid (used)", {n}, rep);
         }
         rep.push_back("params ok    engine-wide parameters identical across slots");
 

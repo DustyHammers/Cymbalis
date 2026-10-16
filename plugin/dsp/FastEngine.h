@@ -7,11 +7,17 @@
 //   Each strike's own effects apply only to the energy that strike added. The onset band
 //   gains and their tau, the edge onset ramp with its velocity tilt, and the
 //   velocity-dependent decay (wash_damp / vel_len_tilt) belong to the strike. What stays
-//   cymbal-wide, as in Python: the shared modal state (strikes add together), the MF
-//   accumulator's damping, the LF accumulator's wander-rate boost, and the wander itself.
+//   cymbal-wide, as in Python: the shared modal state (strikes add together), the LF and
+//   MF accumulators' scales, the LF accumulator's wander-rate boost, and the wander itself.
 //   For a single strike on its own this is the same computation as before. During a
-//   strike's contact phase the whole state is output without any factor, as in Python
-//   (PORT_MAP f.4), so for those samples older strikes' gains and ramps pause too.
+//   strike's contact phase the whole state is output with only the cymbal-wide LF/MF gain
+//   and wander phase (PORT_MAP f.4), so for those samples older strikes' gains and ramps
+//   pause.
+//
+//   The LF and MF accumulators decay continuously; their scales are evaluated at every
+//   control point and smoothed (one-pole, 20 ms). The LF scale applies in both its modes.
+//   Each mode's wander phase is integrated over time, so changes of the wander rate and
+//   depth never make it jump (PORT_MAP, "Live-engine decisions", decision 6).
 //
 // How it is computed:
 //
@@ -151,9 +157,12 @@ private:
         int sa;         // ringing slot of the mode (its oscillator step)
         double dps;     // the component's own decay per sample
         double pl, pr, gm1, pt, te0, env0, env1;
+        double g0, g1;  // cymbal-wide LF/MF gain at the block's ends
     };
 
     void renderContactSample(float* left, float* right) noexcept;
+    void renderContactRotated(float* left, float* right) noexcept;
+    void endContactSample() noexcept;
     void renderFree(float* left, float* right, int n) noexcept;
     void beginControlBlock() noexcept;
     void sumComponents(double t0, double t1) noexcept;
@@ -169,6 +178,15 @@ private:
     void mergeComponents(Component& into, Component& from, bool dropEnvelopes) noexcept;
     void setDecay(Component& c, int mode) noexcept;
     void startFreePhase() noexcept;
+    double wanderRate(double t) const noexcept;
+    void smoothScalesTo(double t, double tTarget) noexcept;
+    void smoothScalesTo(double t) noexcept { smoothScalesTo(t, t); }
+    // Cymbal-wide LF x MF gain of one mode for the scales lf and mf (lines 914-919).
+    double modeGain(size_t mode, double lf, double mf) const noexcept
+    {
+        return (1.0 + (lf - 1.0) * lfW_[mode]) * (1.0 + (mf - 1.0) * mfW_[mode]);
+    }
+    void cymbalWideAtStrike(double t) noexcept;
     void velocityParticipation(const VelocityTable& t, double v, double* out) const noexcept;
     void hertzVelocity(double velocity, double* out) const noexcept;
     void npzCoupling(double velocity, double* out) const noexcept;
@@ -230,13 +248,47 @@ private:
     int lastSlot_ = -1;
 
     // Cymbal-wide state that Python keeps on the engine object.
-    double wanderScale_ = 1.0, wanderRateScale_ = 1.0;
-    double lfS_ = 0.0, lfTLast_ = 0.0, lfScaleNow_ = 1.0;
-    double mfS_ = 0.0, mfTLast_ = 0.0, mfScaleNow_ = 1.0;
+    double wanderScale_ = 1.0;   // wander depth scale set by the latest strike (edge_wander_depth)
+    double edgeRateScale_ = 1.0; // wander rate scale set by the latest strike (edge_wander_rate)
     std::vector<double> scratchBandScale_;
 
+    // LF and MF accumulators (render() lines 652-688), decaying continuously:
+    // S(t) = s0 exp(-(t - t0) / tau), t0 the latest strike. Its scale follows the part
+    // without that strike's own contribution (`latest`), which enters at the next strike, as
+    // in Python. `started` is the explicit "there was a strike" flag (Python tests
+    // t_last > 0, f.8).
+    struct Accumulator
+    {
+        double s0 = 0.0, latest = 0.0, t0 = 0.0;
+        bool started = false;
+        double at(double t, double tau) const noexcept;       // all of S
+        double forScale(double t, double tau) const noexcept; // S without the latest strike
+        void add(double t, double tau, double amount) noexcept;
+    };
+    Accumulator lfAcc_, mfAcc_;
+    bool lfOn_ = false, mfOn_ = false; // lf_sens_depth > 0, mf_sens_depth > 0
+    std::vector<double> lfW_, mfW_;    // per mode: LF weight (1 - sigmoid), MF band-pass weight; 0 when off
+    // Their scales after the 20 ms smoothing, at time smTime_, and at the current control
+    // block's ends (the gains are interpolated between them).
+    double lfSm_ = 1.0, mfSm_ = 1.0, smTime_ = 0.0;
+    double blkT0_ = 0.0, blkT1_ = 0.0, blkLf0_ = 1.0, blkLf1_ = 1.0, blkMf0_ = 1.0, blkMf1_ = 1.0;
+
+    // Wander, integrated over time. The LFO phase of mode k is 2 pi lfoRate_k tau + lfoPhase_k,
+    // where tau, the LFO time, rises at the wander rate scale: tauRef_ at tauRefTime_, then
+    // tauRate_ per second. Its wander phase W changes by wC_k (wanderScale_ / rate) times
+    // the change of cos(LFO phase), which is line 867 while the rate and depth stay constant.
+    bool wanderOn_ = false;
+    double tauRef_ = 0.0, tauRefTime_ = 0.0, tauRate_ = 1.0;
+    double blkRate_ = -1.0;   // rate scale of the current control block (-1: none yet)
+    double maxDriftDepth_ = 0.0; // largest |drift x wander_depth| of a mode with wander
+    std::vector<double> wC_;  // per mode: -drift x wander_depth / lfo rate (0: no wander)
+    std::vector<double> W_, cW_; // per mode: wander phase at the latest strike, and cos of its LFO phase then
+    // Contact phase: the cymbal-wide gain x exp(i W) of each mode at the latest strike,
+    // times each pick (off when the bake has no LF/MF accumulator and no wander).
+    bool contactRot_ = false;
+    std::vector<double> cuLr_, cuLi_, cuRr_, cuRi_;
+
     // Segment state.
-    bool segMfOn_ = false;
     double segThreshold_ = 0.0;
     bool wanderSmall_ = true; // the wander phase moves < 0.05 rad per block for every mode
 
@@ -248,10 +300,10 @@ private:
     std::vector<float> yr_, yi_, sr32_, si32_, ar_, ai_, dar_, dai_, pl32_, pr32_;
     // double control-rate state per active mode
     std::vector<double> Yr_, Yi_;   // oscillator at the next control point (wander included)
-    std::vector<double> cr_, ci_;   // LFO phasor exp(i (2 pi lr t + lp)) at the next control point
-    std::vector<double> qr_, qi_;   // LFO step over one control block
-    std::vector<double> phiW_;      // wander phase at the next control point
-    std::vector<double> negDlr_, mf_, gBound_;
+    std::vector<double> cr_, ci_;   // LFO phasor at the next control point
+    std::vector<double> qr_, qi_;   // LFO step over one control block (at blkRate_)
+    std::vector<double> phiW0_, phiW_; // wander phase at the current block's start and at the next control point
+    std::vector<double> gBound_;    // bound of the mode's output gains (dropping)
     // the components' sum at the two ends of the block, per mode (mode order, nPad_)
     std::vector<float> A0r_, A0i_, A1r_, A1i_;
     std::vector<float> dropW_, dropE_; // dropQuietModes(): per-mode weight and energy (mode order)

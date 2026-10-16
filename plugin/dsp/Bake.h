@@ -44,8 +44,9 @@ struct EngineParams
     double wanderDepth = 0.0;
     double edgeWanderDepth = 0.0, edgeWanderRate = 0.0;
 
-    // Stage 5: LF accumulator (render() lines 652-672). Only the wander-rate boost is
-    // audible in boost mode (lf_max_scale > 1); suppress mode is rejected by the gate.
+    // Stage 5: LF accumulator (render() lines 652-672): the LF scale (boost when
+    // lf_max_scale > 1, else suppress; FastEngine applies it in both modes, PORT_MAP
+    // live-engine decision 6) and the wander-rate boost.
     double lfDepth = 0.0, lfTau = 5.0, lfMin = 0.3, lfMax = 1.0;
     double lfWEdge = 1.0, lfWBow = 0.5, lfWBell = 0.1;
     double lfWanderRateBoost = 0.0;
@@ -140,6 +141,9 @@ struct BakeData
 
     // MF band-pass weight per mode (lines 399-405); empty when the MF accumulator is off.
     std::vector<double> mfBandpass;
+    // LF sigmoid per mode, 1 / (1 + exp(-(f - lf_cutoff_hz) / 200)) (lines 391-397); empty
+    // when the LF accumulator is off.
+    std::vector<double> lfSigmoid;
 
     // Onset ramp data (stage 8): peak times per mode (indexed by mode position) and the
     // velocity tilt table (velocities x bands), its reference row and each mode's band.
