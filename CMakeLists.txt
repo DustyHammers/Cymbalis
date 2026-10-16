@@ -12,6 +12,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # (used by the A/B render job).
 option(CYMBALIS_BUILD_PLUGIN "Build the JUCE plugin (VST3/AU)" ON)
 
+# ON builds "Cymbalis Tuning" instead of "Cymbalis": the same plugin with the hidden Tuning
+# window (docs/TUNING.md), under its own identity so both can be installed side by side.
+# The normal build contains none of the tuning code.
+option(CYMBALIS_TUNING "Build Cymbalis Tuning (the plugin with the tuning window)" OFF)
+
 # ---------------------------------------------------------------------------
 # DSP engine (C++ port of the Python V19 engine) and the A/B console renderer
 # ---------------------------------------------------------------------------
@@ -48,12 +53,26 @@ else()
     set(CYMBALIS_FORMATS VST3)   # Linux is only used for local compile checks
 endif()
 
-juce_add_plugin(Cymbalis
+if(CYMBALIS_TUNING)
+    set(CYMBALIS_TARGET      CymbalisTuning)
+    set(CYMBALIS_BUNDLE_ID   "com.dhammers.cymbalistuning")
+    set(CYMBALIS_PLUGIN_CODE CymT)
+    set(CYMBALIS_PRODUCT     "Cymbalis Tuning")
+    set(CYMBALIS_DSP         cymbalis_fast_tuning)
+else()
+    set(CYMBALIS_TARGET      Cymbalis)
+    set(CYMBALIS_BUNDLE_ID   "com.dhammers.cymbalis")
+    set(CYMBALIS_PLUGIN_CODE Cymb)
+    set(CYMBALIS_PRODUCT     "Cymbalis")
+    set(CYMBALIS_DSP         cymbalis_fast)
+endif()
+
+juce_add_plugin(${CYMBALIS_TARGET}
     COMPANY_NAME                "DHammers"
-    BUNDLE_ID                   "com.dhammers.cymbalis"
+    BUNDLE_ID                   "${CYMBALIS_BUNDLE_ID}"
     PLUGIN_MANUFACTURER_CODE    Dham
-    PLUGIN_CODE                 Cymb
-    PRODUCT_NAME                "Cymbalis"
+    PLUGIN_CODE                 ${CYMBALIS_PLUGIN_CODE}
+    PRODUCT_NAME                "${CYMBALIS_PRODUCT}"
     FORMATS                     ${CYMBALIS_FORMATS}
     IS_SYNTH                    TRUE
     NEEDS_MIDI_INPUT            TRUE
@@ -96,11 +115,19 @@ set(CYMBALIS_PLUGIN_SOURCES
     plugin/PluginEditor.cpp
     plugin/ui/UiAssets.cpp
 )
-target_sources(Cymbalis PRIVATE ${CYMBALIS_PLUGIN_SOURCES})
+target_sources(${CYMBALIS_TARGET} PRIVATE ${CYMBALIS_PLUGIN_SOURCES})
+if(CYMBALIS_TUNING)
+    target_sources(${CYMBALIS_TARGET} PRIVATE
+        plugin/tuning/TuningFields.cpp
+        plugin/tuning/TuningProcessor.cpp
+        plugin/tuning/TuningWindow.cpp
+    )
+    target_include_directories(${CYMBALIS_TARGET} PRIVATE plugin/tuning)
+endif()
 
-target_include_directories(Cymbalis PRIVATE plugin)
+target_include_directories(${CYMBALIS_TARGET} PRIVATE plugin)
 
-target_compile_definitions(Cymbalis PUBLIC
+target_compile_definitions(${CYMBALIS_TARGET} PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
@@ -113,13 +140,13 @@ target_compile_definitions(Cymbalis PUBLIC
 #   -Xarch_x86_64 applies the flag to the Intel slice only in universal builds.
 # ---------------------------------------------------------------------------
 if(APPLE)
-    target_compile_options(Cymbalis PRIVATE -Xarch_x86_64 -msse4.1)
+    target_compile_options(${CYMBALIS_TARGET} PRIVATE -Xarch_x86_64 -msse4.1)
 endif()
 
-target_link_libraries(Cymbalis
+target_link_libraries(${CYMBALIS_TARGET}
     PRIVATE
         CymbalisBinaryData
-        cymbalis_fast
+        ${CYMBALIS_DSP}
         juce::juce_audio_utils
         juce::juce_audio_processors
         juce::juce_dsp
@@ -128,6 +155,11 @@ target_link_libraries(Cymbalis
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags
 )
+
+# The editor snapshot and the host mouse test are tools of the normal build.
+if(CYMBALIS_TUNING)
+    return()
+endif()
 
 # ---------------------------------------------------------------------------
 # CymbalisSnapshot: renders the editor to PNG (CI uploads 1536x1024 and 960x640, and one

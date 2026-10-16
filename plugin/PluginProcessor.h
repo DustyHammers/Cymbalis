@@ -82,6 +82,30 @@ public:
     juce::Point<int> editorSize() const noexcept { return { editorWidth.load(), editorHeight.load() }; }
     void setEditorSize (int w, int h) noexcept;
 
+#if CYMBALIS_TUNING
+    // ---- tuning build only (docs/TUNING.md), message thread
+    // The bake of a preset (null if it failed to load), its baked tuning values and the
+    // current ones. setTuning applies every value live; a new ring length rebuilds the
+    // cymbal through the preset-switch path.
+    std::shared_ptr<const cymbalis::BakeData> presetBake (int preset) const { return presets[(size_t) preset].bake; }
+    cymbalis::Tuning tuning (int preset) const;
+    void setTuning (int preset, const cymbalis::Tuning& t);
+
+    // Meters: the output after the Volume knob (peak since the last read, RMS over about
+    // 300 ms, clip latched until resetClip), and the last hit before the Volume knob (its row
+    // and bake entry, velocity, and peak and RMS over its first 500 ms).
+    struct Meters
+    {
+        float outPeak = 0.0f, outRms = 0.0f;
+        bool clip = false;
+        int hitRow = -1, hitEntry = -1;
+        float hitVelocity = 0.0f, hitPeak = 0.0f, hitRms = 0.0f;
+        bool hitComplete = false;
+    };
+    Meters readMeters() noexcept;
+    void resetClip() noexcept { meterClip.store (false); }
+#endif
+
     static constexpr const char* paramVelocitySensitivity = "velocity_sensitivity";
     static constexpr const char* paramVolumeDb = "volume_db";
     static constexpr const char* paramBlend1 = "blend_1";
@@ -102,6 +126,9 @@ private:
     {
         int preset = 0;
         std::unique_ptr<cymbalis::FastEngine> engine; // null if the engine could not be built
+#if CYMBALIS_TUNING
+        double ring = 1.0; // ring length it was built with (tuning build)
+#endif
     };
 
     class Loader;
@@ -148,6 +175,44 @@ private:
     std::atomic<int> editorWidth { 0 }, editorHeight { 0 };
 
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> gain { 1.0f };
+
+#if CYMBALIS_TUNING
+    // Tuning state per preset, owned by the message thread; the loader reads it under the lock.
+    mutable juce::CriticalSection tuningLock; // message and loader threads, never the audio thread
+    std::array<cymbalis::Tuning, cymbalis::kNumPresets> tunings {};
+    double scheduledRing = 1.0; // ring length of the newest cymbal (pending or current)
+    // Values for the audio thread, through a triple buffer (no lock, no allocation): the
+    // writer fills `tuningBack` and swaps it with the middle; the audio thread takes the
+    // middle when it is new.
+    struct TuningMessage
+    {
+        int preset = -1;
+        cymbalis::Tuning tuning;
+    };
+    std::array<TuningMessage, 3> tuningBuffers {};
+    int tuningBack = 0, tuningFront = 2;  // writer's and audio thread's buffers
+    std::atomic<int> tuningMiddle { 1 };  // index | kTuningNew
+    static constexpr int kTuningNew = 4;
+    void publishTuning (int preset, const cymbalis::Tuning& t); // under tuningLock
+    void takeTuning (bool newCymbal) noexcept;                  // audio thread
+    void applyTuningToNewCymbal (Cymbal& c);                    // loader / prepareToPlay
+
+    // Meters (written by the audio thread).
+    void meterBlock (const float* left, const float* right, int n, bool afterVolume) noexcept;
+    void startHitMeter (int row, int entry, double velocity, int at) noexcept;
+    std::atomic<float> meterPeak { 0.0f }, meterRms { 0.0f };
+    std::atomic<bool> meterClip { false };
+    double meterMs = 0.0; // mean square, smoothed (audio thread)
+    std::atomic<int> hitRow { -1 }, hitEntry { -1 };
+    std::atomic<float> hitVelocity { 0.0f }, hitPeakOut { 0.0f }, hitRmsOut { 0.0f };
+    std::atomic<bool> hitComplete { false };
+    int hitStart = 0;      // sample of the current block where the last hit began
+    long hitLeft = 0;      // samples of its 500 ms still to measure
+    long hitCount = 0;     // samples measured
+    double hitSum = 0.0, hitMax = 0.0;
+    void writeTuningState (juce::XmlElement& session) const;
+    void readTuningState (const juce::XmlElement& session);
+#endif
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CymbalisProcessor)
 };

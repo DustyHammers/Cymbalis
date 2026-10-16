@@ -1,5 +1,9 @@
 #include "PluginEditor.h"
 
+#if CYMBALIS_TUNING
+#include "tuning/TuningWindow.h"
+#endif
+
 #include <cmath>
 
 namespace cymbalis::ui
@@ -25,6 +29,9 @@ const juce::Rectangle<int> kNoteBox (1424, 0, 66, 25);
 const juce::Rectangle<int> kPresetBox (61, 371, 277, 62);
 const juce::Rectangle<int> kChannelBox (632, 936, 277, 62);
 const juce::Rectangle<int> kPhoto (434, 94, 707, 713);
+#if CYMBALIS_TUNING
+const juce::Rectangle<int> kLogo (40, 80, 390, 130); // the CYMBALIS logo and its tagline in the background
+#endif
 
 const juce::String emDash = juce::String::fromUTF8 ("\xe2\x80\x94");
 
@@ -594,6 +601,17 @@ void Content::refresh()
 
 void Content::mouseDown (const juce::MouseEvent& e)
 {
+#if CYMBALIS_TUNING
+    // Tuning build: Cmd-click on the logo opens the Tuning window (docs/TUNING.md).
+    if (e.eventComponent == this && e.mods.isCommandDown() && kLogo.contains (e.getPosition()))
+    {
+        if (tuningWindow == nullptr)
+            tuningWindow = std::make_unique<tuning::TuningWindow> (processor, assets);
+        tuningWindow->setVisible (true);
+        tuningWindow->toFront (true);
+        return;
+    }
+#endif
     const int learn = processor.midiLearnSlot();
     if (learn < 0 || popup != nullptr)
         return;
