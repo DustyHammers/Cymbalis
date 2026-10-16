@@ -133,7 +133,7 @@ void ValueRow::setValues (double value, double b)
         slider.setRange (std::min ({ slider.getMinimum(), value, b }), std::max ({ slider.getMaximum(), value, b }), 0.0);
     const juce::ScopedValueSetter<bool> s (updating, true);
     slider.setValue (value, juce::dontSendNotification);
-    reset->setEnabled (value != baked);
+    reset->setEnabled (! juce::exactlyEqual (value, baked));
     repaint();
 }
 
@@ -148,7 +148,7 @@ void ValueRow::resized()
 void ValueRow::paint (juce::Graphics& g)
 {
     // A changed value is marked with a bronze bar at the left.
-    if (slider.getValue() != baked)
+    if (! juce::exactlyEqual (slider.getValue(), baked))
     {
         g.setColour (ui::palette::bronze);
         g.fillRect (0, 4, 3, getHeight() - 8);
@@ -460,9 +460,10 @@ void TuningPanel::load()
 }
 
 // =====================================================================================
-TuningWindow::TuningWindow (CymbalisProcessor& p, const ui::Assets& assets)
+TuningWindow::TuningWindow (CymbalisProcessor& p, const ui::Assets& assets, juce::Component& ownerComponent)
     : juce::DocumentWindow (juce::String (JucePlugin_Name) + " - Tuning", ui::palette::background,
-                            juce::DocumentWindow::closeButton)
+                            juce::DocumentWindow::closeButton),
+      owner (ownerComponent)
 {
     setUsingNativeTitleBar (true);
     setContentOwned (new TuningPanel (p, assets), false);
@@ -470,5 +471,33 @@ TuningWindow::TuningWindow (CymbalisProcessor& p, const ui::Assets& assets)
     setResizeLimits (520, 360, 1200, 2000);
     centreWithSize (660, 820);
 }
+
+TuningWindow::~TuningWindow()
+{
+    detach (*this);
+}
+
+void TuningWindow::show()
+{
+    setVisible (true);
+    attachAbove (*this, owner);
+    toFront (true);
+}
+
+void TuningWindow::hide()
+{
+    detach (*this);
+    setVisible (false);
+}
+
+#if ! JUCE_MAC
+// Without a native child window: kept on top.
+void attachAbove (juce::Component& window, juce::Component&)
+{
+    window.setAlwaysOnTop (true);
+}
+
+void detach (juce::Component&) {}
+#endif
 
 } // namespace cymbalis::tuning

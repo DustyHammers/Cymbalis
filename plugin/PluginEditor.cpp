@@ -31,6 +31,7 @@ const juce::Rectangle<int> kChannelBox (632, 936, 277, 62);
 const juce::Rectangle<int> kPhoto (434, 94, 707, 713);
 #if CYMBALIS_TUNING
 const juce::Rectangle<int> kLogo (40, 80, 390, 130); // the CYMBALIS logo and its tagline in the background
+const juce::Rectangle<int> kTuningButton (1404, 30, 110, 36); // top right, above the column headers (y 98)
 #endif
 
 const juce::String emDash = juce::String::fromUTF8 ("\xe2\x80\x94");
@@ -64,6 +65,41 @@ void drawBoxOutline (juce::Graphics& g, juce::Rectangle<int> r, juce::Colour c)
     g.drawRect (r, 2);
 }
 } // namespace
+
+#if CYMBALIS_TUNING
+// =====================================================================================
+// Tuning build: the TUNING button, drawn like the editor's boxes.
+class Content::TuningButton final : public juce::Component
+{
+public:
+    explicit TuningButton (const Assets& a) : assets (a) { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
+    void setOpen (bool o)
+    {
+        if (o != open)
+        {
+            open = o;
+            repaint();
+        }
+    }
+    std::function<void()> onClick;
+    void paint (juce::Graphics& g) override
+    {
+        drawBoxOutline (g, getLocalBounds(), open ? palette::openOutline : (isMouseOver() ? palette::bronze : palette::boxOutline));
+        drawValue (g, assets.font (kRowSize, kStickValueSpacing), "TUNING", getLocalBounds().toFloat(), palette::label);
+    }
+    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { repaint(); }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (onClick && getLocalBounds().contains (e.getPosition()))
+            onClick();
+    }
+
+private:
+    const Assets& assets;
+    bool open = false;
+};
+#endif
 
 // =====================================================================================
 Knob::Knob (const Assets& a) : assets (a)
@@ -517,6 +553,13 @@ Content::Content (CymbalisProcessor& p)
     channelBox.onClick = [this] { openChannelMenu(); };
     addAndMakeVisible (channelBox);
 
+#if CYMBALIS_TUNING
+    tuningButton = std::make_unique<TuningButton> (assets);
+    tuningButton->setBounds (kTuningButton);
+    tuningButton->onClick = [this] { toggleTuningWindow (tuningWindow == nullptr || ! tuningWindow->isShowing()); };
+    addAndMakeVisible (*tuningButton);
+#endif
+
     for (int s = 0; s < kNumSlots; ++s)
     {
         auto box = std::make_unique<NoteBox> (assets);
@@ -547,6 +590,9 @@ Content::Content (CymbalisProcessor& p)
 
 Content::~Content()
 {
+#if CYMBALIS_TUNING
+    tuningWindow.reset(); // the Tuning window goes with the editor
+#endif
     removeMouseListener (this);
     for (auto& k : knobs)
         k->removeListener (this);
@@ -597,18 +643,33 @@ void Content::refresh()
     const float pulse = 0.6f + 0.4f * (float) std::cos (juce::MathConstants<double>::twoPi * 1.25 * t);
     for (int s = 0; s < kNumSlots; ++s)
         noteBoxes[(size_t) s]->setLearning (s == learn, pulse);
+#if CYMBALIS_TUNING
+    tuningButton->setOpen (tuningWindow != nullptr && tuningWindow->isShowing());
+#endif
 }
+
+#if CYMBALIS_TUNING
+void Content::toggleTuningWindow (bool open)
+{
+    if (open)
+    {
+        if (tuningWindow == nullptr)
+            tuningWindow = std::make_unique<tuning::TuningWindow> (processor, assets, *this);
+        tuningWindow->show();
+    }
+    else if (tuningWindow != nullptr)
+        tuningWindow->hide();
+    tuningButton->setOpen (open);
+}
+#endif
 
 void Content::mouseDown (const juce::MouseEvent& e)
 {
 #if CYMBALIS_TUNING
-    // Tuning build: Cmd-click on the logo opens the Tuning window (docs/TUNING.md).
+    // Tuning build: Cmd-click on the logo opens the Tuning window too (docs/TUNING.md).
     if (e.eventComponent == this && e.mods.isCommandDown() && kLogo.contains (e.getPosition()))
     {
-        if (tuningWindow == nullptr)
-            tuningWindow = std::make_unique<tuning::TuningWindow> (processor, assets);
-        tuningWindow->setVisible (true);
-        tuningWindow->toFront (true);
+        toggleTuningWindow (true);
         return;
     }
 #endif

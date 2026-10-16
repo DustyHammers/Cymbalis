@@ -16,7 +16,15 @@ The two install side by side. The normal build has no tuning window, no live tun
 
 ## Opening the window
 
-In Cymbalis Tuning, **Cmd-click the CYMBALIS logo** (top left of the editor; Ctrl-click on Linux). A separate Tuning window opens. The main UI is unchanged. Closing the window hides it; Cmd-click again to show it.
+In Cymbalis Tuning, click **TUNING**, the box in the editor's top right corner (above the STICK ARTICULATION and MIDI NOTE headers). It opens the Tuning window; a second click closes it. While the window is open the box has the light outline of an open box. **Cmd-click on the CYMBALIS logo** (Ctrl-click on Linux) opens it too. The rest of the editor is unchanged, and the normal build has neither the button nor the window.
+
+The Tuning window is attached to the editor's window. On macOS it is a child window of it:
+
+- it is always in front of the editor and of the host's windows, never behind them;
+- it opens on the editor's Space and moves with the editor;
+- it hides while the host is in the background, so it does not cover other applications.
+
+On other systems it is kept on top. Its close button hides it, like the second click on TUNING. It closes when the editor closes.
 
 The window uses plain JUCE controls in the editor's palette and font:
 

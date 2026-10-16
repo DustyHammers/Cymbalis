@@ -184,6 +184,17 @@ jobs:
           echo "--- AU ---"
           "$UITEST" AU $STEPS
 
+      # Cymbalis Tuning: click TUNING in a real AU and VST3 host; the Tuning window must be
+      # visible, in front of the editor and attached to it, then hidden after a second click.
+      - name: Tuning window test (AU and VST3, tuning build)
+        timeout-minutes: 5
+        run: |
+          UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
+          echo "--- VST3 ---"
+          "$UITEST" "$PWD/$TVST3" tuning tuningclose
+          echo "--- AU ---"
+          "$UITEST" "AU:${TUNING_AU_SUBTYPE}" tuning tuningclose
+
       - name: Package
         run: |
           SHA=$(git rev-parse --short HEAD)
