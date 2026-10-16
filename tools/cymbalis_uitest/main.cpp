@@ -194,7 +194,7 @@ private:
 
     void addStep (const juce::String& name)
     {
-        Step s { name, {}, {}, {} };
+        Step s { name, {}, {}, {}, {} };
         auto wait = [] {};
         if (name == "channel")
         {
