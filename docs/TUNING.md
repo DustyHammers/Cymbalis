@@ -24,7 +24,9 @@ The Tuning window is attached to the editor's window. On macOS it is a child win
 - it opens on the editor's Space and moves with the editor;
 - it hides while the host is in the background, so it does not cover other applications.
 
-On other systems it is kept on top. Its close button hides it, like the second click on TUNING. It closes when the editor closes.
+On other systems it is kept on top.
+
+It opens below the TUNING box, right-aligned with it, so the box stays clickable; where the screen has no room below, it opens to the left of the box. If you move it, it stays where you put it, unless that would cover the box when it next opens. Its close button hides it, like the second click on TUNING. It closes when the editor closes.
 
 The window uses plain JUCE controls in the editor's palette and font:
 

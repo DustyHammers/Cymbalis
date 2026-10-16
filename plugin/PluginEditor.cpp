@@ -655,7 +655,7 @@ void Content::toggleTuningWindow (bool open)
     {
         if (tuningWindow == nullptr)
             tuningWindow = std::make_unique<tuning::TuningWindow> (processor, assets, *this);
-        tuningWindow->show();
+        tuningWindow->show (tuningButton->localAreaToGlobal (tuningButton->getLocalBounds()));
     }
     else if (tuningWindow != nullptr)
         tuningWindow->hide();

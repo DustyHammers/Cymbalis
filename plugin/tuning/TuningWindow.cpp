@@ -617,11 +617,62 @@ TuningWindow::~TuningWindow()
     detach (*this);
 }
 
-void TuningWindow::show()
+namespace
 {
+// The native frame around a window's content (title bar included); before the system
+// reports it (Linux, briefly after creation), a title bar of 32.
+juce::BorderSize<int> frameOf (const juce::Component& window)
+{
+    if (auto* peer = window.getPeer())
+        if (const auto frame = peer->getFrameSizeIfPresent())
+            return *frame;
+    return { 32, 0, 0, 0 };
+}
+} // namespace
+
+void TuningWindow::show (juce::Rectangle<int> keepClear)
+{
+    // Placed when it first opens, and again only if it would cover the button; a window
+    // moved elsewhere stays there.
+    const auto frame = frameOf (*this);
+    if (! placed || frame.addedTo (getScreenBounds()).intersects (keepClear))
+    {
+        placeClearOf (keepClear);
+        placed = true;
+    }
     setVisible (true);
     attachAbove (*this, owner);
     toFront (true);
+}
+
+void TuningWindow::placeClearOf (juce::Rectangle<int> button)
+{
+    // Below the button and right-aligned with it; where the screen has no room below, to
+    // its left.
+    const auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect (button);
+    const auto area = display != nullptr ? display->userArea : button.expanded (2000);
+    const auto frame = frameOf (*this);
+    const auto inside = frame.subtractedFrom (area); // where the content may go
+    constexpr int gap = 8, minSize = 360;
+    const int top = button.getBottom() + gap + frame.getTop();
+    int w = juce::jmin (getWidth(), inside.getWidth());
+    int h = getHeight();
+    int x = 0, y = 0;
+    if (inside.getBottom() - top >= minSize)
+    {
+        h = juce::jmin (h, inside.getBottom() - top);
+        x = juce::jlimit (inside.getX(), juce::jmax (inside.getX(), inside.getRight() - w), button.getRight() - w);
+        y = top;
+    }
+    else
+    {
+        const int right = button.getX() - gap - frame.getRight();
+        w = juce::jmax (minSize, juce::jmin (w, right - inside.getX()));
+        h = juce::jmin (h, inside.getHeight());
+        x = juce::jmax (inside.getX(), right - w);
+        y = inside.getY();
+    }
+    setBounds (x, y, w, h);
 }
 
 void TuningWindow::hide()
