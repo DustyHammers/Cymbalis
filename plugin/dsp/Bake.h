@@ -9,6 +9,7 @@
 
 #include "Json.h"
 #include "Pcg64.h"
+#include "Tuning.h"
 
 #include <memory>
 #include <stdexcept>
@@ -41,7 +42,7 @@ struct EngineParams
     double sigmaRatio = 0.35;
 
     // Stage 4: LFO wander (lines 864-867, 1114-1119)
-    double wanderDepth = 0.0;
+    double wanderDepth = 0.0, wanderRateHz = 1.5;
     double edgeWanderDepth = 0.0, edgeWanderRate = 0.0;
 
     // Stage 5: LF accumulator (render() lines 652-672): the LF scale (boost when
@@ -50,6 +51,7 @@ struct EngineParams
     double lfDepth = 0.0, lfTau = 5.0, lfMin = 0.3, lfMax = 1.0;
     double lfWEdge = 1.0, lfWBow = 0.5, lfWBell = 0.1;
     double lfWanderRateBoost = 0.0;
+    double lfCutoffHz = 2000.0;
 
     // Stage 6: velocity-dependent T60 (lines 1127-1130, 861-862)
     double velLenTilt = 0.0, velLenTiltRef = 0.787;
@@ -57,6 +59,7 @@ struct EngineParams
     // Stage 7: MF accumulator (render() lines 674-688, free ring lines 917-919)
     double mfDepth = 0.0, mfTau = 5.0, mfMin = 0.3, mfMax = 1.0;
     double mfWEdge = 1.0, mfWBow = 0.5, mfWBell = 0.1;
+    double mfLoHz = 500.0, mfHiHz = 4000.0;
 
     // Stage 8: per-mode onset ramp (lines 621-650, 847-856, 895-901) and velocity tilt
     bool bandEnvOnset = false; // mode_pk_t data present
@@ -88,6 +91,11 @@ struct EdgeNpz
     bool envelopeActive = false;    // an edge band envelope file is set too (line 691)
     double onsetS = 1.5;            // edge_band_env_onset_s
     double frameDecayPeriodS = 0.02; // the in-frame decay restarts every 20 ms (line 889)
+    // Plugin tuning (docs/TUNING.md): the exponent of the velw velocity remap (line 1049:
+    // 0.5, sqrt) and whether the in-frame decay restarts every frame (false: no in-frame
+    // decay; the level follows the band envelope alone).
+    double remapExponent = 0.5;
+    bool frameDecayRestart = true;
 };
 
 struct SlotData
@@ -96,6 +104,9 @@ struct SlotData
     std::string overlay;       // empty = no overlay
     double position = 0.0;     // 0 edge, 0.5 bow, 1 bell
     double calibScalar = 1.0;  // the slot engine's _calib_scalar
+    // Velocity curve of this articulation (plugin tuning, docs/TUNING.md): level offsets at
+    // velocity 0.6 and 0.3 on top of the level law (levelDb is unused here: see levelTrim).
+    ArticulationTuning velocityCurve;
     // Level trim (plugin bake only), as a gain: level_trim.gain_db of the bake, measured
     // with FastEngine so that a velocity-0.9 strike at the base position matches BOW (tip)
     // by 1-second RMS, and editable by hand. 1.0 when the bake has none. FastEngine applies
@@ -167,6 +178,14 @@ struct BakeData
 
     std::vector<SlotData> slots;
     json::Value overrides; // the overrides the bake was made with
+
+    // Plugin tuning (docs/TUNING.md). `untuned` holds the bake's values without its tuning
+    // block (level trims included), `tuning` the values in use. pythonT60S and
+    // pythonLfoRateHz are the bake's arrays before the ring length and wander rate apply.
+    Tuning untuned, tuning;
+    bool hasTuningBlock = false;
+    double outputGainDb = 0.0;
+    std::vector<double> pythonT60S, pythonLfoRateHz;
     std::string path;
     std::vector<std::string> report; // what loadBake verified
 

@@ -1,6 +1,7 @@
 #include "FastEngine.h"
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <cstring>
 
@@ -48,6 +49,7 @@ constexpr double kSmallAngle = 0.05;  // the series below are used for wander st
 constexpr double kSettled = 1e-6;     // an onset envelope below this (times its largest gain) is over
 constexpr double kWashDampFloor = 0.3; // line 1129: wash_damp = max(0.3, ...)
 constexpr double kScaleSmoothS = 0.02;  // one-pole smoothing of the LF and MF scales
+constexpr double kOutputGainSmoothS = 0.02; // one-pole smoothing of the output gain
 constexpr double kLfoSeriesMax = 0.25;  // cosSinSeries() is exact in double below this (rad)
 
 // Vectors of 4 modes per kernel group: enough independent oscillators to hide the
@@ -141,10 +143,11 @@ inline double ramp(double bf, double te, double invPt) noexcept
 }
 } // namespace
 
-FastEngine::FastEngine(std::shared_ptr<const BakeData> bake) : bake_(std::move(bake)), n_(bake_->numModes)
+FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
+    : bake_(std::move(bake)), n_(bake_->numModes), params_(bake_->params)
 {
     const BakeData& b = *bake_;
-    const EngineParams& p = b.params;
+    const EngineParams& p = params_;
     if (p.contactPermode && (p.tipTau0 != p.shldTau0 || p.tipTauMax != p.shldTauMax))
         throw BakeError("FastEngine: the contact length depends on the strike position (tip and shoulder taus "
                         "differ); only a position-independent contact is implemented");
@@ -175,57 +178,62 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake) : bake_(std::move(b
     }
     scratchBandScale_.assign(size_t(std::max(b.velTiltBands, 1)), 1.0);
 
-    // LF and MF accumulators: each mode's weight in their scales (lines 391-405). The LF
-    // scale applies in both modes: lf + (1 - lf) sigmoid = 1 + (lf - 1)(1 - sigmoid).
+    // Per-slot and NPZ values the tuning can change (docs/TUNING.md), and the output gain.
+    for (const auto& slot : b.slots)
+    {
+        slotTrim_.push_back(slot.levelTrim);
+        slotCurve_.push_back(slot.velocityCurve);
+    }
+    remapExp_ = b.edgeNpz.remapExponent;
+    envWindowS_ = b.edgeNpz.onsetS;
+    frameRestart_ = b.edgeNpz.frameDecayRestart;
+    outGain_ = outGainTarget_ = std::pow(10.0, b.outputGainDb / 20.0);
+
+    // LF and MF accumulators: each mode's weight in their scales (lines 391-405), from the
+    // bake where it has them. The LF scale applies in both modes:
+    // lf + (1 - lf) sigmoid = 1 + (lf - 1)(1 - sigmoid).
     lfOn_ = p.lfDepth > 0.0;
     mfOn_ = p.mfDepth > 0.0;
     lfW_.assign(n, 0.0);
     mfW_.assign(n, 0.0);
-    for (size_t i = 0; i < n; ++i)
-    {
-        if (lfOn_)
+    if (! b.lfSigmoid.empty())
+        for (size_t i = 0; i < n; ++i)
             lfW_[i] = 1.0 - b.lfSigmoid[i];
-        if (mfOn_)
-            mfW_[i] = b.mfBandpass[i];
-    }
-    // Wander (lines 864-867): D / lr = (drift x wander_depth / lfo rate) x (depth scale / rate scale).
+    else
+        computeLfWeights();
+    if (! b.mfBandpass.empty())
+        mfW_ = b.mfBandpass;
+    else
+        computeMfWeights();
+    // Wander (lines 864-867): D / lr = (drift x wander_depth / lfoUnit) x (depth scale /
+    // (wander_rate_hz x rate scale)).
+    lfoUnit_.assign(n, 0.0);
+    if (p.wanderRateHz > 0.0)
+        for (size_t i = 0; i < n; ++i)
+            lfoUnit_[i] = b.lfoRateHz[i] / p.wanderRateHz;
     wC_.assign(n, 0.0);
     W_.assign(n, 0.0);
     cW_ = cosLp_; // at t = 0 the LFO phase is lfoPhase and the wander phase 0, as in Python
-    for (size_t i = 0; i < n; ++i)
-        if (p.wanderDepth != 0.0 && b.driftHz[i] != 0.0 && b.lfoRateHz[i] > 0.0)
-        {
-            wC_[i] = -(b.driftHz[i] * p.wanderDepth) / b.lfoRateHz[i];
-            maxDriftDepth_ = std::max(maxDriftDepth_, std::fabs(b.driftHz[i] * p.wanderDepth));
-        }
-    wanderOn_ = maxDriftDepth_ > 0.0;
+    computeWanderTables();
+    tauRate_ = p.wanderRateHz;
     contactRot_ = lfOn_ || mfOn_ || wanderOn_;
-    if (contactRot_)
-    {
-        cuLr_ = b.pickL;
-        cuRr_ = b.pickR;
-        cuLi_.assign(n, 0.0);
-        cuRi_.assign(n, 0.0);
-    }
+    cuLr_ = b.pickL;
+    cuRr_ = b.pickR;
+    cuLi_.assign(n, 0.0);
+    cuRi_.assign(n, 0.0);
     // The shared oscillator's decay: T60 / the smallest wash_damp a strike with a velocity
     // in 0..1 can have, so every strike's own decay relative to it is >= 0 (it only falls).
     oscWash_ = std::max(kWashDampFloor, 1.0 + p.velLenTilt * ((p.velLenTilt >= 0.0 ? 0.0 : 1.0) - p.velLenTiltRef));
 
     // hertz_vel_scale's reference spectrum: 1 / H(f, tau_ref) = sqrt(1 + (pi f tau_ref)^2).
     hertzRef_.resize(n);
-    for (size_t i = 0; i < n; ++i)
-    {
-        const double x = 3.14159265358979323846 * b.freqHz[i] * (p.tauRefMs * 1e-3);
-        hertzRef_[i] = std::sqrt(1.0 + x * x);
-    }
+    computeHertzRef();
 
     const EdgeNpz& z = b.edgeNpz;
     if (z.present)
     {
-        // line 1049: sqrt of the NPZ velocities normalised to 0..1
-        const double v0 = z.velocities.front(), v1 = z.velocities.back();
-        for (double v : z.velocities)
-            sqrtVelsNorm_.push_back(std::sqrt((v - v0) / (v1 - v0)));
+        remapTable_.resize(z.velocities.size());
+        computeRemapTable();
     }
     envBake_ = z.present && z.envelopeActive;
     if (envBake_)
@@ -291,7 +299,7 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake) : bake_(std::move(b
 void FastEngine::prepare(double sampleRate)
 {
     const BakeData& b = *bake_;
-    const EngineParams& p = b.params;
+    const EngineParams& p = params_;
     const size_t n = size_t(n_);
     if (sr_ > 0.0)
     {
@@ -391,6 +399,7 @@ void FastEngine::prepare(double sampleRate)
     }
 
     butterworthHighPass2(kHpCutoffHz, sr_, hpB0_, hpB1_, hpB2_, hpA1_, hpA2_);
+    outGainCoef_ = 1.0 - std::exp(-1.0 / (kOutputGainSmoothS * sr_));
 
     // Silence: no ringing, no running contact, no components, a fresh (silent) segment.
     std::fill(zr_.begin(), zr_.end(), 0.0);
@@ -454,6 +463,30 @@ void FastEngine::process(float* left, float* right, int numSamples) noexcept
     }
     hpZ0_ = z0;
     hpZ1_ = z1;
+
+    // Output gain of the preset (docs/TUNING.md), smoothed when it changes.
+    if (outGain_ != 1.0 || outGainTarget_ != 1.0)
+    {
+        double g = outGain_;
+        if (std::fabs(outGainTarget_ - g) <= 1e-7 * outGainTarget_)
+        {
+            g = outGainTarget_;
+            const float gf = static_cast<float>(g);
+            for (int j = 0; j < numSamples; ++j)
+            {
+                left[j] *= gf;
+                right[j] *= gf;
+            }
+        }
+        else
+            for (int j = 0; j < numSamples; ++j)
+            {
+                g += (outGainTarget_ - g) * outGainCoef_;
+                left[j] = static_cast<float>(left[j] * g);
+                right[j] = static_cast<float>(right[j] * g);
+            }
+        outGain_ = g;
+    }
     clock_ += static_cast<uint64_t>(numSamples);
 }
 
@@ -709,7 +742,7 @@ void FastEngine::addKink(const Component& c, int mode, double d0, double te0) no
 // interpolated.
 void FastEngine::renderKinks(float* left, float* right, int j0, int m) noexcept
 {
-    const double bf = bake_->params.birthFrac;
+    const double bf = params_.birthFrac;
     const double invK = 1.0 / static_cast<double>(K_);
     for (int q = 0; q < nKinks_; ++q)
     {
@@ -840,8 +873,10 @@ void FastEngine::beginControlBlock() noexcept
     const int na = nAct_;
     const int* idx = actIdx_.data();
 
+    applyPendingWander(t0);
+
     // LF and MF scales at the block's ends: the accumulators' targets at t0, smoothed.
-    const bool scales = lfOn_ || mfOn_;
+    const bool scales = lfOn_ || mfOn_ || lfSm_ != 1.0 || mfSm_ != 1.0;
     if (scales)
     {
         smoothScalesTo(t0);
@@ -854,13 +889,13 @@ void FastEngine::beginControlBlock() noexcept
         blkT1_ = t1;
     }
 
-    // Wander rate scale for this block (the LF boost follows the decaying accumulator); the
-    // LFO time moves on at the previous rate up to t0.
+    // Wander rate for this block: wander_rate_hz x the rate scale (the LF boost follows the
+    // decaying accumulator); the LFO time moves on at the previous rate up to t0.
     bool newRate = false;
     double gW = 0.0, rate = 1.0;
     if (wanderOn_)
     {
-        rate = wanderRate(t0);
+        rate = params_.wanderRateHz * wanderRate(t0);
         tauRef_ += tauRate_ * (t0 - tauRefTime_);
         tauRefTime_ = t0;
         tauRate_ = rate;
@@ -893,7 +928,7 @@ void FastEngine::beginControlBlock() noexcept
             if (wanderOn_)
             {
                 if (newRate)
-                    cosSin(b.lfoRateHz[k] * qScale, qr[a], qi[a]);
+                    cosSin(lfoUnit_[k] * qScale, qr[a], qi[a]);
                 const double cn = cr[a] * qr[a] - ci[a] * qi[a];
                 const double sn = cr[a] * qi[a] + ci[a] * qr[a];
                 d = wC_[k] * gW * (cn - cr[a]);
@@ -976,7 +1011,7 @@ void FastEngine::Accumulator::add(double t, double tau, double amount) noexcept
 // boost if that is larger (line 670), following the accumulator as it decays.
 double FastEngine::wanderRate(double t) const noexcept
 {
-    const EngineParams& p = bake_->params;
+    const EngineParams& p = params_;
     double r = edgeRateScale_;
     if (lfOn_ && p.lfWanderRateBoost > 0.0)
         r = std::max(r, 1.0 + lfAcc_.at(t, p.lfTau) * p.lfWanderRateBoost);
@@ -988,24 +1023,24 @@ double FastEngine::wanderRate(double t) const noexcept
 // min_scale).
 void FastEngine::smoothScalesTo(double t, double tTarget) noexcept
 {
-    const EngineParams& p = bake_->params;
+    const EngineParams& p = params_;
     if (!(t > smTime_))
         return;
     const double a = std::exp(-(t - smTime_) / kScaleSmoothS);
+    // An accumulator that is off (depth 0) has the target 1.
+    double lfTarget = 1.0, mfTarget = 1.0;
     if (lfOn_)
     {
         const double S = lfAcc_.forScale(tTarget, p.lfTau);
-        const double target = p.lfMax > 1.0 ? std::min(1.0 + S * p.lfDepth, p.lfMax)
-                                            : std::max(1.0 - S * p.lfDepth, p.lfMin);
-        lfSm_ = target + (lfSm_ - target) * a;
+        lfTarget = p.lfMax > 1.0 ? std::min(1.0 + S * p.lfDepth, p.lfMax) : std::max(1.0 - S * p.lfDepth, p.lfMin);
     }
     if (mfOn_)
     {
         const double S = mfAcc_.forScale(tTarget, p.mfTau);
-        const double target = p.mfMax > 1.0 ? std::min(1.0 + S * p.mfDepth, p.mfMax)
-                                            : std::max(1.0 - S * p.mfDepth, p.mfMin);
-        mfSm_ = target + (mfSm_ - target) * a;
+        mfTarget = p.mfMax > 1.0 ? std::min(1.0 + S * p.mfDepth, p.mfMax) : std::max(1.0 - S * p.mfDepth, p.mfMin);
     }
+    lfSm_ = lfTarget + (lfSm_ - lfTarget) * a;
+    mfSm_ = mfTarget + (mfSm_ - mfTarget) * a;
     smTime_ = t;
 }
 
@@ -1040,7 +1075,7 @@ void FastEngine::cymbalWideAtStrike(double t) noexcept
         {
             if (wC_[k] == 0.0)
                 continue;
-            const double c = std::cos(b.twoPi * b.lfoRateHz[k] * tau + b.lfoPhase[k]);
+            const double c = std::cos(b.twoPi * lfoUnit_[k] * tau + b.lfoPhase[k]);
             const int a = freeStarted_ ? actPos_[k] : -1;
             if (a >= 0)
                 W_[k] = phiW0_[size_t(a)] + (phiW_[size_t(a)] - phiW0_[size_t(a)]) * frac;
@@ -1051,6 +1086,7 @@ void FastEngine::cymbalWideAtStrike(double t) noexcept
         tauRef_ = tau;
         tauRefTime_ = t;
     }
+    applyPendingWander(t);
     if (contactRot_)
         for (size_t k = 0; k < n; ++k)
         {
@@ -1076,7 +1112,7 @@ void FastEngine::sumComponents(double t0, double t1) noexcept
             continue;
         // After its onset window an envelope strike rings with its own decaying amplitude
         // (line 881: past onset, normal T60).
-        if (c.envOn && t0 - c.tStrike >= bake_->edgeNpz.onsetS)
+        if (c.envOn && t0 - c.tStrike >= c.envWindow)
             c.envOn = false;
         if (!c.settled)
         {
@@ -1100,7 +1136,7 @@ void FastEngine::sumComponents(double t0, double t1) noexcept
     for (int q = 0; q < nE; ++q)
     {
         Component& c = *envList_[size_t(q)];
-        if (c.frameBlocksLeft <= 0)
+        if (c.frameRestart && c.frameBlocksLeft <= 0)
         {
             std::fill(c.fd.begin(), c.fd.end(), 1.0f);
             c.frameBlocksLeft = frameBlocks_;
@@ -1223,11 +1259,13 @@ void FastEngine::sumComponents(double t0, double t1) noexcept
                 const float* gm = c.gm1.data() + o;
                 const float* m0 = c.em0.data() + o;
                 const float* m1 = c.em1.data() + o;
+                // Without the frame restart the in-frame decay is off: F stays 1.
+                const v4f fstep = splat(c.frameRestart ? 1.0f : 0.0f);
                 for (int h = 0; h < 2; ++h)
                 {
                     const v4f step = ld(dm + 4 * h);
                     st(D + 4 * h, ld(D + 4 * h) * step);
-                    const v4f f0 = ld(F + 4 * h), f1 = f0 * step;
+                    const v4f f0 = ld(F + 4 * h), f1 = f0 * (fstep * step + (one - fstep));
                     st(F + 4 * h, f1);
                     const v4f g = ld(gm + 4 * h);
                     const v4f x0 = ld(m0 + 4 * h) * f0 * (one + g * e0);
@@ -1460,7 +1498,7 @@ void FastEngine::hertzVelocity(double velocity, double* out) const noexcept
 {
     const BakeData& b = *bake_;
     const double v = std::min(std::max(velocity, 1e-4), 1.0);
-    const double tauV = (b.params.tauRefMs * 1e-3) * std::pow(1.0 / v, 0.2);
+    const double tauV = (params_.tauRefMs * 1e-3) * std::pow(1.0 / v, 0.2);
     const double amplitude = std::pow(v, 2.0);
     const double k = 3.14159265358979323846 * tauV;
     for (int i = 0; i < n_; ++i)
@@ -1471,8 +1509,9 @@ void FastEngine::hertzVelocity(double velocity, double* out) const noexcept
 }
 
 // Lines 1047-1057: the NPZ velw row for this velocity, peak-normalised. The velocity is
-// remapped through sqrt of its 0..1 position among the captured velocities, so the rows in
-// between are reached more gradually; below the softest capture its row is used. Python
+// remapped through sqrt (the remap exponent, 0.5 unless tuned) of its 0..1 position among
+// the captured velocities, so the rows in between are reached more gradually; below the
+// softest capture its row is used. Python
 // adds the lowest captured velocity to the remapped value a second time (line 1051), which
 // shifts every strike toward the louder captures and never reaches the softest; the plugin
 // does not (PORT_MAP, "602 and Bettis").
@@ -1481,8 +1520,9 @@ void FastEngine::npzCoupling(double velocity, double* out) const noexcept
     const EdgeNpz& z = bake_->edgeNpz;
     const int nv = static_cast<int>(z.velocities.size());
     const double v0 = z.velocities.front(), v1 = z.velocities.back();
-    const double x = std::sqrt(clamp01((velocity - v0) / (v1 - v0)));
-    const double mapped = numpyInterp(x, sqrtVelsNorm_.data(), z.velocities.data(), nv, 1);
+    const double u = clamp01((velocity - v0) / (v1 - v0));
+    const double x = remapExp_ == 0.5 ? std::sqrt(u) : std::pow(u, remapExp_);
+    const double mapped = numpyInterp(x, remapTable_.data(), z.velocities.data(), nv, 1);
     double peak = 0.0;
     for (int i = 0; i < n_; ++i)
     {
@@ -1540,7 +1580,7 @@ void FastEngine::startEnvelope(Component& c, double velocity) noexcept
     std::copy(c.Br.begin(), c.Br.end(), c.Er.begin());
     std::copy(c.Bi.begin(), c.Bi.end(), c.Ei.begin());
     std::fill(c.fd.begin(), c.fd.end(), 1.0f);
-    c.frameBlocksLeft = frameBlocks_;
+    c.frameBlocksLeft = c.frameRestart ? frameBlocks_ : INT_MAX;
 }
 
 // The band envelope of one band at te seconds after the strike (lines 560-567: frame
@@ -1567,6 +1607,12 @@ double FastEngine::envelopeAt(const Component& c, int band, double te) const noe
 // after the strike, and the control blocks until it next restarts, rounded to a block.
 void FastEngine::restartFrames(Component& c, double elapsed) noexcept
 {
+    if (! c.frameRestart)
+    {
+        std::fill(c.fd.begin(), c.fd.end(), 1.0f);
+        c.frameBlocksLeft = INT_MAX;
+        return;
+    }
     const double period = bake_->edgeNpz.frameDecayPeriodS;
     const double phase = std::fmod(std::max(elapsed, 0.0), period);
     int left = static_cast<int>(std::lround((period - phase) * sr_ / static_cast<double>(K_)));
@@ -1580,6 +1626,181 @@ void FastEngine::restartFrames(Component& c, double elapsed) noexcept
     for (int k = 0; k < n_; ++k)
         c.fd[size_t(k)] = static_cast<float>(std::exp(negLambda_[size_t(k)] * c.epsK[size_t(k)] * phase));
 }
+
+// LF weight of every mode, 1 - sigmoid at lf_cutoff_hz.
+void FastEngine::computeLfWeights() noexcept
+{
+    const BakeData& b = *bake_;
+    for (int i = 0; i < n_; ++i)
+        lfW_[size_t(i)] = 1.0 - lfSigmoid(b.freqHz[size_t(i)], params_.lfCutoffHz);
+}
+
+// MF weight of every mode, the band-pass from mf_lo_hz to mf_hi_hz.
+void FastEngine::computeMfWeights() noexcept
+{
+    const BakeData& b = *bake_;
+    for (int i = 0; i < n_; ++i)
+        mfW_[size_t(i)] = mfBandpass(b.freqHz[size_t(i)], params_.mfLoHz, params_.mfHiHz);
+}
+
+// Each mode's wander amplitude per unit of (depth scale / rate) and whether any mode wanders.
+void FastEngine::computeWanderTables() noexcept
+{
+    const BakeData& b = *bake_;
+    maxDriftDepth_ = 0.0;
+    for (int i = 0; i < n_; ++i)
+    {
+        const size_t k = size_t(i);
+        wC_[k] = 0.0;
+        if (params_.wanderDepth != 0.0 && params_.wanderRateHz > 0.0 && b.driftHz[k] != 0.0 && lfoUnit_[k] > 0.0)
+        {
+            wC_[k] = -(b.driftHz[k] * params_.wanderDepth) / lfoUnit_[k];
+            maxDriftDepth_ = std::max(maxDriftDepth_, std::fabs(b.driftHz[k] * params_.wanderDepth));
+        }
+    }
+    wanderOn_ = maxDriftDepth_ > 0.0;
+}
+
+// hertz_vel_scale's reference spectrum: 1 / H(f, tau_ref) = sqrt(1 + (pi f tau_ref)^2).
+void FastEngine::computeHertzRef() noexcept
+{
+    const BakeData& b = *bake_;
+    for (int i = 0; i < n_; ++i)
+    {
+        const double x = 3.14159265358979323846 * b.freqHz[size_t(i)] * (params_.tauRefMs * 1e-3);
+        hertzRef_[size_t(i)] = std::sqrt(1.0 + x * x);
+    }
+}
+
+// Line 1049: the NPZ velocities normalised to 0..1, raised to the remap exponent (sqrt).
+void FastEngine::computeRemapTable() noexcept
+{
+    const EdgeNpz& z = bake_->edgeNpz;
+    const double v0 = z.velocities.front(), v1 = z.velocities.back();
+    for (size_t k = 0; k < remapTable_.size(); ++k)
+    {
+        const double u = (z.velocities[k] - v0) / (v1 - v0);
+        remapTable_[k] = remapExp_ == 0.5 ? std::sqrt(u) : std::pow(u, remapExp_);
+    }
+}
+
+// A wander change from setTuning, at time t (a control point, a strike or the start of a
+// free phase): the LFO time continues at the old rate up to t and at the new one after it,
+// and the wander phase keeps its value, so neither jumps.
+void FastEngine::applyPendingWander(double t) noexcept
+{
+    if (! wanderPending_)
+        return;
+    wanderPending_ = false;
+    const BakeData& b = *bake_;
+    const bool wasOn = wanderOn_;
+    if (wasOn && freeStarted_)
+        for (int a = 0; a < nAct_; ++a) // the ringing modes' wander phase, at t
+            W_[size_t(actIdx_[size_t(a)])] = phiW_[size_t(a)];
+    tauRef_ += tauRate_ * (t - tauRefTime_);
+    tauRefTime_ = t;
+    params_.wanderDepth = pendingWanderDepth_;
+    params_.wanderRateHz = pendingWanderRateHz_;
+    computeWanderTables();
+    tauRate_ = params_.wanderRateHz * wanderRate(t);
+    blkRate_ = -1.0; // the LFO steps follow the new rate from the next control point
+    contactRot_ = contactRot_ || wanderOn_;
+    if (! freeStarted_)
+        return;
+    wanderSmall_ = b.twoPi * maxDriftDepth_ * std::fabs(wanderScale_) * static_cast<double>(K_) / sr_ < kSmallAngle;
+    if (wanderOn_ && ! wasOn)
+        for (int a = 0; a < nAct_; ++a) // the ringing modes' LFO phasors start here
+        {
+            const size_t s = size_t(a), k = size_t(actIdx_[s]);
+            const double arg = b.twoPi * lfoUnit_[k] * tauRef_ + b.lfoPhase[k];
+            cr_[s] = std::cos(arg);
+            ci_[s] = std::sin(arg);
+            cW_[k] = cr_[s];
+        }
+}
+
+// The drop bound of every ringing mode's output gains, for the current LF/MF settings.
+void FastEngine::updateGainBounds() noexcept
+{
+    const BakeData& b = *bake_;
+    const double lfHi = std::max({1.0, params_.lfMax, lfSm_});
+    const double mfHi = std::max({1.0, params_.mfMax, mfSm_});
+    for (int a = 0; a < nAct_; ++a)
+    {
+        const size_t s = size_t(a), k = size_t(actIdx_[s]);
+        gBound_[s] = modeGain(k, lfHi, mfHi) * std::max(1.0, 1.0 + segGm1Max_) *
+                     std::max(std::fabs(b.pickL[k]), std::fabs(b.pickR[k]));
+    }
+}
+
+#if CYMBALIS_TUNING
+void FastEngine::setTuning(const Tuning& t) noexcept
+{
+    const CymbalTuning& c = t.cymbal;
+    // Per strike.
+    for (size_t s = 0; s < slotTrim_.size() && s < size_t(t.numArticulations); ++s)
+    {
+        slotTrim_[s] = std::pow(10.0, t.articulations[s].levelDb / 20.0);
+        slotCurve_[s] = t.articulations[s];
+    }
+    if (c.edgeRemapExponent != remapExp_ && c.edgeRemapExponent > 0.0)
+    {
+        remapExp_ = c.edgeRemapExponent;
+        if (! remapTable_.empty())
+            computeRemapTable();
+    }
+    if (c.tauRefMs != params_.tauRefMs && c.tauRefMs > 0.0)
+    {
+        params_.tauRefMs = c.tauRefMs;
+        computeHertzRef();
+    }
+    envWindowS_ = c.edgeEnvWindowS;
+    frameRestart_ = c.frameDecayRestart;
+    params_.edgeWanderDepth = c.edgeWanderDepth;
+    params_.edgeWanderRate = c.edgeWanderRate;
+
+    // LF and MF accumulators (their scales are smoothed towards the new targets).
+    const bool lfCut = c.lfCutoffHz != params_.lfCutoffHz;
+    const bool mfBand = c.mfLoHz != params_.mfLoHz || c.mfHiHz != params_.mfHiHz;
+    params_.lfDepth = c.lfDepth;
+    params_.lfTau = c.lfTau;
+    params_.lfMin = c.lfMin;
+    params_.lfMax = c.lfMax;
+    params_.lfCutoffHz = c.lfCutoffHz;
+    params_.lfWBow = c.lfWBow;
+    params_.lfWEdge = c.lfWEdge;
+    params_.lfWBell = c.lfWBell;
+    params_.lfWanderRateBoost = c.lfWanderRateBoost;
+    params_.mfDepth = c.mfDepth;
+    params_.mfTau = c.mfTau;
+    params_.mfMin = c.mfMin;
+    params_.mfMax = c.mfMax;
+    params_.mfWBow = c.mfWBow;
+    params_.mfWEdge = c.mfWEdge;
+    params_.mfWBell = c.mfWBell;
+    params_.mfLoHz = c.mfLoHz;
+    params_.mfHiHz = c.mfHiHz;
+    lfOn_ = params_.lfDepth > 0.0;
+    mfOn_ = params_.mfDepth > 0.0;
+    if (lfCut)
+        computeLfWeights();
+    if (mfBand)
+        computeMfWeights();
+    contactRot_ = contactRot_ || lfOn_ || mfOn_;
+    if (freeStarted_)
+        updateGainBounds();
+
+    // Wander depth and rate: at the next control point.
+    if (c.wanderDepth != params_.wanderDepth || c.wanderRateHz != params_.wanderRateHz)
+    {
+        wanderPending_ = true;
+        pendingWanderDepth_ = c.wanderDepth;
+        pendingWanderRateHz_ = c.wanderRateHz;
+    }
+
+    outGainTarget_ = std::pow(10.0, c.outputGainDb / 20.0);
+}
+#endif
 
 void FastEngine::continueFrom(const FastEngine& previous) noexcept
 {
@@ -1605,7 +1826,7 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     if (!isPrepared() || slotIndex < 0 || slotIndex >= numSlots()) return;
     const SlotData& s = bake_->slots[size_t(slotIndex)];
     const BakeData& b = *bake_;
-    const EngineParams& p = b.params;
+    const EngineParams& p = params_;
     const size_t n = size_t(n_);
     sampleNow_ = static_cast<int64_t>(clock_);
 
@@ -1652,8 +1873,11 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
             scratchPosW_[i] = scratchPosW_[i] * g;
     }
 
-    // The slot's calibration level and its level trim scale its own strike.
-    const double calib = s.calibScalar * s.levelTrim;
+    // The slot's calibration level, its level trim and its velocity curve (docs/TUNING.md)
+    // scale its own strike.
+    const double curveDb = velocityCurveDb(slotCurve_[size_t(slotIndex)], velocity);
+    const double calib =
+        s.calibScalar * slotTrim_[size_t(slotIndex)] * (curveDb != 0.0 ? std::pow(10.0, curveDb / 20.0) : 1.0);
     Component& comp = allocateComponent();
     comp.used = true;
     comp.order = ++componentOrder_;
@@ -1740,6 +1964,8 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     // Lines 690-694 and 869-894: with an NPZ band envelope an edge strike's level follows
     // the envelope for its onset window, and the onset ramp does not apply (line 896).
     comp.envOn = envBake_ && edgeFrac > 0.1;
+    comp.envWindow = envWindowS_;
+    comp.frameRestart = frameRestart_;
     if (comp.envOn)
         startEnvelope(comp, velocity);
     if (p.bandEnvOnset)
@@ -1814,7 +2040,7 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
                    velocity * (rawPos <= 0.25 ? p.mfWEdge : (rawPos >= 0.75 ? p.mfWBell : p.mfWBow)));
     // The LFO time runs at the new rate from here (line 670 with the new accumulator value).
     if (wanderOn_)
-        tauRate_ = wanderRate(strikeTime);
+        tauRate_ = params_.wanderRateHz * wanderRate(strikeTime);
 
     freeStarted_ = false;
     freePos_ = 0;
@@ -1828,10 +2054,10 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
 void FastEngine::startFreePhase() noexcept
 {
     const BakeData& b = *bake_;
-    const EngineParams& p = b.params;
+    const EngineParams& p = params_;
     const double threshold =
         b.ampSkipThreshold *
-        (lastSlot_ >= 0 ? b.slots[size_t(lastSlot_)].calibScalar * b.slots[size_t(lastSlot_)].levelTrim : 1.0);
+        (lastSlot_ >= 0 ? b.slots[size_t(lastSlot_)].calibScalar * slotTrim_[size_t(lastSlot_)] : 1.0);
     const int64_t m = sampleNow_ - baseSample_; // contact samples since the components' base
 
     // Older components step (undamped, as the contact phase did) to this sample; new ones
@@ -1903,11 +2129,13 @@ void FastEngine::startFreePhase() noexcept
     segThreshold_ = threshold;
     const double tBase = timeBase_ + static_cast<double>(sampleNow_) / sr_;
     segTBase_ = tBase;
+    applyPendingWander(tBase);
     const double K = static_cast<double>(K_);
     double gm1Max = 0.0;
     for (const auto& c : components_)
         if (c.used && c.onsetOn)
             gm1Max = std::max(gm1Max, c.gm1Max);
+    segGm1Max_ = gm1Max;
     // Wander: the LFO time here, and the depth / rate since the latest strike, which the
     // wander phase is integrated with up to here. The first block sets the LFO steps.
     const double tau = wanderOn_ ? tauRef_ + tauRate_ * (tBase - tauRefTime_) : 0.0;
@@ -1944,7 +2172,7 @@ void FastEngine::startFreePhase() noexcept
         double rotR = 1.0, rotI = 0.0;
         if (wanderOn_ && wC_[k] != 0.0)
         {
-            const double arg = b.twoPi * b.lfoRateHz[k] * tau + b.lfoPhase[k];
+            const double arg = b.twoPi * lfoUnit_[k] * tau + b.lfoPhase[k];
             cr_[d] = std::cos(arg);
             ci_[d] = std::sin(arg);
             const double W = W_[k] + wC_[k] * gW * (cr_[d] - cW_[k]);
@@ -1954,8 +2182,15 @@ void FastEngine::startFreePhase() noexcept
         }
         else
         {
+            // No wander: the phase stays where it is (0 unless the tuning switched wander off).
             cr_[d] = 1.0;
-            ci_[d] = phiW0_[d] = phiW_[d] = 0.0;
+            ci_[d] = 0.0;
+            phiW0_[d] = phiW_[d] = W_[k];
+            if (W_[k] != 0.0)
+            {
+                rotR = std::cos(W_[k]);
+                rotI = std::sin(W_[k]);
+            }
         }
         qr_[d] = 1.0;
         qi_[d] = 0.0;

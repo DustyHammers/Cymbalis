@@ -3,6 +3,7 @@
 add_library(cymbalis_engine STATIC
     Json.cpp
     Bake.cpp
+    Tuning.cpp
     Engine.cpp
 )
 
@@ -35,4 +36,21 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 if(APPLE)
     target_compile_options(cymbalis_fast PRIVATE "SHELL:-Xarch_x86_64 -msse4.1")
+endif()
+
+# cymbalis_fast_tuning — the same engine with FastEngine::setTuning, for the Cymbalis Tuning
+# build only (CYMBALIS_TUNING, docs/TUNING.md).
+if(CYMBALIS_TUNING)
+    add_library(cymbalis_fast_tuning STATIC
+        FastEngine.cpp
+    )
+    target_link_libraries(cymbalis_fast_tuning PUBLIC cymbalis_engine)
+    target_compile_definitions(cymbalis_fast_tuning PUBLIC CYMBALIS_TUNING=1)
+    set_target_properties(cymbalis_fast_tuning PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(cymbalis_fast_tuning PRIVATE -O3 -ffp-contract=fast -fno-fast-math -Wall -Wextra)
+    endif()
+    if(APPLE)
+        target_compile_options(cymbalis_fast_tuning PRIVATE "SHELL:-Xarch_x86_64 -msse4.1")
+    endif()
 endif()

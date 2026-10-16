@@ -412,6 +412,7 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
         ep.shldTauMax = eff(e0, "shld_tau_max");
         ep.sigmaRatio = eff(e0, "sigma_ratio");
         ep.wanderDepth = eff(e0, "wander_depth");
+        ep.wanderRateHz = eff(e0, "wander_rate_hz");
         ep.edgeWanderDepth = eff(e0, "edge_wander_depth");
         ep.edgeWanderRate = eff(e0, "edge_wander_rate");
         ep.lfDepth = eff(e0, "lf_sens_depth");
@@ -422,6 +423,7 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
         ep.lfWBow = eff(e0, "lf_bow_weight");
         ep.lfWBell = eff(e0, "lf_bell_weight");
         ep.lfWanderRateBoost = eff(e0, "lf_wander_rate_boost");
+        ep.lfCutoffHz = eff(e0, "lf_cutoff_hz");
         ep.velLenTilt = eff(e0, "vel_len_tilt");
         ep.velLenTiltRef = eff(e0, "vel_len_tilt_ref");
         ep.mfDepth = eff(e0, "mf_sens_depth");
@@ -431,6 +433,8 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
         ep.mfWEdge = eff(e0, "mf_edge_weight");
         ep.mfWBow = eff(e0, "mf_bow_weight");
         ep.mfWBell = eff(e0, "mf_bell_weight");
+        ep.mfLoHz = eff(e0, "mf_lo_hz");
+        ep.mfHiHz = eff(e0, "mf_hi_hz");
         ep.bandEnvOnset = e0.at("band_env_onset").boolean();
         ep.birthFrac = eff(e0, "band_env_birth_frac");
         ep.velTilt = e0.at("vel_tilt").boolean();
@@ -656,6 +660,61 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
     catch (const std::out_of_range& e)
     {
         throw BakeError(path + ": malformed bake (" + e.what() + ")");
+    }
+
+    // ---- plugin tuning (docs/TUNING.md): the bake's own values, then its tuning block
+    {
+        if (b.slots.size() > size_t(kMaxArticulations))
+            throw BakeError(path + ": more slots than the tuning model holds");
+        Tuning& u = b.untuned;
+        const EngineParams& ep = b.params;
+        CymbalTuning& c = u.cymbal;
+        c.tauRefMs = ep.tauRefMs;
+        c.wanderDepth = ep.wanderDepth;
+        c.wanderRateHz = ep.wanderRateHz;
+        c.edgeWanderDepth = ep.edgeWanderDepth;
+        c.edgeWanderRate = ep.edgeWanderRate;
+        c.mfDepth = ep.mfDepth;
+        c.mfTau = ep.mfTau;
+        c.mfMin = ep.mfMin;
+        c.mfMax = ep.mfMax;
+        c.mfWBow = ep.mfWBow;
+        c.mfWEdge = ep.mfWEdge;
+        c.mfWBell = ep.mfWBell;
+        c.mfLoHz = ep.mfLoHz;
+        c.mfHiHz = ep.mfHiHz;
+        c.lfDepth = ep.lfDepth;
+        c.lfTau = ep.lfTau;
+        c.lfMin = ep.lfMin;
+        c.lfMax = ep.lfMax;
+        c.lfCutoffHz = ep.lfCutoffHz;
+        c.lfWBow = ep.lfWBow;
+        c.lfWEdge = ep.lfWEdge;
+        c.lfWBell = ep.lfWBell;
+        c.lfWanderRateBoost = ep.lfWanderRateBoost;
+        c.edgeEnvWindowS = b.edgeNpz.onsetS;
+        u.numArticulations = static_cast<int>(b.slots.size());
+        for (size_t s = 0; s < b.slots.size(); ++s)
+            u.articulations[s].levelDb = 20.0 * std::log10(b.slots[s].levelTrim);
+        b.pythonT60S = b.t60S;
+        b.pythonLfoRateHz = b.lfoRateHz;
+        b.tuning = u;
+        try
+        {
+            if (const json::Value* block = root.find("tuning"); block != nullptr && ! block->isNull())
+            {
+                applyTuning(b, parseTuningBlock(*block, b, u));
+                b.hasTuningBlock = true;
+                rep.push_back("tuning       the bake's tuning block is applied");
+            }
+        }
+        catch (const std::exception& e)
+        {
+            throw BakeError(path + ": " + e.what());
+        }
+        for (const auto& s : b.slots)
+            if (! s.hasBowVp && ! (b.params.tauRefMs > 0.0))
+                throw BakeError(path + ": slot " + s.name + ": hertz_vel_scale needs tau_ref_ms > 0");
     }
 
     return bake;

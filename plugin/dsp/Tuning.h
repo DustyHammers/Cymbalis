@@ -1,0 +1,88 @@
+// Tuning.h — the values Kris tunes by ear (docs/TUNING.md), as plain data.
+//
+// A bake may carry a "tuning" block (written by tools/apply_tuning.py from a tuning file of
+// the Cymbalis Tuning build). loadBake() applies it with applyTuning(), so BakeData holds
+// the tuned values and BakeData::tuning records them. The tuning build changes the same
+// values live (FastEngine::setTuning) and rebuilds the engine for the ring length, with the
+// same functions, so what it plays is what the normal build plays from the tuned bake.
+#pragma once
+
+#include "Json.h"
+
+#include <array>
+#include <string>
+#include <vector>
+
+namespace cymbalis
+{
+
+struct BakeData;
+
+// Per articulation (one bake entry).
+struct ArticulationTuning
+{
+    double levelDb = 0.0; // level at velocity 1.0: the slot's level trim (slots[].level_trim.gain_db)
+    double vel06Db = 0.0; // level offset at velocity 0.6, on top of the level law
+    double vel03Db = 0.0; // level offset at velocity 0.3 (and its slope from 0.6 continues below)
+};
+
+// Per cymbal. The defaults are the values of a bake without a tuning block.
+struct CymbalTuning
+{
+    double outputGainDb = 0.0;       // whole preset
+    double edgeRemapExponent = 0.5;  // NPZ velocity remap of edge strikes (0.5: sqrt)
+    double tauRefMs = 0.0;           // hertz_vel_scale contact time at velocity 1 (presets without velocity tables)
+    double ringLength = 1.0;         // multiplier of the baked T60 (t60_scale)
+    double wanderDepth = 0.0, wanderRateHz = 1.5;
+    double edgeWanderDepth = 0.0, edgeWanderRate = 0.0;
+    double mfDepth = 0.0, mfTau = 5.0, mfMin = 0.3, mfMax = 1.0;
+    double mfWBow = 0.5, mfWEdge = 1.0, mfWBell = 0.1, mfLoHz = 500.0, mfHiHz = 4000.0;
+    double lfDepth = 0.0, lfTau = 5.0, lfMin = 0.3, lfMax = 1.0, lfCutoffHz = 2000.0;
+    double lfWBow = 0.5, lfWEdge = 1.0, lfWBell = 0.1, lfWanderRateBoost = 0.0;
+    double edgeEnvWindowS = 1.5;     // NPZ band envelope window after an edge strike
+    bool frameDecayRestart = true;   // in-frame decay restarting every 20 ms (false: none)
+};
+
+constexpr int kMaxArticulations = 8;
+
+struct Tuning
+{
+    CymbalTuning cymbal;
+    std::array<ArticulationTuning, kMaxArticulations> articulations {};
+    int numArticulations = 0; // = the bake's slots, in bake order
+};
+
+// The JSON key of every numeric cymbal value (Python / bake names where they exist).
+struct CymbalKey
+{
+    const char* key;
+    double CymbalTuning::*member;
+};
+const std::vector<CymbalKey>& cymbalKeys();
+constexpr const char* kFrameDecayRestartKey = "edge_frame_decay_restart";
+constexpr const char* kLevelKey = "level_db";
+constexpr const char* kVel06Key = "vel_0.6_db";
+constexpr const char* kVel03Key = "vel_0.3_db";
+
+// The articulation id of a bake entry: its overlay, or its name in lower case.
+std::string articulationId(const std::string& entryName, const std::string& overlay);
+
+// Level offset (dB) of the velocity curve at velocity v: 0 at 1.0, vel06Db at 0.6, vel03Db
+// at 0.3, linear in log velocity in between and with the 0.6-to-0.3 slope below 0.3.
+double velocityCurveDb(const ArticulationTuning& a, double v) noexcept;
+
+// Per-mode weights of the LF and MF scales (multi_strike_engine_v19.py lines 391-405).
+double lfSigmoid(double freqHz, double cutoffHz) noexcept;
+double mfBandpass(double freqHz, double loHz, double hiHz) noexcept;
+
+// Writes `t` into the bake: parameters, the per-mode arrays that follow from them (T60,
+// LFO rates, LF and MF weights), the NPZ edge settings and every slot's values. Arrays are
+// recomputed only where a value differs from the bake's own (Python) value, so the untuned
+// values stay bit-exact. Allocates.
+void applyTuning(BakeData& bake, const Tuning& t);
+
+// The bake's "tuning" block (format of docs/TUNING.md) read on top of `base`; throws
+// std::runtime_error on a malformed block.
+Tuning parseTuningBlock(const json::Value& block, const BakeData& bake, const Tuning& base);
+
+} // namespace cymbalis

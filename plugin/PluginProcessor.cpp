@@ -58,6 +58,11 @@ CymbalisProcessor::CymbalisProcessor()
         sticks[i].store ((int) cymbalis::kSlots[i].defaultStick);
     }
     parsePresets();
+#if CYMBALIS_TUNING
+    for (size_t k = 0; k < presets.size(); ++k)
+        if (presets[k].bake != nullptr)
+            tunings[k] = presets[k].bake->tuning;
+#endif
     // The cymbal: one engine, loaded with the first preset. Its clock starts here and carries
     // over to every preset loaded later; each preset's strike-phase sequence starts from its
     // own seed when it is loaded.
@@ -171,7 +176,11 @@ std::unique_ptr<CymbalisProcessor::Cymbal> CymbalisProcessor::buildCymbal (int p
         return c;
     try
     {
+#if CYMBALIS_TUNING
+        applyTuningToNewCymbal (*c); // with the preset's current tuning values
+#else
         c->engine = std::make_unique<cymbalis::FastEngine> (bake);
+#endif
         if (sampleRate > 0.0)
             c->engine->prepare (sampleRate);
     }
@@ -195,10 +204,19 @@ void CymbalisProcessor::loaderTick()
     const juce::ScopedLock sl (buildLock);
     const double rate = preparedRate.load();
     const int target = presetTarget.load();
-    if (rate <= 0.0 || target == scheduledPreset.load())
+#if CYMBALIS_TUNING
+    // A new ring length rebuilds the cymbal, like a preset switch.
+    const bool ringChanged = target == scheduledPreset.load() && ! juce::exactlyEqual (tuning (target).cymbal.ringLength, scheduledRing);
+#else
+    const bool ringChanged = false;
+#endif
+    if (rate <= 0.0 || (target == scheduledPreset.load() && ! ringChanged))
         return;
     auto c = buildCymbal (target, rate);
     scheduledPreset.store (target);
+#if CYMBALIS_TUNING
+    scheduledRing = c->ring;
+#endif
     // A cymbal still pending was never taken by the audio thread: it is ours to free.
     delete pending.exchange (c.release());
 }
@@ -223,7 +241,12 @@ void CymbalisProcessor::prepareToPlay (double sampleRate, int)
     delete fading;
     fading = nullptr;
     const int target = presetTarget.load();
-    if (current == nullptr || current->preset != target)
+#if CYMBALIS_TUNING
+    const bool ringChanged = current != nullptr && ! juce::exactlyEqual (current->ring, tuning (target).cymbal.ringLength);
+#else
+    const bool ringChanged = false;
+#endif
+    if (current == nullptr || current->preset != target || ringChanged)
     {
         auto c = buildCymbal (target, sampleRate);
         if (c->engine != nullptr && current != nullptr && current->engine != nullptr)
@@ -234,6 +257,9 @@ void CymbalisProcessor::prepareToPlay (double sampleRate, int)
     else if (current->engine != nullptr && ! juce::exactlyEqual (current->engine->sampleRate(), sampleRate))
         current->engine->prepare (sampleRate);
     scheduledPreset.store (target);
+#if CYMBALIS_TUNING
+    scheduledRing = current->ring;
+#endif
     preparedRate.store (sampleRate);
 
     fadeLength = std::max (1, juce::roundToInt (kPresetFadeSeconds * sampleRate));
@@ -269,6 +295,7 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     // (its strike phases start from its preset's seed) and plays from this block on. If the old cymbal is ringing it
     // fades out alongside for kPresetFadeSeconds; then the loader frees it. While a fade or a
     // free is outstanding the next switch waits. Nothing here allocates, frees or locks.
+    bool newCymbal = false;
     if (fading == nullptr && retired.load() == nullptr)
     {
         Cymbal* next = pending.load();
@@ -283,6 +310,7 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
                     next->engine->continueFrom (*current->engine);
                 Cymbal* old = current;
                 current = next;
+                newCymbal = true;
                 if (old != nullptr && old->engine != nullptr && old->engine->isPrepared() && ! old->engine->isSilent()
                     && ! fadeLeft.empty())
                 {
@@ -294,6 +322,11 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             }
         }
     }
+#if CYMBALIS_TUNING
+    takeTuning (newCymbal);
+#else
+    juce::ignoreUnused (newCymbal);
+#endif
     auto* engine = current != nullptr ? current->engine.get() : nullptr;
     const bool playing = engine != nullptr && engine->isPrepared();
 
@@ -352,6 +385,9 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         }
     }
 
+#if CYMBALIS_TUNING
+    meterBlock (left, right, n, false);
+#endif
     gain.setTargetValue (juce::Decibels::decibelsToGain (volumeDb->load(), -1000.0f));
     if (gain.isSmoothing())
     {
@@ -367,6 +403,9 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         buffer.applyGain (0, 0, n, gain.getTargetValue());
         buffer.applyGain (1, 0, n, gain.getTargetValue());
     }
+#if CYMBALIS_TUNING
+    meterBlock (left, right, n, true);
+#endif
 }
 
 // Strikes every slot whose note is `note`, at sample `at` of the block, after rendering the
@@ -392,6 +431,9 @@ void CymbalisProcessor::strikeSlots (Cymbal& c, int note, double velocity, doubl
             pos = at;
         }
         c.engine->strike (entry, velocity, cymbalis::slotPosition (cymbalis::kSlots[s], b1, b2));
+#if CYMBALIS_TUNING
+        startHitMeter ((int) s, entry, velocity, at);
+#endif
     }
 }
 
@@ -461,6 +503,9 @@ void CymbalisProcessor::getStateInformation (juce::MemoryBlock& destData)
     }
     session->setAttribute ("editorWidth", editorWidth.load());
     session->setAttribute ("editorHeight", editorHeight.load());
+#if CYMBALIS_TUNING
+    writeTuningState (*session);
+#endif
     copyXmlToBinary (*xml, destData);
 }
 
@@ -491,6 +536,9 @@ void CymbalisProcessor::setStateInformation (const void* data, int sizeInBytes)
             if (id == cymbalis::kPresets[(size_t) k].id)
                 preset = k;
         setPreset (preset);
+#if CYMBALIS_TUNING
+        readTuningState (*session);
+#endif
         xml->removeChildElement (session, true);
     }
     learnSlot.store (-1);

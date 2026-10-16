@@ -62,6 +62,8 @@ Engine::Engine(std::shared_ptr<const BakeData> bake, EngineConfig config)
         // path never did. FastEngine applies it in both modes (PORT_MAP, "Live-engine decisions", decision 6).
         if (bake_->params.lfDepth > 0.0 && bake_->params.lfMax <= 1.0)
             missing += " LF amplitude scaling (lf_max_scale <= 1)";
+        if (bake_->hasTuningBlock)
+            missing += " the bake's tuning block (docs/TUNING.md)";
         if (!missing.empty())
             throw BakeError("Engine does not implement:" + missing + "; use FastEngine");
     }

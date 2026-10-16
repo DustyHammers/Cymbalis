@@ -98,6 +98,15 @@ public:
     // Nothing rings: no ringing mode, no running contact, no strike energy.
     bool isSilent() const noexcept;
 
+#if CYMBALIS_TUNING
+    // Tuning build only (docs/TUNING.md): the live tuning values, every one but the ring
+    // length (which needs a new bake: applyTuning). Per-strike values apply from the next
+    // strike; the accumulators' values from the next control point, smoothed; wander depth
+    // and rate at the next control point without a phase jump; the output gain smoothed.
+    // Does not allocate.
+    void setTuning(const Tuning& t) noexcept;
+#endif
+
     // Engine time of the next sample, in seconds since construction.
     double timeSeconds() const noexcept;
     uint64_t strikesApplied() const noexcept { return strikesApplied_; }
@@ -135,6 +144,8 @@ private:
         double envVt = 0.0;         //   and the weight of the second
         double envScale = 1.0;      // 1 / peak of the interpolated envelope (line 549-550)
         int frameBlocksLeft = 0;    // control blocks until the in-frame decay restarts
+        double envWindow = 1.5;     // its envelope window (edge_band_env_onset_s)
+        bool frameRestart = true;   // its in-frame decay restarts every frame (else: none)
         // Per mode, padded to nPad_. The arrays the control loop streams are float.
         std::vector<float> Br, Bi;      // amplitude at the segment's reference time
         std::vector<float> D;           // its own decay since then, at the next control point
@@ -187,6 +198,13 @@ private:
         return (1.0 + (lf - 1.0) * lfW_[mode]) * (1.0 + (mf - 1.0) * mfW_[mode]);
     }
     void cymbalWideAtStrike(double t) noexcept;
+    void computeLfWeights() noexcept;
+    void computeMfWeights() noexcept;
+    void computeWanderTables() noexcept;
+    void computeHertzRef() noexcept;
+    void computeRemapTable() noexcept;
+    void applyPendingWander(double t) noexcept;
+    void updateGainBounds() noexcept;
     void velocityParticipation(const VelocityTable& t, double v, double* out) const noexcept;
     void hertzVelocity(double velocity, double* out) const noexcept;
     void npzCoupling(double velocity, double* out) const noexcept;
@@ -196,6 +214,19 @@ private:
 
     std::shared_ptr<const BakeData> bake_;
     const int n_;
+
+    // Values the plugin tuning can change (docs/TUNING.md): copies of the bake's, which the
+    // engine reads instead of the bake. Only the tuning build changes them (setTuning).
+    EngineParams params_;
+    std::vector<double> slotTrim_;              // per slot: level trim (gain)
+    std::vector<ArticulationTuning> slotCurve_; // per slot: velocity curve
+    double remapExp_ = 0.5;    // NPZ velocity remap exponent (0.5: sqrt, line 1049)
+    double envWindowS_ = 1.5;  // NPZ band envelope window after an edge strike
+    bool frameRestart_ = true; // the in-frame decay restarts every 20 ms
+    double outGain_ = 1.0, outGainTarget_ = 1.0, outGainCoef_ = 1.0; // output gain, smoothed per sample
+    // Wander changes from setTuning wait for the next control point.
+    bool wanderPending_ = false;
+    double pendingWanderDepth_ = 0.0, pendingWanderRateHz_ = 0.0;
     int nPad_ = 0; // n_ rounded up to the kernel's mode group
     double sr_ = 0.0;
     int K_ = 32;   // control block, samples
@@ -223,7 +254,7 @@ private:
     bool envBake_ = false;
     int frameBlocks_ = 0;
     std::vector<int> bandStart_, bandEnd_; // mode range of each envelope band
-    std::vector<double> sqrtVelsNorm_;     // sqrt of the NPZ velocities normalised to 0..1 (line 1049)
+    std::vector<double> remapTable_;       // the NPZ velocities normalised to 0..1, ^ remapExp_ (line 1049)
     std::vector<double> bandVal0_, bandVal1_; // per band, scratch for one block
 
     // Contact force at the host rate (contactLen_ x numModes, DC-normalised per mode) and
@@ -273,15 +304,17 @@ private:
     double lfSm_ = 1.0, mfSm_ = 1.0, smTime_ = 0.0;
     double blkT0_ = 0.0, blkT1_ = 0.0, blkLf0_ = 1.0, blkLf1_ = 1.0, blkMf0_ = 1.0, blkMf1_ = 1.0;
 
-    // Wander, integrated over time. The LFO phase of mode k is 2 pi lfoRate_k tau + lfoPhase_k,
-    // where tau, the LFO time, rises at the wander rate scale: tauRef_ at tauRefTime_, then
-    // tauRate_ per second. Its wander phase W changes by wC_k (wanderScale_ / rate) times
-    // the change of cos(LFO phase), which is line 867 while the rate and depth stay constant.
+    // Wander, integrated over time. The LFO phase of mode k is 2 pi lfoUnit_k tau + lfoPhase_k,
+    // where tau, the LFO time, rises at wander_rate_hz x the wander rate scale: tauRef_ at
+    // tauRefTime_, then tauRate_ per second. Its wander phase W changes by
+    // wC_k (wanderScale_ / tauRate_) times the change of cos(LFO phase), which is line 867
+    // while the rate and depth stay constant. W_ also holds a mode's phase when wander is off.
     bool wanderOn_ = false;
     double tauRef_ = 0.0, tauRefTime_ = 0.0, tauRate_ = 1.0;
     double blkRate_ = -1.0;   // rate scale of the current control block (-1: none yet)
     double maxDriftDepth_ = 0.0; // largest |drift x wander_depth| of a mode with wander
-    std::vector<double> wC_;  // per mode: -drift x wander_depth / lfo rate (0: no wander)
+    std::vector<double> lfoUnit_; // per mode: LFO rate / wander_rate_hz (uniform 0.7..1.3, line 210)
+    std::vector<double> wC_;  // per mode: -drift x wander_depth / lfoUnit (0: no wander)
     std::vector<double> W_, cW_; // per mode: wander phase at the latest strike, and cos of its LFO phase then
     // Contact phase: the cymbal-wide gain x exp(i W) of each mode at the latest strike,
     // times each pick (off when the bake has no LF/MF accumulator and no wander).
@@ -290,6 +323,7 @@ private:
 
     // Segment state.
     double segThreshold_ = 0.0;
+    double segGm1Max_ = 0.0; // largest onset gain - 1 of the segment's components
     bool wanderSmall_ = true; // the wander phase moves < 0.05 rad per block for every mode
 
     // Ringing modes of the free phase, compacted (nAct_ used, nPad_ allocated).

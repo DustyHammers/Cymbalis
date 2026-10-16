@@ -7,6 +7,13 @@
 #include <functional>
 #include <memory>
 
+#if CYMBALIS_TUNING
+namespace cymbalis::tuning
+{
+class TuningWindow;
+}
+#endif
+
 namespace cymbalis::ui
 {
 
@@ -227,6 +234,9 @@ private:
     int shownPreset = -1;
     int shownLearn = -1;
     double learnStartMs = 0.0;
+#if CYMBALIS_TUNING
+    std::unique_ptr<tuning::TuningWindow> tuningWindow; // tuning build: opened by Cmd-click on the logo
+#endif
 };
 
 } // namespace cymbalis::ui
