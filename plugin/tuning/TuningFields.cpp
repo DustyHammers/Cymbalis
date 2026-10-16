@@ -1,5 +1,7 @@
 #include "TuningFields.h"
 
+#include <cmath>
+
 
 namespace cymbalis::tuning
 {
@@ -120,6 +122,15 @@ juce::var articulationObject (const BakeData& b, const Tuning& t, bool onlyChang
                 any = true;
             }
         }
+        // The excitation band gains: all 22 when any of them differs.
+        if (! onlyChanged || t.articulations[s].bandDb != b.tuning.articulations[s].bandDb)
+        {
+            juce::Array<juce::var> bands;
+            for (double g : t.articulations[s].bandDb)
+                bands.add (g);
+            a->setProperty (kBandGainsKey, bands);
+            any = true;
+        }
         if (any)
         {
             a->setProperty ("entry", juce::String (b.slots[s].name));
@@ -201,6 +212,24 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
                 {
                     if (q.name.toString() == "entry")
                         continue;
+                    if (q.name.toString() == kBandGainsKey)
+                    {
+                        const auto* bands = q.value.getArray();
+                        if (bands == nullptr || bands->size() != kExcitationBands)
+                            return p.name.toString() + "." + kBandGainsKey + " needs " + juce::String (kExcitationBands)
+                                   + " values.";
+                        for (int j = 0; j < kExcitationBands; ++j)
+                        {
+                            const auto& item = (*bands)[j];
+                            const double g = (double) item;
+                            const bool number = item.isDouble() || item.isInt() || item.isInt64();
+                            if (! number || ! std::isfinite (g) || g < kBandGainMinDb - 1e-9 || g > kBandGainMaxDb + 1e-9)
+                                return p.name.toString() + "." + kBandGainsKey + " values must lie in "
+                                       + juce::String (kBandGainMinDb) + " to +" + juce::String (kBandGainMaxDb) + " dB.";
+                            t.articulations[(size_t) slot].bandDb[(size_t) j] = g;
+                        }
+                        continue;
+                    }
                     bool known = false;
                     for (const auto& f : articulationFields())
                         if (q.name.toString() == f.key)
@@ -227,9 +256,13 @@ bool isModified (const BakeData& b, const Tuning& t)
     if (t.cymbal.frameDecayRestart != b.tuning.cymbal.frameDecayRestart)
         return true;
     for (size_t s = 0; s < b.slots.size(); ++s)
+    {
         for (const auto& f : articulationFields())
             if (! juce::exactlyEqual (t.articulations[s].*(f.member), b.tuning.articulations[s].*(f.member)))
                 return true;
+        if (t.articulations[s].bandDb != b.tuning.articulations[s].bandDb)
+            return true;
+    }
     return false;
 }
 

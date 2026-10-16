@@ -64,6 +64,9 @@ Engine::Engine(std::shared_ptr<const BakeData> bake, EngineConfig config)
             missing += " LF amplitude scaling (lf_max_scale <= 1)";
         if (bake_->hasTuningBlock)
             missing += " the bake's tuning block (docs/TUNING.md)";
+        for (const auto& s : bake_->slots)
+            if (hasBandGains(s.articulation))
+                missing += " excitation band gains (slot " + s.name + ")";
         if (!missing.empty())
             throw BakeError("Engine does not implement:" + missing + "; use FastEngine");
     }

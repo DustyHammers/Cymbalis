@@ -182,8 +182,17 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
     for (const auto& slot : b.slots)
     {
         slotTrim_.push_back(slot.levelTrim);
-        slotCurve_.push_back(slot.velocityCurve);
+        slotCurve_.push_back(slot.articulation);
     }
+    // Each slot's excitation band gains, per mode.
+    excGain_.assign(b.slots.size() * n, 1.0f);
+    excGainOn_.assign(b.slots.size(), 0);
+    for (size_t s = 0; s < b.slots.size(); ++s)
+        if (hasBandGains(b.slots[s].articulation))
+        {
+            excitationModeGains(b.slots[s].articulation, b.freqHz.data(), n_, excGain_.data() + s * n);
+            excGainOn_[s] = 1;
+        }
     remapExp_ = b.edgeNpz.remapExponent;
     envWindowS_ = b.edgeNpz.onsetS;
     frameRestart_ = b.edgeNpz.frameDecayRestart;
@@ -1734,14 +1743,21 @@ void FastEngine::updateGainBounds() noexcept
 }
 
 #if CYMBALIS_TUNING
-void FastEngine::setTuning(const Tuning& t) noexcept
+void FastEngine::setTuning(const Tuning& t, const float* modeGains) noexcept
 {
     const CymbalTuning& c = t.cymbal;
+    const size_t n = size_t(n_);
     // Per strike.
     for (size_t s = 0; s < slotTrim_.size() && s < size_t(t.numArticulations); ++s)
     {
         slotTrim_[s] = std::pow(10.0, t.articulations[s].levelDb / 20.0);
         slotCurve_[s] = t.articulations[s];
+        float* row = excGain_.data() + s * n;
+        if (modeGains != nullptr)
+            std::copy(modeGains + s * n, modeGains + (s + 1) * n, row);
+        else
+            excitationModeGains(t.articulations[s], bake_->freqHz.data(), n_, row);
+        excGainOn_[s] = hasBandGains(t.articulations[s]) ? 1 : 0;
     }
     if (c.edgeRemapExponent != remapExp_ && c.edgeRemapExponent > 0.0)
     {
@@ -1916,10 +1932,15 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
         for (size_t i = 0; i < n; ++i)
             scratchPhase_[i] = rng_.uniform(b.phaseLow, range);
     }
+    // This articulation's excitation band gains (docs/TUNING.md) scale the energy the strike
+    // puts into each mode, whatever the coupling path.
+    const float* excGain = excGainOn_[size_t(slotIndex)] != 0 ? excGain_.data() + size_t(slotIndex) * n : nullptr;
     for (size_t i = 0; i < n; ++i)
     {
-        const double m = npzEdge ? scratchBellVel_[i] * npzLevel
-                                 : (b.excNorm[i] * numpyScalarPower(scratchVel_[i], s.velGainPower)) * scratchPosW_[i];
+        double m = npzEdge ? scratchBellVel_[i] * npzLevel
+                           : (b.excNorm[i] * numpyScalarPower(scratchVel_[i], s.velGainPower)) * scratchPosW_[i];
+        if (excGain != nullptr)
+            m *= static_cast<double>(excGain[i]);
         const double cr = (m * std::cos(scratchPhase_[i])) * calib;
         const double ci = (m * std::sin(scratchPhase_[i])) * calib;
         comp.Br[i] = static_cast<float>(cr); // the coupling until its contact ends (startFreePhase)

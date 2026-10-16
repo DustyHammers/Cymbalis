@@ -54,6 +54,53 @@ std::string articulationId(const std::string& entryName, const std::string& over
     return id;
 }
 
+double excitationBandEdge(int j)
+{
+    return 11404.0 * std::pow(2.0, static_cast<double>(j - 21) / 3.0);
+}
+
+double excitationBandCentre(int band)
+{
+    return 11404.0 * std::pow(2.0, (static_cast<double>(band - 21) + 0.5) / 3.0);
+}
+
+namespace
+{
+// The bands' lower edges (index 1 .. 21 used), set up when the library loads, so that no
+// call ever initialises anything.
+const std::array<double, kExcitationBands> kBandLowerEdges = [] {
+    std::array<double, kExcitationBands> e {};
+    for (int j = 0; j < kExcitationBands; ++j)
+        e[size_t(j)] = excitationBandEdge(j);
+    return e;
+}();
+} // namespace
+
+int excitationBand(double freqHz) noexcept
+{
+    int band = 0;
+    while (band + 1 < kExcitationBands && freqHz >= kBandLowerEdges[size_t(band + 1)])
+        ++band;
+    return band;
+}
+
+bool hasBandGains(const ArticulationTuning& a) noexcept
+{
+    for (double g : a.bandDb)
+        if (g != 0.0)
+            return true;
+    return false;
+}
+
+void excitationModeGains(const ArticulationTuning& a, const double* freqHz, int numModes, float* out) noexcept
+{
+    std::array<float, kExcitationBands> gain {};
+    for (int j = 0; j < kExcitationBands; ++j)
+        gain[size_t(j)] = static_cast<float>(std::pow(10.0, a.bandDb[size_t(j)] / 20.0));
+    for (int k = 0; k < numModes; ++k)
+        out[k] = gain[size_t(excitationBand(freqHz[k]))];
+}
+
 double velocityCurveDb(const ArticulationTuning& a, double v) noexcept
 {
     if (a.vel06Db == 0.0 && a.vel03Db == 0.0)
@@ -149,7 +196,7 @@ void applyTuning(BakeData& b, const Tuning& t)
     {
         const ArticulationTuning& a = t.articulations[s];
         b.slots[s].levelTrim = std::pow(10.0, a.levelDb / 20.0);
-        b.slots[s].velocityCurve = a;
+        b.slots[s].articulation = a;
     }
     b.tuning = t;
 }

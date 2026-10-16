@@ -18,12 +18,24 @@ namespace cymbalis
 
 struct BakeData;
 
+// The 22 one-third-octave bands of the excitation band gains: band j runs from
+// 11404 x 2^((j - 21) / 3) to 11404 x 2^((j - 20) / 3) Hz, 89.1-112.2 Hz up to 11404-14368 Hz
+// (the onset data's octave edges 89, 178, ... 11404, in thirds).
+constexpr int kExcitationBands = 22;
+double excitationBandEdge(int j);    // j = 0 .. kExcitationBands
+double excitationBandCentre(int band); // geometric centre
+int excitationBand(double freqHz) noexcept; // below the first edge 0, above the last 21
+
 // Per articulation (one bake entry).
 struct ArticulationTuning
 {
     double levelDb = 0.0; // level at velocity 1.0: the slot's level trim (slots[].level_trim.gain_db)
     double vel06Db = 0.0; // level offset at velocity 0.6, on top of the level law
     double vel03Db = 0.0; // level offset at velocity 0.3 (and its slope from 0.6 continues below)
+    // Excitation gain of each band (dB): scales the energy this articulation's strikes put
+    // into the modes of the band, in every coupling path. Stored in the bake with the slot
+    // (slots[].excitation_band_gains_db).
+    std::array<double, kExcitationBands> bandDb {};
 };
 
 // Per cymbal. The defaults are the values of a bake without a tuning block.
@@ -63,6 +75,8 @@ constexpr const char* kFrameDecayRestartKey = "edge_frame_decay_restart";
 constexpr const char* kLevelKey = "level_db";
 constexpr const char* kVel06Key = "vel_0.6_db";
 constexpr const char* kVel03Key = "vel_0.3_db";
+constexpr const char* kBandGainsKey = "band_gains_db";
+constexpr double kBandGainMinDb = -24.0, kBandGainMaxDb = 12.0;
 
 // The articulation id of a bake entry: its overlay, or its name in lower case.
 std::string articulationId(const std::string& entryName, const std::string& overlay);
@@ -70,6 +84,12 @@ std::string articulationId(const std::string& entryName, const std::string& over
 // Level offset (dB) of the velocity curve at velocity v: 0 at 1.0, vel06Db at 0.6, vel03Db
 // at 0.3, linear in log velocity in between and with the 0.6-to-0.3 slope below 0.3.
 double velocityCurveDb(const ArticulationTuning& a, double v) noexcept;
+
+// Whether any band gain of the articulation is not 0 dB.
+bool hasBandGains(const ArticulationTuning& a) noexcept;
+// Each mode's excitation gain (linear) from the articulation's band gains: out[k] for the
+// mode at freqHz[k], k < numModes. Does not allocate.
+void excitationModeGains(const ArticulationTuning& a, const double* freqHz, int numModes, float* out) noexcept;
 
 // Per-mode weights of the LF and MF scales (multi_strike_engine_v19.py lines 391-405).
 double lfSigmoid(double freqHz, double cutoffHz) noexcept;

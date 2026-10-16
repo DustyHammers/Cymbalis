@@ -56,8 +56,27 @@ One set per bake entry: NOVA RIDE `bell_tip`, `bell_shoulder`, `bow_tip`, `bow_s
 | Level at velocity 1.0 | `level_db` | −40 to +40 dB | yes | The slot's level trim, initialised from the bake (`slots[].level_trim.gain_db`) |
 | Offset at velocity 0.6 | `vel_0.6_db` | −24 to +24 dB | yes | Velocity curve, see below. Default 0 |
 | Offset at velocity 0.3 | `vel_0.3_db` | −24 to +24 dB | yes | Velocity curve. Default 0 |
+| Excitation band gains | `band_gains_db` | −24 to +12 dB per band | yes | 22 values, one per one-third-octave band, see below. Default 0 |
 
 The **velocity curve** is a level offset on top of the current level law. It is interpolated in log velocity through three points: 0 dB at velocity 1.0, the 0.6 offset at 0.6, and the 0.3 offset at 0.3. Below 0.3 it continues with the 0.6-to-0.3 slope (clamped to ±60 dB). It changes the level only. The spectral velocity behaviour stays as it is: velocity tables, the Hertz tilt and the NPZ captures. The velocity is the engine's: the MIDI velocity after the Velocity Sensitivity knob.
+
+#### Excitation band gains
+
+Each articulation has a gain per one-third-octave band. It scales the energy that articulation's strikes put into the modes of that band. It is not an output EQ:
+
+- **What it scales:** the strike's coupling into each mode, whatever path gives it: the velocity tables, the Hertz tilt, the NPZ velw captures and, through them, the edge band envelopes.
+- **What it leaves alone:** the decay, the onset, the shared cymbal's state (energy already ringing, the build-up, the wander) and the other articulations. A change applies from the next strike.
+
+The bands are the 22 one-third-octave bands of the onset data. Band j runs from 11404 × 2^((j − 21)/3) Hz to 11404 × 2^((j − 20)/3) Hz: 89.1–112.3 Hz, 112.3–141.4 Hz, …, 9051–11404 Hz, 11404–14368 Hz. A mode belongs to the band its frequency falls in; modes below 89.1 Hz go to the first band, modes above 14368 Hz to the last.
+
+In the window, the **EXCITATION BANDS** section below the articulations works like a graphic EQ:
+
+- The **Articulation** box picks the articulation whose bands are shown.
+- There is one vertical slider per band. Its label is the band's centre frequency; hold the pointer over the label to see the band's edges.
+- Type a number into the box under a slider to enter it exactly.
+- The arrow under each band resets it to the baked value.
+- **FLAT** sets every band of the shown articulation to 0 dB.
+- A changed band has a bronze bar at its left, like a changed row.
 
 ### Per cymbal
 
@@ -97,7 +116,7 @@ A slider's range widens to include a baked or loaded value outside it. Values fo
 
 ## Tuning files
 
-**SAVE...** writes the current preset's tuning to a file (default name `<preset>.tuning.json`). **LOAD...** reads one. A file for another preset is refused with a message; so is a file for another bake format, an unknown value, or a ring length, edge capture curve, wander rate or `tau_ref_ms` that is not above 0. The tuning build also saves each preset's tuning (if it differs from the bake) in its session state, and restores it with the session.
+**SAVE...** writes the current preset's tuning to a file (default name `<preset>.tuning.json`). **LOAD...** reads one. A file for another preset is refused with a message. So is a file for another bake format, an unknown value, band gains that are not 22 numbers from −24 to +12 dB, or a ring length, edge capture curve, wander rate or `tau_ref_ms` that is not above 0. The tuning build also saves each preset's tuning (if it differs from the bake) in its session state, and restores it with the session.
 
 ```json
 {
@@ -108,15 +127,18 @@ A slider's range widens to include a baked or loaded value outside it. Values fo
   "date": "2026-10-16T14:02:11.000+02:00",
   "producer": "Cymbalis Tuning",
   "cymbal": { "mf_sens_depth": 0.3, "ring_length": 1.2 },
-  "articulations": { "bow_tip": { "entry": "BOW", "level_db": -1.0, "vel_0.6_db": -2.0 } },
+  "articulations": {
+    "bow_tip": { "entry": "BOW", "level_db": -1.0, "vel_0.6_db": -2.0 },
+    "edge": { "entry": "EDGE", "band_gains_db": [0, 0, 0, -3.5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2.0, 2.0, 0, 0] }
+  },
   "effective": {
     "cymbal": { "output_gain_db": 0.0, "...": "every value of the preset" },
-    "articulations": { "bow_tip": { "entry": "BOW", "level_db": -1.0, "vel_0.6_db": -2.0, "vel_0.3_db": 0.0 }, "...": "" }
+    "articulations": { "bow_tip": { "entry": "BOW", "level_db": -1.0, "vel_0.6_db": -2.0, "vel_0.3_db": 0.0, "band_gains_db": ["22 values"] }, "...": "" }
   }
 }
 ```
 
-- `cymbal` and `articulations` hold only the values that differ from the bake; loading a file applies these on top of the bake.
+- `cymbal` and `articulations` hold only the values that differ from the bake; loading a file applies these on top of the bake. An articulation's `band_gains_db` is written as all 22 bands, lowest first, when any of them differs.
 - `effective` is a full copy of every value for reference; nothing reads it.
 - `entry` names the bake entry (slot) of an articulation.
 - `preset` is the preset id (`nova_ride`, `smoke_flat_ride`, `hammered_thin_ride`); `bake_format_version` is the bake's `format_version`.
@@ -133,7 +155,8 @@ A slider's range widens to include a baked or loaded value outside it. Values fo
    - The tool first validates the file: its format and version, the preset id against `resources/presets/<preset>.bake.json`, the bake format, and every articulation and value it names. `--bake PATH` picks another bake (its file name must still be `<preset>.bake.json`); `--dry-run` prints the result without writing.
    - It applies the file's changes on top of the bake's current values: the bake's own values and any `tuning` block it already has.
    - Each articulation's **level** goes into `slots[].level_trim.gain_db` (with a `set_by` note).
-   - **Every other value that differs from the bake's own** goes into the bake's top-level `tuning` block: `{"format": "cymbalis-tuning", "version": 1, "applied_utc", "source", "cymbal": {...}, "articulations": {id: {"vel_0.6_db", "vel_0.3_db"}}}`.
+   - Each articulation's **band gains** go into its excitation data, `slots[].excitation_band_gains_db`: `{"band_edges_hz": [23 edges], "gains_db": [22 gains], "set_by"}`. An articulation whose bands are all 0 dB has no entry; applying FLAT removes it.
+   - **Every other value that differs from the bake's own** (the cymbal values and the velocity curves) goes into the bake's top-level `tuning` block: `{"format": "cymbalis-tuning", "version": 1, "applied_utc", "source", "cymbal": {...}, "articulations": {id: {"vel_0.6_db", "vel_0.3_db"}}}`.
    - A value equal to the bake's own drops out of the block, so applying the same file twice gives the same bake. Nothing else in the bake changes.
 3. Rebuild the plugin. Its bake loader (`plugin/dsp/Bake.cpp`, `Tuning.cpp`) applies the block (`applyTuning`):
    - the parameters;
@@ -142,6 +165,8 @@ A slider's range widens to include a baked or loaded value outside it. Values fo
    - the LF and MF weights from `lf_cutoff_hz`, `mf_lo_hz` and `mf_hi_hz`;
    - the NPZ settings, the output gain and the velocity curves.
 
+   The loader also reads each slot's band gains and turns them into one gain per mode for that articulation (`excitationModeGains`). The engine multiplies each strike's coupling by it (`docs/PORT_MAP.md`, live-engine decision 7).
+
    The tuning build uses the same functions live, so the normal build plays what was tuned.
 
-Re-baking a preset (`tools/bake_preset.py`) drops its trims and its tuning block. `Engine`, the retired Python-matching path, refuses a bake with a tuning block.
+Re-baking a preset (`tools/bake_preset.py`) drops its trims, its band gains and its tuning block. `Engine`, the retired Python-matching path, refuses a bake with a tuning block or band gains.

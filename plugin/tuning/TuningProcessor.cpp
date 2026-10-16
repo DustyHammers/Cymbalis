@@ -26,12 +26,20 @@ void CymbalisProcessor::setTuning (int preset, const cymbalis::Tuning& t)
     publishTuning (preset, t);
 }
 
-// Message thread (under tuningLock): the writer's buffer becomes the middle one.
+// Message thread (under tuningLock): the writer's buffer becomes the middle one. It carries
+// the per-mode excitation gains of every slot, computed here, off the audio thread.
 void CymbalisProcessor::publishTuning (int preset, const cymbalis::Tuning& t)
 {
     auto& m = tuningBuffers[(size_t) tuningBack];
     m.preset = preset;
     m.tuning = t;
+    if (const auto& bake = presets[(size_t) preset].bake)
+    {
+        const size_t n = (size_t) bake->numModes;
+        m.modeGains.resize (bake->slots.size() * n);
+        for (size_t s = 0; s < bake->slots.size(); ++s)
+            cymbalis::excitationModeGains (t.articulations[s], bake->freqHz.data(), bake->numModes, m.modeGains.data() + s * n);
+    }
     tuningBack = tuningMiddle.exchange (tuningBack | kTuningNew) & 3;
 }
 
@@ -48,7 +56,7 @@ void CymbalisProcessor::takeTuning (bool newCymbal) noexcept
     }
     const auto& m = tuningBuffers[(size_t) tuningFront];
     if ((fresh || newCymbal) && current != nullptr && current->engine != nullptr && m.preset == current->preset)
-        current->engine->setTuning (m.tuning);
+        current->engine->setTuning (m.tuning, m.modeGains.data());
 }
 
 // Loader thread or prepareToPlay: a new cymbal starts with the current values of its preset.
@@ -69,7 +77,7 @@ void CymbalisProcessor::applyTuningToNewCymbal (Cymbal& c)
     }
     else
         c.engine = std::make_unique<cymbalis::FastEngine> (bake);
-    c.engine->setTuning (t);
+    c.engine->setTuning (t, nullptr);
 }
 
 // Audio thread. Before the Volume knob: the last hit's 500 ms. After it: the output meters.
