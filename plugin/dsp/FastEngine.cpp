@@ -47,6 +47,8 @@ constexpr int kDropEvery = 4;         // control blocks between checks for quiet
 constexpr double kSmallAngle = 0.05;  // the series below are used for wander steps under this (rad)
 constexpr double kSettled = 1e-6;     // an onset envelope below this (times its largest gain) is over
 constexpr double kWashDampFloor = 0.3; // line 1129: wash_damp = max(0.3, ...)
+constexpr double kScaleSmoothS = 0.02;  // one-pole smoothing of the LF and MF scales
+constexpr double kLfoSeriesMax = 0.25;  // cosSinSeries() is exact in double below this (rad)
 
 // Vectors of 4 modes per kernel group: enough independent oscillators to hide the
 // multiply latency without running out of registers (16 SSE registers, 32 NEON).
@@ -115,6 +117,23 @@ void complexPower(double r, double im, int64_t m, double& outR, double& outI)
     outI = ai;
 }
 
+// cos and sin of a small angle by their series to x^11 (error below 1e-16 for |x| <= 0.25),
+// std::cos / std::sin above that.
+inline void cosSin(double x, double& c, double& s) noexcept
+{
+    if (std::fabs(x) <= kLfoSeriesMax)
+    {
+        const double x2 = x * x;
+        c = 1.0 - x2 * (0.5 - x2 * (1.0 / 24.0 - x2 * (1.0 / 720.0 - x2 * (1.0 / 40320.0 - x2 * (1.0 / 3628800.0)))));
+        s = x * (1.0 - x2 * (1.0 / 6.0 - x2 * (1.0 / 120.0 - x2 * (1.0 / 5040.0 - x2 * (1.0 / 362880.0 - x2 * (1.0 / 39916800.0))))));
+    }
+    else
+    {
+        c = std::cos(x);
+        s = std::sin(x);
+    }
+}
+
 // The ramp of lines 896-901: min(1, bf + (1 - bf) * te / pt), then max(., 0).
 inline double ramp(double bf, double te, double invPt) noexcept
 {
@@ -155,6 +174,39 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake) : bake_(std::move(b
         negLambda_[i] = -b.log1000 / b.t60S[i];
     }
     scratchBandScale_.assign(size_t(std::max(b.velTiltBands, 1)), 1.0);
+
+    // LF and MF accumulators: each mode's weight in their scales (lines 391-405). The LF
+    // scale applies in both modes: lf + (1 - lf) sigmoid = 1 + (lf - 1)(1 - sigmoid).
+    lfOn_ = p.lfDepth > 0.0;
+    mfOn_ = p.mfDepth > 0.0;
+    lfW_.assign(n, 0.0);
+    mfW_.assign(n, 0.0);
+    for (size_t i = 0; i < n; ++i)
+    {
+        if (lfOn_)
+            lfW_[i] = 1.0 - b.lfSigmoid[i];
+        if (mfOn_)
+            mfW_[i] = b.mfBandpass[i];
+    }
+    // Wander (lines 864-867): D / lr = (drift x wander_depth / lfo rate) x (depth scale / rate scale).
+    wC_.assign(n, 0.0);
+    W_.assign(n, 0.0);
+    cW_ = cosLp_; // at t = 0 the LFO phase is lfoPhase and the wander phase 0, as in Python
+    for (size_t i = 0; i < n; ++i)
+        if (p.wanderDepth != 0.0 && b.driftHz[i] != 0.0 && b.lfoRateHz[i] > 0.0)
+        {
+            wC_[i] = -(b.driftHz[i] * p.wanderDepth) / b.lfoRateHz[i];
+            maxDriftDepth_ = std::max(maxDriftDepth_, std::fabs(b.driftHz[i] * p.wanderDepth));
+        }
+    wanderOn_ = maxDriftDepth_ > 0.0;
+    contactRot_ = lfOn_ || mfOn_ || wanderOn_;
+    if (contactRot_)
+    {
+        cuLr_ = b.pickL;
+        cuRr_ = b.pickR;
+        cuLi_.assign(n, 0.0);
+        cuRi_.assign(n, 0.0);
+    }
     // The shared oscillator's decay: T60 / the smallest wash_damp a strike with a velocity
     // in 0..1 can have, so every strike's own decay relative to it is >= 0 (it only falls).
     oscWash_ = std::max(kWashDampFloor, 1.0 + p.velLenTilt * ((p.velLenTilt >= 0.0 ? 0.0 : 1.0) - p.velLenTiltRef));
@@ -221,7 +273,7 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake) : bake_(std::move(b
     actPos_.assign(n, -1);
     for (auto* v : {&yr_, &yi_, &sr32_, &si32_, &ar_, &ai_, &dar_, &dai_, &pl32_, &pr32_})
         v->assign(np, 0.0f);
-    for (auto* v : {&Yr_, &Yi_, &cr_, &ci_, &qr_, &qi_, &phiW_, &negDlr_, &mf_, &gBound_})
+    for (auto* v : {&Yr_, &Yi_, &cr_, &ci_, &qr_, &qi_, &phiW0_, &phiW_, &gBound_})
         v->assign(np, 0.0);
     for (auto* v : {&A0r_, &A0i_, &A1r_, &A1i_, &dropW_, &dropE_, &rotR_, &rotI_, &sumR_, &sumI_})
         v->assign(np, 0.0f);
@@ -406,8 +458,10 @@ void FastEngine::process(float* left, float* right, int numSamples) noexcept
 }
 
 // Contact phase, one sample, as Engine::renderContactSample, with the host-rate force and
-// step: the whole state (every component and the running injections) without any output
-// factor (PORT_MAP f.4, as in Python).
+// step: the whole state (every component and the running injections) without the strikes'
+// own factors (PORT_MAP f.4, as in Python), but with the cymbal-wide LF/MF gain and wander
+// phase of the latest strike, so that neither steps at a contact (PORT_MAP, live-engine
+// decision 6).
 void FastEngine::renderContactSample(float* left, float* right) noexcept
 {
     const BakeData& b = *bake_;
@@ -426,7 +480,13 @@ void FastEngine::renderContactSample(float* left, float* right) noexcept
             zi[i] += force[i] * ci[i];
         }
     }
-    // Output Re(state) . pick, then one undamped step. Partial sums in two 2-lane vectors.
+    // Output Re(state x u) . pick (u = gain x exp(i W), 1 without the cymbal-wide factors),
+    // then one undamped step. Partial sums in two 2-lane vectors.
+    if (contactRot_)
+    {
+        renderContactRotated(left, right);
+        return;
+    }
     const double* __restrict pickL = b.pickL.data();
     const double* __restrict pickR = b.pickR.data();
     const double* __restrict mr = stepR_.data();
@@ -460,7 +520,56 @@ void FastEngine::renderContactSample(float* left, float* right) noexcept
     }
     left[0] = static_cast<float>((sl[0] + sl[1]) + (sl[2] + sl[3]));
     right[0] = static_cast<float>((sr[0] + sr[1]) + (sr[2] + sr[3]));
+    endContactSample();
+}
 
+// The same with the cymbal-wide factor u: out = Re(z) Re(u) pick - Im(z) Im(u) pick.
+void FastEngine::renderContactRotated(float* left, float* right) noexcept
+{
+    const int n = n_;
+    double* __restrict zr = zr_.data();
+    double* __restrict zi = zi_.data();
+    const double* __restrict lr = cuLr_.data();
+    const double* __restrict li = cuLi_.data();
+    const double* __restrict rr = cuRr_.data();
+    const double* __restrict ri = cuRi_.data();
+    const double* __restrict mr = stepR_.data();
+    const double* __restrict mi = stepI_.data();
+    v2d al0 = {0.0, 0.0}, al1 = {0.0, 0.0}, ar0 = {0.0, 0.0}, ar1 = {0.0, 0.0};
+    int i = 0;
+    for (; i + 4 <= n; i += 4)
+    {
+        const v2d r0 = ld2(zr + i), r1 = ld2(zr + i + 2);
+        const v2d m0 = ld2(zi + i), m1 = ld2(zi + i + 2);
+        al0 += r0 * ld2(lr + i) - m0 * ld2(li + i);
+        al1 += r1 * ld2(lr + i + 2) - m1 * ld2(li + i + 2);
+        ar0 += r0 * ld2(rr + i) - m0 * ld2(ri + i);
+        ar1 += r1 * ld2(rr + i + 2) - m1 * ld2(ri + i + 2);
+        const v2d sr0 = ld2(mr + i), sr1 = ld2(mr + i + 2);
+        const v2d si0 = ld2(mi + i), si1 = ld2(mi + i + 2);
+        st2(zr + i, r0 * sr0 - m0 * si0);
+        st2(zr + i + 2, r1 * sr1 - m1 * si1);
+        st2(zi + i, r0 * si0 + m0 * sr0);
+        st2(zi + i + 2, r1 * si1 + m1 * sr1);
+    }
+    double sl[4] = {al0[0], al0[1], al1[0], al1[1]};
+    double sr[4] = {ar0[0], ar0[1], ar1[0], ar1[1]};
+    for (; i < n; ++i)
+    {
+        sl[0] += zr[i] * lr[i] - zi[i] * li[i];
+        sr[0] += zr[i] * rr[i] - zi[i] * ri[i];
+        const double r = zr[i] * mr[i] - zi[i] * mi[i];
+        zi[i] = zr[i] * mi[i] + zi[i] * mr[i];
+        zr[i] = r;
+    }
+    left[0] = static_cast<float>((sl[0] + sl[1]) + (sl[2] + sl[3]));
+    right[0] = static_cast<float>((sr[0] + sr[1]) + (sr[2] + sr[3]));
+    endContactSample();
+}
+
+// After a contact sample: the contacts move on; the free phase starts when all have ended.
+void FastEngine::endContactSample() noexcept
+{
     int kept = 0;
     for (int c = 0; c < activeContacts_; ++c)
     {
@@ -577,7 +686,7 @@ void FastEngine::addKink(const Component& c, int mode, double d0, double te0) no
     if (a < 0 || nKinks_ >= static_cast<int>(kinks_.size()))
         return; // a silent mode holds nothing
     const size_t sa = size_t(a);
-    const double mr = c.Br[k] * d0 * mf_[sa], mi = c.Bi[k] * d0 * mf_[sa];
+    const double mr = c.Br[k] * d0, mi = c.Bi[k] * d0;
     const double yr = yr_[sa], yi = yi_[sa];
     KinkMode& km = kinks_[size_t(nKinks_++)];
     km.yr = yr * mr - yi * mi;
@@ -591,6 +700,8 @@ void FastEngine::addKink(const Component& c, int mode, double d0, double te0) no
     km.te0 = te0;
     km.env0 = c.env0;
     km.env1 = c.env1;
+    km.g0 = modeGain(k, blkLf0_, blkMf0_);
+    km.g1 = modeGain(k, blkLf1_, blkMf1_);
 }
 
 // The component-modes whose ramp corner lies in this block, samples j0 .. j0+m of the
@@ -614,6 +725,7 @@ void FastEngine::renderKinks(float* left, float* right, int j0, int m) noexcept
             double g = ramp(bf, te, invPt);
             if (km.gm1 != 0.0)
                 g *= 1.0 + km.gm1 * (km.env0 + (km.env1 - km.env0) * (static_cast<double>(jb) * invK));
+            g *= km.g0 + (km.g1 - km.g0) * (static_cast<double>(jb) * invK);
             left[j] += static_cast<float>(yr * km.pl * g);
             right[j] += static_cast<float>(yr * km.pr * g);
             const double t = yr * sr - yi * si;
@@ -692,7 +804,7 @@ void FastEngine::dropQuietModes() noexcept
         {
             const size_t d = size_t(w);
             actIdx_[d] = actIdx_[s];
-            for (auto* v : {&Yr_, &Yi_, &cr_, &ci_, &qr_, &qi_, &phiW_, &negDlr_, &mf_, &gBound_})
+            for (auto* v : {&Yr_, &Yi_, &cr_, &ci_, &qr_, &qi_, &phiW0_, &phiW_, &gBound_})
                 (*v)[d] = (*v)[s];
             pl32_[d] = pl32_[s];
             pr32_[d] = pr32_[s];
@@ -710,19 +822,52 @@ void FastEngine::dropQuietModes() noexcept
     nAct_ = w;
 }
 
-// Control point at the start of a block. The shared oscillator of each ringing mode gets
-// its step for the block (frequency and undamped decay, times the wander phase increment
-// spread over the block) and its double-precision anchor for the next block. Then the
-// components are summed into each mode's amplitude at both ends of the block.
+// Control point at the start of a block. The cymbal-wide LF/MF scales and the wander rate
+// are evaluated here. The shared oscillator of each ringing mode gets its step for the
+// block (frequency and undamped decay, times the wander phase increment spread over the
+// block) and its double-precision anchor for the next block. Then the components are summed
+// into each mode's amplitude at both ends of the block, times the LF/MF gain there.
 void FastEngine::beginControlBlock() noexcept
 {
+    const BakeData& b = *bake_;
     const double invK = 1.0 / static_cast<double>(K_);
     const int64_t blk = freePos_ / K_;
+    const double t0 = segTBase_ + static_cast<double>(blk * K_) / sr_;
+    const double t1 = segTBase_ + static_cast<double>((blk + 1) * K_) / sr_;
 
     if (blk % kDropEvery == 0)
         dropQuietModes();
     const int na = nAct_;
     const int* idx = actIdx_.data();
+
+    // LF and MF scales at the block's ends: the accumulators' targets at t0, smoothed.
+    const bool scales = lfOn_ || mfOn_;
+    if (scales)
+    {
+        smoothScalesTo(t0);
+        blkLf0_ = lfSm_;
+        blkMf0_ = mfSm_;
+        smoothScalesTo(t1, t0);
+        blkLf1_ = lfSm_;
+        blkMf1_ = mfSm_;
+        blkT0_ = t0;
+        blkT1_ = t1;
+    }
+
+    // Wander rate scale for this block (the LF boost follows the decaying accumulator); the
+    // LFO time moves on at the previous rate up to t0.
+    bool newRate = false;
+    double gW = 0.0, rate = 1.0;
+    if (wanderOn_)
+    {
+        rate = wanderRate(t0);
+        tauRef_ += tauRate_ * (t0 - tauRefTime_);
+        tauRefTime_ = t0;
+        tauRate_ = rate;
+        newRate = rate != blkRate_;
+        blkRate_ = rate;
+        gW = wanderScale_ / rate;
+    }
 
     // Shared oscillator.
     {
@@ -730,25 +875,33 @@ void FastEngine::beginControlBlock() noexcept
         double* __restrict Yi = Yi_.data();
         double* __restrict cr = cr_.data();
         double* __restrict ci = ci_.data();
+        double* __restrict qr = qr_.data();
+        double* __restrict qi = qi_.data();
+        double* __restrict phiW0 = phiW0_.data();
         double* __restrict phiW = phiW_.data();
-        const double* __restrict qr = qr_.data();
-        const double* __restrict qi = qi_.data();
-        const double* __restrict negDlr = negDlr_.data();
         float* __restrict yr = yr_.data();
         float* __restrict yi = yi_.data();
         float* __restrict s32r = sr32_.data();
         float* __restrict s32i = si32_.data();
+        const double qScale = b.twoPi * rate * static_cast<double>(K_) / sr_;
         for (int a = 0; a < na; ++a)
         {
             const size_t k = size_t(idx[a]);
-            // LFO phasor to the next control point; wander phase there (line 867).
-            const double cn = cr[a] * qr[a] - ci[a] * qi[a];
-            const double sn = cr[a] * qi[a] + ci[a] * qr[a];
-            cr[a] = cn;
-            ci[a] = sn;
-            const double phiN = negDlr[a] * (cn - cosLp_[k]);
-            const double d = phiN - phiW[a];
-            phiW[a] = phiN;
+            // LFO phasor to the next control point; the wander phase changes by
+            // wC (depth / rate) x the change of cos(LFO phase) (line 867, integrated).
+            double d = 0.0;
+            if (wanderOn_)
+            {
+                if (newRate)
+                    cosSin(b.lfoRateHz[k] * qScale, qr[a], qi[a]);
+                const double cn = cr[a] * qr[a] - ci[a] * qi[a];
+                const double sn = cr[a] * qi[a] + ci[a] * qr[a];
+                d = wC_[k] * gW * (cn - cr[a]);
+                cr[a] = cn;
+                ci[a] = sn;
+                phiW0[a] = phiW[a];
+                phiW[a] += d;
+            }
             double c1, s1, cK, sK;
             if (wanderSmall_)
             {
@@ -780,20 +933,135 @@ void FastEngine::beginControlBlock() noexcept
     }
 
     // Components: each mode's amplitude at both ends of the block.
-    sumComponents(segTBase_ + static_cast<double>(blk * K_) / sr_, segTBase_ + static_cast<double>((blk + 1) * K_) / sr_);
+    sumComponents(t0, t1);
 
-    // Shared MF scale (lines 917-919), then the per-sample increment.
+    // Cymbal-wide LF/MF gains at the block's ends (lines 914-919), then the per-sample increment.
     for (int a = 0; a < na; ++a)
     {
         const size_t s = size_t(a);
         const size_t k = size_t(idx[a]);
-        const double mf = mf_[s];
-        const double r0 = A0r_[k] * mf, i0 = A0i_[k] * mf;
+        const double g0 = scales ? modeGain(k, blkLf0_, blkMf0_) : 1.0;
+        const double g1 = scales ? modeGain(k, blkLf1_, blkMf1_) : 1.0;
+        const double r0 = A0r_[k] * g0, i0 = A0i_[k] * g0;
         ar_[s] = static_cast<float>(r0);
         ai_[s] = static_cast<float>(i0);
-        dar_[s] = static_cast<float>((A1r_[k] * mf - r0) * invK);
-        dai_[s] = static_cast<float>((A1i_[k] * mf - i0) * invK);
+        dar_[s] = static_cast<float>((A1r_[k] * g1 - r0) * invK);
+        dai_[s] = static_cast<float>((A1i_[k] * g1 - i0) * invK);
     }
+}
+
+// Accumulator value at t: decayed with tau since its last strike; 0 before the first.
+double FastEngine::Accumulator::at(double t, double tau) const noexcept
+{
+    return started ? s0 * std::exp(-std::max(t - t0, 0.0) / tau) : 0.0;
+}
+
+// The part its scale follows: everything but the latest strike's own contribution, which
+// Python adds after taking that strike's scale (lines 656-665).
+double FastEngine::Accumulator::forScale(double t, double tau) const noexcept
+{
+    return started ? (s0 - latest) * std::exp(-std::max(t - t0, 0.0) / tau) : 0.0;
+}
+
+// A strike adds `amount` at t (render() lines 665 and 687).
+void FastEngine::Accumulator::add(double t, double tau, double amount) noexcept
+{
+    s0 = at(t, tau) + amount;
+    latest = amount;
+    t0 = t;
+    started = true;
+}
+
+// Wander rate scale at t: the latest strike's (edge_wander_rate), or the LF accumulator's
+// boost if that is larger (line 670), following the accumulator as it decays.
+double FastEngine::wanderRate(double t) const noexcept
+{
+    const EngineParams& p = bake_->params;
+    double r = edgeRateScale_;
+    if (lfOn_ && p.lfWanderRateBoost > 0.0)
+        r = std::max(r, 1.0 + lfAcc_.at(t, p.lfTau) * p.lfWanderRateBoost);
+    return r;
+}
+
+// The smoothed LF and MF scales move to time t towards the accumulators' targets at
+// tTarget (lines 656-659 and 678-681: boost up to max_scale above 1, else suppress down to
+// min_scale).
+void FastEngine::smoothScalesTo(double t, double tTarget) noexcept
+{
+    const EngineParams& p = bake_->params;
+    if (!(t > smTime_))
+        return;
+    const double a = std::exp(-(t - smTime_) / kScaleSmoothS);
+    if (lfOn_)
+    {
+        const double S = lfAcc_.forScale(tTarget, p.lfTau);
+        const double target = p.lfMax > 1.0 ? std::min(1.0 + S * p.lfDepth, p.lfMax)
+                                            : std::max(1.0 - S * p.lfDepth, p.lfMin);
+        lfSm_ = target + (lfSm_ - target) * a;
+    }
+    if (mfOn_)
+    {
+        const double S = mfAcc_.forScale(tTarget, p.mfTau);
+        const double target = p.mfMax > 1.0 ? std::min(1.0 + S * p.mfDepth, p.mfMax)
+                                            : std::max(1.0 - S * p.mfDepth, p.mfMin);
+        mfSm_ = target + (mfSm_ - target) * a;
+    }
+    smTime_ = t;
+}
+
+// At a strike at time t, before anything of the strike is added: the LF/MF scales there,
+// each mode's wander phase there (as rendered up to now: inside the current control block,
+// the linear interpolation the oscillator makes), and from them the contact phase's
+// output factor.
+void FastEngine::cymbalWideAtStrike(double t) noexcept
+{
+    const BakeData& b = *bake_;
+    const size_t n = size_t(n_);
+    const bool inBlock = freeStarted_ && blkT1_ > blkT0_ && t >= blkT0_ && t <= blkT1_;
+    if (lfOn_ || mfOn_)
+    {
+        if (inBlock && smTime_ >= t)
+        {
+            const double f = (t - blkT0_) / (blkT1_ - blkT0_);
+            lfSm_ = blkLf0_ + (blkLf1_ - blkLf0_) * f;
+            mfSm_ = blkMf0_ + (blkMf1_ - blkMf0_) * f;
+            smTime_ = t;
+        }
+        else
+            smoothScalesTo(t);
+    }
+    if (wanderOn_)
+    {
+        const double tau = tauRef_ + tauRate_ * (t - tauRefTime_);
+        const double g = wanderScale_ / tauRate_;
+        const int j = static_cast<int>(freePos_ % K_);
+        const double frac = j == 0 ? 1.0 : static_cast<double>(j) / static_cast<double>(K_);
+        for (size_t k = 0; k < n; ++k)
+        {
+            if (wC_[k] == 0.0)
+                continue;
+            const double c = std::cos(b.twoPi * b.lfoRateHz[k] * tau + b.lfoPhase[k]);
+            const int a = freeStarted_ ? actPos_[k] : -1;
+            if (a >= 0)
+                W_[k] = phiW0_[size_t(a)] + (phiW_[size_t(a)] - phiW0_[size_t(a)]) * frac;
+            else
+                W_[k] += wC_[k] * g * (c - cW_[k]);
+            cW_[k] = c;
+        }
+        tauRef_ = tau;
+        tauRefTime_ = t;
+    }
+    if (contactRot_)
+        for (size_t k = 0; k < n; ++k)
+        {
+            const double gain = modeGain(k, lfSm_, mfSm_);
+            const double ur = W_[k] != 0.0 ? gain * std::cos(W_[k]) : gain;
+            const double ui = W_[k] != 0.0 ? gain * std::sin(W_[k]) : 0.0;
+            cuLr_[k] = ur * b.pickL[k];
+            cuLi_[k] = ui * b.pickL[k];
+            cuRr_[k] = ur * b.pickR[k];
+            cuRi_[k] = ui * b.pickR[k];
+        }
 }
 
 // Every mode's amplitude at t0 and t1 (A0, A1, mode order): the components summed four
@@ -1343,6 +1611,8 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
 
     if (freeStarted_)
         rebaseComponents();
+    const double strikeTime = timeSeconds();
+    cymbalWideAtStrike(strikeTime);
 
     const double range = b.phaseHigh - b.phaseLow;
     for (size_t i = 0; i < n; ++i)
@@ -1441,9 +1711,10 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
             zi_[i] += ci;
         }
     }
+    // Lines 1114-1125: this strike sets the wander depth and rate scales. The wander phase is
+    // integrated, so the change does not make it jump.
     wanderScale_ = 1.0 + velocity * edgeFrac * p.edgeWanderDepth;
-    wanderRateScale_ = 1.0 + velocity * edgeFrac * p.edgeWanderRate;
-    wanderRateScale_ = std::max(wanderRateScale_, 0.1);
+    edgeRateScale_ = std::max(1.0 + velocity * edgeFrac * p.edgeWanderRate, 0.1);
 
     // Lines 1127-1130: this strike's velocity-dependent decay, T60 / wash_damp. It applies
     // to this strike's energy only, relative to the shared oscillator's T60 / 0.3.
@@ -1457,7 +1728,6 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
 
     ++strikesApplied_;
     lastSlot_ = slotIndex;
-    const double strikeTime = timeSeconds();
     const double rawPos = position;
     comp.tStrike = strikeTime;
 
@@ -1532,31 +1802,19 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     }
     comp.settled = !comp.rampOn && !comp.onsetOn && !comp.envOn;
 
-    // render() lines 652-672: LF accumulator, cymbal-wide (wander-rate boost).
-    if (p.lfDepth > 0.0)
-    {
-        const double dt = lfTLast_ > 0.0 ? strikeTime - lfTLast_ : 0.0;
-        lfS_ *= std::exp(-dt / p.lfTau);
-        lfScaleNow_ = p.lfMax > 1.0 ? std::min(1.0 + lfS_ * p.lfDepth, p.lfMax)
-                                    : std::max(1.0 - lfS_ * p.lfDepth, p.lfMin);
-        const double w = rawPos <= 0.25 ? p.lfWEdge : (rawPos >= 0.75 ? p.lfWBell : p.lfWBow);
-        lfS_ += velocity * w;
-        lfTLast_ = strikeTime;
-        if (p.lfWanderRateBoost > 0.0)
-            wanderRateScale_ = std::max(wanderRateScale_, 1.0 + lfS_ * p.lfWanderRateBoost);
-    }
-
-    // render() lines 674-688: MF accumulator, cymbal-wide damping.
-    if (p.mfDepth > 0.0)
-    {
-        const double dt = mfTLast_ > 0.0 ? strikeTime - mfTLast_ : 0.0;
-        mfS_ *= std::exp(-dt / p.mfTau);
-        mfScaleNow_ = p.mfMax > 1.0 ? std::min(1.0 + mfS_ * p.mfDepth, p.mfMax)
-                                    : std::max(1.0 - mfS_ * p.mfDepth, p.mfMin);
-        const double w = rawPos <= 0.25 ? p.mfWEdge : (rawPos >= 0.75 ? p.mfWBell : p.mfWBow);
-        mfS_ += velocity * w;
-        mfTLast_ = strikeTime;
-    }
+    // render() lines 652-688: the LF and MF accumulators. This strike's contribution is
+    // added after its scale is taken, as in Python: until the next strike the scales follow
+    // the accumulators without it, decaying continuously (forScale). The wander-rate boost
+    // follows all of S (line 670).
+    if (lfOn_)
+        lfAcc_.add(strikeTime, p.lfTau,
+                   velocity * (rawPos <= 0.25 ? p.lfWEdge : (rawPos >= 0.75 ? p.lfWBell : p.lfWBow)));
+    if (mfOn_)
+        mfAcc_.add(strikeTime, p.mfTau,
+                   velocity * (rawPos <= 0.25 ? p.mfWEdge : (rawPos >= 0.75 ? p.mfWBell : p.mfWBow)));
+    // The LFO time runs at the new rate from here (line 670 with the new accumulator value).
+    if (wanderOn_)
+        tauRate_ = wanderRate(strikeTime);
 
     freeStarted_ = false;
     freePos_ = 0;
@@ -1642,17 +1900,22 @@ void FastEngine::startFreePhase() noexcept
     }
     baseSample_ = sampleNow_;
 
-    segMfOn_ = !b.mfBandpass.empty() && std::fabs(mfScaleNow_ - 1.0) > 1e-6;
     segThreshold_ = threshold;
     const double tBase = timeBase_ + static_cast<double>(sampleNow_) / sr_;
     segTBase_ = tBase;
     const double K = static_cast<double>(K_);
-    const double depth = p.wanderDepth;
     double gm1Max = 0.0;
     for (const auto& c : components_)
         if (c.used && c.onsetOn)
             gm1Max = std::max(gm1Max, c.gm1Max);
-    double maxWanderStep = 0.0;
+    // Wander: the LFO time here, and the depth / rate since the latest strike, which the
+    // wander phase is integrated with up to here. The first block sets the LFO steps.
+    const double tau = wanderOn_ ? tauRef_ + tauRate_ * (tBase - tauRefTime_) : 0.0;
+    const double gW = wanderOn_ ? wanderScale_ / tauRate_ : 0.0;
+    blkRate_ = -1.0;
+    // The largest LF/MF scales the segment can reach (for the drop bound).
+    const double lfHi = lfOn_ ? std::max({1.0, p.lfMax, lfSm_}) : 1.0;
+    const double mfHi = mfOn_ ? std::max({1.0, p.mfMax, mfSm_}) : 1.0;
 
     const int oldAct = nAct_;
     int a = 0;
@@ -1676,49 +1939,32 @@ void FastEngine::startFreePhase() noexcept
         actIdx_[d] = i;
         actPos_[k] = a;
 
-        // LFO wander (lines 864-867), evaluated at absolute engine time.
-        const double D = b.driftHz[k] * depth * wanderScale_;
-        const double lr = b.lfoRateHz[k] * wanderRateScale_;
-        const double negDlr = -(D / lr);
+        // LFO wander (lines 864-867), integrated: the wander phase continues from the latest
+        // strike.
         double rotR = 1.0, rotI = 0.0;
-        if (negDlr != 0.0)
+        if (wanderOn_ && wC_[k] != 0.0)
         {
-            const double wlr = b.twoPi * lr;
-            const double arg = (wlr * tBase) + b.lfoPhase[k];
+            const double arg = b.twoPi * b.lfoRateHz[k] * tau + b.lfoPhase[k];
             cr_[d] = std::cos(arg);
             ci_[d] = std::sin(arg);
-            const double qa = wlr * K / sr_; // LFO phase per control block, about 0.01 rad
-            if (std::fabs(qa) < kSmallAngle)
-            {
-                const double q2 = qa * qa;
-                qr_[d] = 1.0 - q2 * (0.5 - q2 * (1.0 / 24.0 - q2 * (1.0 / 720.0)));
-                qi_[d] = qa * (1.0 - q2 * (1.0 / 6.0 - q2 * (1.0 / 120.0 - q2 * (1.0 / 5040.0))));
-            }
-            else
-            {
-                qr_[d] = std::cos(qa);
-                qi_[d] = std::sin(qa);
-            }
-            phiW_[d] = negDlr * (cr_[d] - cosLp_[k]);
-            rotR = std::cos(phiW_[d]);
-            rotI = std::sin(phiW_[d]);
-            // |d phi / dt| <= |D/lr| * 2 pi lr, so this bounds the phase step per block.
-            maxWanderStep = std::max(maxWanderStep, std::fabs(negDlr) * wlr * K / sr_);
+            const double W = W_[k] + wC_[k] * gW * (cr_[d] - cW_[k]);
+            phiW0_[d] = phiW_[d] = W;
+            rotR = std::cos(W);
+            rotI = std::sin(W);
         }
         else
         {
             cr_[d] = 1.0;
-            ci_[d] = qi_[d] = phiW_[d] = 0.0;
-            qr_[d] = 1.0;
+            ci_[d] = phiW0_[d] = phiW_[d] = 0.0;
         }
-        negDlr_[d] = negDlr;
+        qr_[d] = 1.0;
+        qi_[d] = 0.0;
         // The shared oscillator starts at the wander phase; the components carry the amplitude.
         Yr_[d] = rotR;
         Yi_[d] = rotI;
         pl32_[d] = static_cast<float>(b.pickL[k]);
         pr32_[d] = static_cast<float>(b.pickR[k]);
-        mf_[d] = segMfOn_ ? 1.0 + (mfScaleNow_ - 1.0) * b.mfBandpass[k] : 1.0;
-        gBound_[d] = std::fabs(mf_[d]) * std::max(1.0, 1.0 + gm1Max) *
+        gBound_[d] = modeGain(k, lfHi, mfHi) * std::max(1.0, 1.0 + gm1Max) *
                      std::max(std::fabs(b.pickL[k]), std::fabs(b.pickR[k]));
         ++a;
     }
@@ -1731,7 +1977,8 @@ void FastEngine::startFreePhase() noexcept
     }
     nAct_ = a;
     nKinks_ = 0;
-    wanderSmall_ = maxWanderStep < kSmallAngle;
+    // |d W / dt| <= 2 pi |drift x depth| x depth scale, so this bounds the phase step per block.
+    wanderSmall_ = b.twoPi * maxDriftDepth_ * std::fabs(wanderScale_) * K / sr_ < kSmallAngle;
     freeStarted_ = true;
     freePos_ = 0;
     freeStartSample_ = sampleNow_;
