@@ -118,13 +118,18 @@ public:
     TuningWindow (CymbalisProcessor& p, const ui::Assets& assets, juce::Component& owner);
     ~TuningWindow() override;
 
-    void show(); // visible, in front, attached to the editor's window
+    // Visible, in front, attached to the editor's window, and clear of `keepClear` (the
+    // TUNING button, in screen coordinates) so that the button stays clickable.
+    void show (juce::Rectangle<int> keepClear);
     void hide();
     bool isShowing() const { return isVisible(); }
     void closeButtonPressed() override { hide(); }
 
 private:
+    void placeClearOf (juce::Rectangle<int> keepClear);
+
     juce::Component& owner;
+    bool placed = false;
 };
 
 // Platform part (TuningWindowMac.mm on macOS): attach `window` above the native window
