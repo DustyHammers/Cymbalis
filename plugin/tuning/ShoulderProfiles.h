@@ -9,15 +9,39 @@
 
 namespace cymbalis::tuning
 {
-// Nova bow_shoulder relative to bow_tip, lowest band first.
-inline constexpr std::array<double, kExcitationBands> kNovaShoulderBow {
-    -12.00, 0.00, 0.00, 0.00, 0.00, 0.57, 6.96, 9.12, 5.83, 2.57, 1.78,
-    3.71, 6.59, 7.27, 4.44, 3.61, 4.39, 3.18, 1.12, -1.46, -3.04, -3.75,
+struct NovaShoulderProfile
+{
+    const char* name;                                // "bow" or "bell"
+    std::array<double, kExcitationBands> bandDb;     // band gains, lowest band first
+    std::array<double, kExcitationBands> attackDb;   // attack gains, lowest band first
+    double attackMs;                                 // attack time
 };
-// Nova bell_shoulder relative to bell_tip, lowest band first.
-inline constexpr std::array<double, kExcitationBands> kNovaShoulderBell {
-    0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 1.07, 2.96, 2.19, 0.42, -0.66,
-    -0.02, 4.56, 7.68, 5.22, 4.03, 3.49, -1.57, -5.10, -5.62, -4.07, -0.93,
+
+// Nova bow_shoulder relative to bow_tip.
+inline constexpr NovaShoulderProfile kNovaShoulderBow {
+    "bow",
+    {
+        -12.00, 0.00, 0.00, 0.00, 0.00, 0.57, 6.96, 9.12, 5.83, 2.57, 1.78,
+        3.71, 6.59, 7.27, 4.44, 3.61, 4.39, 3.18, 1.12, -1.46, -3.04, -3.75,
+    },
+    {
+        -1.58, -1.58, -1.58, -0.26, -0.26, -0.26, 0.45, 0.45, 0.45, 0.82, 0.82,
+        0.82, 0.92, 0.92, 0.92, 0.92, 0.92, 0.92, -0.67, -0.67, -0.67, -1.58,
+    },
+    80.0,
+};
+// Nova bell_shoulder relative to bell_tip.
+inline constexpr NovaShoulderProfile kNovaShoulderBell {
+    "bell",
+    {
+        0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 1.07, 2.96, 2.19, 0.42, -0.66,
+        -0.02, 4.56, 7.68, 5.22, 4.03, 3.49, -1.57, -5.10, -5.62, -4.07, -0.93,
+    },
+    {
+        0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00,
+        0.00, 12.00, 12.00, 12.00, 5.11, 5.11, 5.11, -11.02, -11.02, -11.02, 3.00,
+    },
+    300.0,
 };
 
 } // namespace cymbalis::tuning

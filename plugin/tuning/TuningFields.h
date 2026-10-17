@@ -6,6 +6,7 @@
 #include <juce_core/juce_core.h>
 
 #include "Bake.h"
+#include "ShoulderProfiles.h"
 
 #include <array>
 #include <vector>
@@ -76,9 +77,11 @@ struct ArticulationField
 {
     const char* key;
     const char* label;
+    const char* unit;
     double lo, hi;
     int decimals;
     double ArticulationTuning::*member;
+    bool inBands = false; // shown in the BANDS section (attack time), not with the others
 };
 const std::vector<ArticulationField>& articulationFields();
 
@@ -109,11 +112,10 @@ struct CymbalBandField
 };
 const std::vector<CymbalBandField>& cymbalBandFields();
 
-// NOVA SHOULDER PROFILE (ShoulderProfiles.h): the band gains for a shoulder articulation
-// of SMOKE FLAT RIDE or HAMMERED THIN RIDE (bell profile for bell_shoulder, bow profile for
-// bow_shoulder and center_shoulder), or nullptr for any other articulation.
-const std::array<double, kExcitationBands>* novaShoulderProfile (const BakeData& bake, const juce::String& presetId,
-                                                                  size_t slot);
+// NOVA SHOULDER PROFILE (ShoulderProfiles.h): the band gains, attack gains and attack time
+// for a shoulder articulation of SMOKE FLAT RIDE or HAMMERED THIN RIDE (bell profile for
+// bell_shoulder, bow profile for bow_shoulder and center_shoulder), or nullptr for any other.
+const NovaShoulderProfile* novaShoulderProfile (const BakeData& bake, const juce::String& presetId, size_t slot);
 
 constexpr const char* kFormat = "cymbalis-tuning";
 constexpr int kVersion = 1;

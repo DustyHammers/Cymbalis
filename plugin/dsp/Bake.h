@@ -126,6 +126,9 @@ struct SlotData
 
     // Stage 9: onset band gains of this slot's overlay (lines 425-442, 902-913).
     bool onsetGainsActive = false;
+    // The bake sets this articulation's attack band gains itself (slots[].attack_band_gains,
+    // docs/TUNING.md); otherwise they come from its onset gains.
+    bool attackTuned = false;
     std::vector<double> onsetGains; // per band (9 bands)
     double onsetTauS = 0.08;
 
@@ -170,8 +173,9 @@ struct BakeData
     std::vector<int> velTiltModeBand;
     int velTiltBands = 0;
 
-    // Onset-gain band of each mode (stage 9, lines 431-438).
+    // Onset-gain band of each mode (stage 9, lines 431-438), and the bands' edges (Hz).
     std::vector<int> bowOnsetModeBand;
+    std::vector<double> bowOnsetBandEdges;
 
     EdgeNpz edgeNpz;
 

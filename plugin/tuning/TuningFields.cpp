@@ -1,5 +1,4 @@
 #include "TuningFields.h"
-#include "ShoulderProfiles.h"
 
 #include <cmath>
 
@@ -114,9 +113,12 @@ const std::vector<ArticulationField>& articulationFields()
 {
     using A = ArticulationTuning;
     static const std::vector<ArticulationField> fields {
-        { kLevelKey, "Level at velocity 1.0", -40.0, 40.0, 2, &A::levelDb },
-        { kVel06Key, "Offset at velocity 0.6", -24.0, 24.0, 1, &A::vel06Db },
-        { kVel03Key, "Offset at velocity 0.3", -24.0, 24.0, 1, &A::vel03Db },
+        { kLevelKey, "Level at velocity 1.0", "dB", -40.0, 40.0, 2, &A::levelDb },
+        { kVel06Key, "Offset at velocity 0.6", "dB", -24.0, 24.0, 1, &A::vel06Db },
+        { kVel03Key, "Offset at velocity 0.3", "dB", -24.0, 24.0, 1, &A::vel03Db },
+        { kBrightnessKey, "Brightness vs velocity (tilt at 0.3, pivot 1 kHz)", "dB/oct", kBrightnessMin, kBrightnessMax, 2,
+          &A::brightnessDbOct },
+        { kAttackTimeKey, "ATTACK TIME", "ms", kAttackTimeMinMs, kAttackTimeMaxMs, 0, &A::attackMs, true },
     };
     return fields;
 }
@@ -125,6 +127,7 @@ const std::vector<BandField>& bandFields()
 {
     static const std::vector<BandField> fields {
         { { kBandGainsKey, "GAIN", "dB", kBandGainMinDb, kBandGainMaxDb, 0.0, 1, false }, &ArticulationTuning::bandDb },
+        { { kAttackGainsKey, "ATTACK GAIN", "dB", kAttackGainMinDb, kAttackGainMaxDb, 0.0, 1, false }, &ArticulationTuning::attackDb },
         { { kOnsetDelayKey, "ONSET DELAY", "ms", kOnsetDelayMinMs, kOnsetDelayMaxMs, 0.0, 1, false }, &ArticulationTuning::delayMs },
         { { kOnsetSpeedKey, "ONSET SPEED", "x", kOnsetSpeedMin, kOnsetSpeedMax, 1.0, 2, true }, &ArticulationTuning::speed },
     };
@@ -139,8 +142,7 @@ const std::vector<CymbalBandField>& cymbalBandFields()
     return fields;
 }
 
-const std::array<double, kExcitationBands>* novaShoulderProfile (const BakeData& b, const juce::String& presetId,
-                                                                  size_t slot)
+const NovaShoulderProfile* novaShoulderProfile (const BakeData& b, const juce::String& presetId, size_t slot)
 {
     if (presetId == "nova_ride" || slot >= b.slots.size())
         return nullptr;

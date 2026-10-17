@@ -50,6 +50,16 @@ struct ArticulationTuning
     // (slots[].onset_shift).
     std::array<double, kExcitationBands> delayMs {};
     std::array<double, kExcitationBands> speed = kUnitBands;
+    // Attack band gains: per band, a gain (dB) at the strike that fades back to 0 dB with the
+    // attack time, exp(-t / time), as Nova's onset gains (bow_onset_band_gains,
+    // bow_onset_tau_ms) did. Stored in the bake with the slot (slots[].attack_band_gains),
+    // else taken from its onset gains: each band the octave band that contains it.
+    std::array<double, kExcitationBands> attackDb {};
+    double attackMs = 80.0;
+    // Brightness vs velocity: the spectral tilt of a velocity-0.3 strike relative to a
+    // velocity-1.0 one, in dB per octave, pivoting at 1 kHz; 0 at velocity 1.0 and linear in
+    // log velocity (brightnessTiltDb). Positive: soft strikes are brighter.
+    double brightnessDbOct = 0.0;
 };
 
 constexpr int kMaxArticulations = 8;
@@ -126,6 +136,12 @@ constexpr const char* kOnsetDelayKey = "onset_delay_ms";
 constexpr const char* kOnsetSpeedKey = "onset_speed";
 constexpr double kOnsetDelayMinMs = -50.0, kOnsetDelayMaxMs = 200.0;
 constexpr double kOnsetSpeedMin = 0.25, kOnsetSpeedMax = 4.0;
+constexpr const char* kAttackGainsKey = "attack_band_gains_db";
+constexpr const char* kAttackTimeKey = "attack_time_ms";
+constexpr double kAttackGainMinDb = -12.0, kAttackGainMaxDb = 12.0;
+constexpr double kAttackTimeMinMs = 10.0, kAttackTimeMaxMs = 1000.0;
+constexpr const char* kBrightnessKey = "brightness_db_per_oct";
+constexpr double kBrightnessMin = -6.0, kBrightnessMax = 6.0;
 
 // The articulation id of a bake entry without an "articulation" key: its overlay, or its
 // name in lower case (the loader's SlotData::id).
@@ -139,6 +155,13 @@ double velocityCurveDb(const ArticulationTuning& a, double v) noexcept;
 bool hasBandGains(const ArticulationTuning& a) noexcept;
 // Whether any band of the articulation has an onset delay or a speed other than 1.
 bool hasOnsetShift(const ArticulationTuning& a) noexcept;
+// Brightness vs velocity: the tilt (dB per octave around 1 kHz) of a strike at velocity v:
+// 0 at 1.0, brightnessDbOct at 0.3, linear in log velocity, within +/-24 dB per octave.
+double brightnessTiltDb(const ArticulationTuning& a, double v) noexcept;
+// Attack band gains from Nova-style onset gains: each band takes the gain (in dB) of the band
+// of `edgesHz` (numGains bands, ascending edges) that contains its centre.
+void attackFromOnsetGains(const double* gains, int numGains, const double* edgesHz,
+                          std::array<double, kExcitationBands>& outDb) noexcept;
 // Each mode's T60 for a ring length and per-band ring lengths: pythonT60 x ringLength x the
 // factor of the mode's band (bands as for the band gains). With every factor 1 this is
 // exactly pythonT60 x ringLength.
