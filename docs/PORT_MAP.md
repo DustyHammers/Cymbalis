@@ -243,7 +243,7 @@ The render RNG and `rng0` share seed 7. Because of that, the first strike's phas
 |---|---|---|
 | none ("edge") | — | `bow_onset_band_gains` absent, so onset gains are off. `bow_onset_tau` is the unused default, 0.08. |
 | `bow_tip` | `vel_participation` → `nova_vel_participation_tip_s2a_ceil.json` | `bow_onset_band_gains = [1.20, 1.20, 1.03, 0.95, 0.91, 0.90, 0.90, 1.08, 1.20]`, `bow_onset_tau_ms = 80` |
-| `bow_shoulder` | `vel_participation` → `nova_vel_participation_shoulder_correct.json` | `bow_onset_band_gains` all 1.0, so it is bypassed (line 433). `bow_onset_tau_ms = 80`, which equals the default and is unused. |
+| `bow_shoulder` | `vel_participation` → `nova_vel_participation_shoulder_correct.json` (the plugin's bake plays its V4 column at every velocity: live-engine decision 17) | `bow_onset_band_gains` all 1.0, so it is bypassed (line 433). `bow_onset_tau_ms = 80`, which equals the default and is unused. |
 | `bell_tip` | `bell_vel_participation` → `nova_bell_vp_tip_corrected.json` | `bow_onset_band_gains = [1, 1, 1, 1, 1, 0.45, 0.75, 1.85, 0.85]`, `bow_onset_tau_ms = 120` |
 | `bell_shoulder` | `bell_vel_participation` → `nova_bell_vp_shoulder_v2_corrected.json` | `bow_onset_band_gains = [1, 1, 1, 1, 1, 2.40, 1.35, 0.52, 1.20]`, `bow_onset_tau_ms = 300` |
 
@@ -523,6 +523,17 @@ These are plugin mechanisms; none is a port of Python. Kris tunes them by ear in
    - **Stored** in the bake with the slot (`slots[].attack_band_gains`) when tuned, else derived from the onset gains. `FastEngine` no longer reads `onset_gains`; `Engine` still does, and refuses a bake with attack data.
    - **Cost.** Per strike, a table lookup per mode, as before.
 16. **Brightness vs velocity** (2026-10-17). Per articulation, the spectral tilt of a velocity-0.3 strike relative to a velocity-1.0 one, in dB per octave around 1 kHz (`brightness_db_per_oct`, −6 to +6). It is interpolated in log velocity like the velocity curve (0 at 1.0, within ±24 dB per octave), and multiplies each mode's coupling at the strike by (f / 1 kHz)^(tilt · ln 10 / (20 ln 2)), whatever the coupling path. 1 kHz is unchanged. At 0 it is skipped; otherwise it costs one `exp` per mode per strike. It is stored in the tuning block with the velocity curve. Python has nothing like it.
+
+### Velocity tables
+
+17. **Nova's bow shoulder plays V4 at every velocity** (2026-10-17). Its velocity table, `nova_vel_participation_shoulder_correct.json`, has the columns V4, V4, V5, V5, V5 at `vel_norms` 0.9905, 0.9905, 1, 1, 1. It played V4 up to velocity 0.9905 and V5 above it, so at MIDI 126 and 127. V5 has about half of V4's modes (531 against 1091 above 0.01). At velocity 1.0 its ring is dominated by 647 Hz and 2044 Hz, and it is 5.6 dB quieter than V4 at 0.98. So the bow shoulder, and the EDGE row copied from it (decision 13), turned bell-like at the top two velocities.
+   - **The fix, in the bake only.** In `bow_shoulder`'s `bow_vp`, every V5 column is replaced with V4, for BOW2 and for EDGE. `vel_norms` stay as they are. Below 0.9905 the table gives V4 × v / 0.9905, as before; from 0.9905 on, V4.
+   - **Unchanged:**
+     - every velocity up to 0.9905;
+     - `presets/` (the data file stays as it is);
+     - the bell table, the level trims (measured at 0.9) and the NOVA SHOULDER PROFILE (computed at 0.9);
+     - the calibration scalar. Python computes it with an edge strike at velocity 1.0 (a.7), so with V5. It is kept so that nothing below 0.9905 changes.
+   - **Where.** `tools/bake_preset.py` applies it (`VP_COLUMN_FIXES`), so a re-bake keeps it, and records it in the bake's `notes`. Both builds play the same bake. The tuning build has no copy of the velocity tables.
 
 ### Implementation notes for these decisions
 

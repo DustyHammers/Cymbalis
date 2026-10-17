@@ -28,6 +28,9 @@ can prove that it parsed every value exactly.
     shoulder articulations of the 602 and Bettis, the 602's CENTER (a copy of its BOW) and
     Nova's EDGE (a copy of BOW2, bow_shoulder, at the edge position). A copy named like an
     existing entry replaces it in place: Nova's EDGE was the base preset at the edge.
+  * velocity-table fixes (VP_COLUMN_FIXES): columns of an overlay's velocity table replaced
+    with another column of the same table, in the bake only (presets/ is unchanged), for every
+    entry with that overlay, copies included. Each fix is recorded in the bake's notes.
 
 Usage:
     python tools/bake_preset.py --overrides-from tests/sequences/edge_3hits_15s.json --out bake.json
@@ -66,6 +69,16 @@ COPIED_ENTRIES = {
             ('CENTER_SHOULDER', 'center_shoulder', 'CENTER', 1.0)],
     'bettis': [('BELL_SHOULDER', 'bell_shoulder', 'BELL', 1.0),
                ('BOW_SHOULDER', 'bow_shoulder', 'BOW', 0.5)],
+}
+# Velocity-table columns replaced in the bake (docs/PORT_MAP.md, live-engine decision 17):
+# (overlay, table, its data file, its column labels, label replaced, replacing label, reason).
+# vel_norms stay as they are. The labels are checked against the data file.
+VP_COLUMN_FIXES = {
+    'nova': [('bow_shoulder', 'bow_vp', 'presets/nova/data/nova_vel_participation_shoulder_correct.json',
+              ['V4', 'V4', 'V5', 'V5', 'V5'], 'V5', 'V4',
+              'above velocity 0.9905 (MIDI 126-127) V5 made the bow shoulder bell-like: it has about '
+              'half of V4\'s modes (531 against 1091 above 0.01), its ring at velocity 1.0 is dominated '
+              'by 647 Hz and 2044 Hz, and it is 5.6 dB quieter than V4 at 0.98')],
 }
 
 
@@ -374,6 +387,35 @@ def copied_entry(src, name, articulation, position):
     return blk
 
 
+def fix_vp_columns(slot_blocks, fixes, notes):
+    """Apply VP_COLUMN_FIXES to every slot block with the fix's overlay, copies included."""
+    for overlay, table, path, labels, old, new, reason in fixes:
+        with open(os.path.join(ab.REPO, path)) as f:
+            if json.load(f).get('vel_labels') != labels:
+                raise BakeError(f'FAIL: {path} does not have the column labels {labels}')
+        cols = [k for k, x in enumerate(labels) if x == old]
+        src = labels.index(new)
+        names, below = [], None
+        for blk in slot_blocks:
+            if blk['overlay'] != overlay:
+                continue
+            vp = blk[table]
+            if vp is None or vp['curves']['shape'][1] != len(labels):
+                raise BakeError(f'FAIL: slot {blk["name"]}: {table} does not have {len(labels)} columns')
+            c = np.array(vp['curves']['data'], dtype=np.float64).reshape(vp['curves']['shape'])
+            c[:, cols] = c[:, [src]]
+            vp['curves'] = enc(c)
+            names.append(blk['name'] + (f' (a copy of {blk["copy_of"]})' if 'copy_of' in blk else ''))
+            below = vp['vel_norms']['data'][cols[0] - 1] if cols[0] > 0 else None
+        if not names:
+            raise BakeError(f'FAIL: no slot plays overlay {overlay}')
+        notes.append(f'{overlay} {table} in slots {", ".join(names)}: every {old} column '
+                     f'({", ".join(str(k) for k in cols)}) replaced with {new} (column {src}), vel_norms '
+                     f'kept, so every velocity plays {new}'
+                     + (f' and nothing up to velocity {below} changes' if below is not None else '')
+                     + f'; {path} is unchanged. Why: {reason}.')
+
+
 # ---------------------------------------------------------------------------
 # RNG streams
 # ---------------------------------------------------------------------------
@@ -537,6 +579,7 @@ def bake(overrides, preset='nova', allow_manifest_mismatch=False):
         else:
             slot_blocks.append(blk)
             source_engine.append(source_engine[k])
+    fix_vp_columns(slot_blocks, VP_COLUMN_FIXES.get(preset, []), notes)
 
     out = {
         'format': BAKE_FORMAT,
