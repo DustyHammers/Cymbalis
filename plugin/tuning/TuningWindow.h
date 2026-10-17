@@ -6,6 +6,7 @@
 
 #include "PluginProcessor.h"
 #include "TuningFields.h"
+#include "ShoulderProfiles.h"
 #include "ui/UiAssets.h"
 
 #include <functional>
@@ -72,6 +73,21 @@ private:
     std::unique_ptr<juce::Button> reset;
     bool baked = true;
     bool updating = false;
+};
+
+// A labelled action: a note on the left, a button on the right.
+class ButtonRow final : public juce::Component
+{
+public:
+    ButtonRow (const juce::String& note, const juce::String& button);
+
+    std::function<void()> onClick;
+
+    void resized() override;
+
+private:
+    juce::Label note;
+    juce::TextButton button;
 };
 
 // One per-band value of an articulation (a BandField: excitation gain, onset delay or onset
@@ -162,6 +178,7 @@ private:
     juce::Component list;
     std::vector<std::unique_ptr<juce::Component>> headers;
     std::vector<std::unique_ptr<ValueRow>> rows;
+    std::vector<std::unique_ptr<ButtonRow>> buttonRows;
     std::vector<std::function<void()>> refreshers; // one per row: shows its current value
     std::unique_ptr<ToggleRow> restartRow;
     std::unique_ptr<BandEq> bandEq;

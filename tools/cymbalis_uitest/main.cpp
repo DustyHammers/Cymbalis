@@ -16,6 +16,7 @@
 //   list      click the BELL2 note box, then the note row below C#3   -> note_BELL2 62
 //   stick     click the BELL stick box, then TIP                      -> stick_BELL TIP
 //   preset    click the CYMBAL box, then HAMMERED THIN RIDE            -> preset hammered_thin_ride
+//   shoulder  (after preset) click the BELL stick box, then SHOULDER  -> stick_hammered_thin_ride_BELL SHOULDER
 //
 // Cymbalis Tuning only (docs/TUNING.md); these read the windows, not the saved state:
 //
@@ -232,6 +233,13 @@ private:
             s.actions = { click (1314.0f, 152.0f), wait, click (1314.0f, 165.0f + 3.0f + 8.0f + 17.0f), wait };
             s.key = "stick_BELL";
             s.expected = "TIP";
+        }
+        else if (name == "shoulder")
+        {
+            // The TIP / SHOULDER popup below the stick box: inset 8, items 32 high; SHOULDER second.
+            s.actions = { click (1314.0f, 152.0f), wait, click (1314.0f, 165.0f + 3.0f + 8.0f + 32.0f + 16.0f), wait };
+            s.key = "stick_hammered_thin_ride_BELL";
+            s.expected = "SHOULDER";
         }
         else if (name == "tuning" || name == "tuningclose")
         {

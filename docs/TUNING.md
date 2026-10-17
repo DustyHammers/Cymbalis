@@ -58,9 +58,45 @@ The values travel to the audio thread without locks or allocation.
 
 ### Per articulation
 
-One set per bake entry: NOVA RIDE `bell_tip`, `bell_shoulder`, `bow_tip`, `bow_shoulder`, `edge`; SMOKE FLAT RIDE `bow`, `edge`, `center`; HAMMERED THIN RIDE `bell`, `bow`, `edge`. The articulation id is the entry's `articulation` key if it has one, else its overlay, else its name in lower case. Two entries of a bake may not share an id.
+One set per bake entry: NOVA RIDE `bell_shoulder`, `bow_tip`, `edge`, `bell_tip`, `bow_shoulder`; SMOKE FLAT RIDE `bow`, `edge`, `center`, `bow_shoulder`, `center_shoulder`; HAMMERED THIN RIDE `bell`, `bow`, `edge`, `bell_shoulder`, `bow_shoulder`. The articulation id is the entry's `articulation` key if it has one, else its overlay, else its name in lower case. Two entries of a bake may not share an id. Which rows and sticks play each articulation: `docs/UI_SPEC.md` section 8.
 
-**center** (SMOKE FLAT RIDE) is a full articulation with its own values: level, velocity curve and band gains. Its bake entry, `CENTER`, is a copy of the 602's `BOW` data (`"articulation": "center"`, `"copy_of": "BOW"`, made by `tools/bake_preset.py`). Its level trim starts at BOW's (−1.76 dB), so untuned it sounds like the bow. The CENTER and CENTER2 rows play it (`docs/UI_SPEC.md` section 8). Changing `center` leaves `bow` alone, and the reverse.
+**Copies.** Some articulations are copies of another entry's data under their own id (`"articulation"`, `"copy_of"`, made by `tools/bake_preset.py`). Each is a full articulation with every per-articulation value of its own: level, velocity curve, band gains, onset shift and the re-hit damping weight. Each starts as an exact copy of its source, its level trim included, so untuned it plays exactly as its source. Changing a copy leaves its source alone, and the reverse.
+
+| Preset | Articulation | Copy of | Played by |
+|---|---|---|---|
+| SMOKE FLAT RIDE | `center` | `bow` (at the bell position) | CENTER and CENTER2, TIP |
+| SMOKE FLAT RIDE | `bow_shoulder` | `bow` | BOW and BOW2, SHOULDER |
+| SMOKE FLAT RIDE | `center_shoulder` | `center` | CENTER and CENTER2, SHOULDER |
+| HAMMERED THIN RIDE | `bell_shoulder` | `bell` | BELL and BELL2, SHOULDER |
+| HAMMERED THIN RIDE | `bow_shoulder` | `bow` | BOW and BOW2, SHOULDER |
+| NOVA RIDE | `edge` | `bow_shoulder` (at the edge position, 0.0) | EDGE |
+
+Nova Ride's `edge` replaced the base preset played at the edge (Nova has no edge captures). It is the one articulation that does not play as it did before: the EDGE row now sounds like the bow shoulder struck at the edge. A tuning file with `edge` values from before applies them to the new `edge`.
+
+#### NOVA SHOULDER PROFILE
+
+Each new shoulder articulation of SMOKE FLAT RIDE and HAMMERED THIN RIDE (`bow_shoulder`, `center_shoulder`, `bell_shoulder`) has a **NOVA SHOULDER PROFILE** button below its values. It sets that articulation's band gains to Nova Ride's shoulder-minus-tip difference: the bow profile for `bow_shoulder` and `center_shoulder`, the bell profile for `bell_shoulder`. It is a starting point to tune from: the button only fills the 22 band gains, which then work as any band gains (reset, FLAT, save).
+
+The two profiles are data, computed once by `tools/shoulder_profile.py` from the Nova bake and stored in `plugin/tuning/ShoulderProfiles.h` (`--check` verifies the header):
+
+1. Each mode's coupling at velocity 0.9 for Nova's tip and shoulder articulation at its base position, as the engine computes it: `exc_norm` × velocity participation ^ `vel_gain_power` × position weight. The bow profile uses `bow_tip` and `bow_shoulder` at 0.5 (bow velocity tables), the bell profile `bell_tip` and `bell_shoulder` at 1.0 (bell velocity tables).
+2. Per band, the energy: the sum of the squared couplings of its modes.
+3. The shoulder's band energies are scaled so that both have the same total energy; per band, the ratio shoulder / tip in dB.
+4. Bands with fewer than 5 Nova modes, or with no energy in either articulation, are set to 0 dB: bands 1–4 (112–283 Hz, 0–3 modes) for both, and bands 0 and 5 for the bell (Nova's bell strikes put no energy there).
+5. Smoothed over neighbouring bands: weights 1/4, 1/2, 1/4, renormalised over the neighbours that step 4 did not zero.
+6. Clamped to ±12 dB.
+
+| Band (Hz) | 89 | 112 | 141 | 178 | 225 | 283 | 356 | 449 | 566 | 713 | 898 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| bow (dB) | −12.00 | 0 | 0 | 0 | 0 | +0.57 | +6.96 | +9.12 | +5.83 | +2.57 | +1.78 |
+| bell (dB) | 0 | 0 | 0 | 0 | 0 | 0 | +1.07 | +2.96 | +2.19 | +0.42 | −0.66 |
+
+| Band (Hz) | 1131 | 1426 | 1796 | 2263 | 2851 | 3592 | 4526 | 5702 | 7184 | 9051 | 11404 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| bow (dB) | +3.71 | +6.59 | +7.27 | +4.44 | +3.61 | +4.39 | +3.18 | +1.12 | −1.46 | −3.04 | −3.75 |
+| bell (dB) | −0.02 | +4.56 | +7.68 | +5.22 | +4.03 | +3.49 | −1.57 | −5.10 | −5.62 | −4.07 | −0.93 |
+
+(Each band is named by its lower edge.) Nova's bow shoulder has almost no energy in band 0 (89–112 Hz, 6 modes): −35 dB there before the clamp.
 
 | Value | Key | Range | Per strike | Effect |
 |---|---|---|---|---|

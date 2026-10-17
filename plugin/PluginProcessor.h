@@ -68,10 +68,16 @@ public:
     int slotNote (int slot) const noexcept { return notes[(size_t) slot].load(); }
     void setSlotNote (int slot, int note) noexcept;
 
-    // The stick chosen for a slot (TIP or SHOULDER) in presets that offer a choice on it
-    // (StickDisplay::choice); kept while a preset without the choice plays. Not a parameter.
-    cymbalis::Stick slotStick (int slot) const noexcept { return (cymbalis::Stick) sticks[(size_t) slot].load(); }
-    void setSlotStick (int slot, cymbalis::Stick stick) noexcept;
+    // The stick chosen for a slot (TIP or SHOULDER) in the current preset, where the preset
+    // offers a choice on it (StickDisplay::choice). Each preset keeps its own choices. Not a
+    // parameter.
+    cymbalis::Stick slotStick (int slot) const noexcept { return slotStick (presetIndex(), slot); }
+    cymbalis::Stick slotStick (int preset, int slot) const noexcept
+    {
+        return (cymbalis::Stick) sticks[(size_t) preset][(size_t) slot].load();
+    }
+    void setSlotStick (int slot, cymbalis::Stick stick) noexcept { setSlotStick (presetIndex(), slot, stick); }
+    void setSlotStick (int preset, int slot, cymbalis::Stick stick) noexcept;
 
     // MIDI learn: the next note-on on the selected channel is assigned to this slot.
     void startMidiLearn (int slot) noexcept { learnSlot.store (slot); }
@@ -170,7 +176,7 @@ private:
 
     std::atomic<int> channel { cymbalis::kDefaultMidiChannel };
     std::array<std::atomic<int>, cymbalis::kNumSlots> notes;
-    std::array<std::atomic<int>, cymbalis::kNumSlots> sticks; // cymbalis::Stick
+    std::array<std::array<std::atomic<int>, cymbalis::kNumSlots>, cymbalis::kNumPresets> sticks; // cymbalis::Stick
     std::atomic<int> learnSlot { -1 };
     std::atomic<int> editorWidth { 0 }, editorHeight { 0 };
 
