@@ -129,14 +129,28 @@ public:
 };
 } // namespace
 
-ValueRow::ValueRow (const juce::String& n, const juce::String& u, double lo, double hi, int decimals, bool onRelease)
-    : name ({}, n), unit (u)
+ValueRow::ValueRow (const juce::String& n, const juce::String& u, double lo, double hi, int decimals, bool onRelease,
+                    double st, bool band)
+    : name ({}, n), unit (u), step (st)
 {
     addAndMakeVisible (name);
     slider.setSliderStyle (juce::Slider::LinearHorizontal);
     slider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 90, kRowHeight - 6);
     slider.setTextBoxIsEditable (true);
-    slider.setRange (lo, hi, 0.0);
+    if (band)
+    {
+        slider.textFromValueFunction = [] (double v) {
+            const double fc = excitationBandCentre ((int) std::lround (v));
+            return fc < 1000.0 ? juce::String (juce::roundToInt (fc)) + " Hz" : juce::String (fc / 1000.0, 1) + " kHz";
+        };
+        slider.valueFromTextFunction = [] (const juce::String& text) {
+            double x = text.getDoubleValue();
+            if (text.containsIgnoreCase ("k"))
+                x *= 1000.0;
+            return x < 50.0 ? std::round (x) : (double) excitationBand (x);
+        };
+    }
+    slider.setRange (lo, hi, step);
     slider.setNumDecimalPlacesToDisplay (decimals);
     slider.setTextValueSuffix (unit.isEmpty() ? juce::String() : " " + unit);
     slider.setChangeNotificationOnlyOnRelease (onRelease);
@@ -159,7 +173,7 @@ void ValueRow::setValues (double value, double b)
     baked = b;
     // A value outside the range (a baked or loaded one) widens it.
     if (value < slider.getMinimum() || value > slider.getMaximum() || b < slider.getMinimum() || b > slider.getMaximum())
-        slider.setRange (std::min ({ slider.getMinimum(), value, b }), std::max ({ slider.getMaximum(), value, b }), 0.0);
+        slider.setRange (std::min ({ slider.getMinimum(), value, b }), std::max ({ slider.getMaximum(), value, b }), step);
     const juce::ScopedValueSetter<bool> s (updating, true);
     slider.setValue (value, juce::dontSendNotification);
     reset->setEnabled (! juce::exactlyEqual (value, baked));
@@ -489,7 +503,7 @@ void TuningPanel::rebuild()
         // Per cymbal, by group. A value that acts on some articulations only names them.
         addPart ("WHOLE CYMBAL", "affects every articulation");
         y += 4;
-        for (auto group : { Group::cymbal, Group::wander, Group::mf, Group::lf, Group::edgeEnvelope })
+        for (auto group : { Group::cymbal, Group::wander, Group::mf, Group::lf, Group::edgeEnvelope, Group::cascade })
         {
             bool any = false;
             for (const auto& f : cymbalFields())
@@ -503,7 +517,7 @@ void TuningPanel::rebuild()
                     continue;
                 const auto acts = scopeNames (f.scope, *bake);
                 auto row = std::make_unique<ValueRow> (juce::String (f.label) + (acts.isEmpty() ? "" : ": " + acts), f.unit,
-                                                       f.lo, f.hi, f.decimals, f.rebuild);
+                                                       f.lo, f.hi, f.decimals, f.rebuild, f.step, f.band);
                 auto* r = row.get();
                 const auto member = f.member;
                 row->onChange = [this, member] (double v) { change ([&] (Tuning& t) { t.cymbal.*member = v; }); };

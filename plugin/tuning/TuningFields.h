@@ -19,7 +19,8 @@ enum class Group
     wander,
     mf,
     lf,
-    edgeEnvelope
+    edgeEnvelope,
+    cascade
 };
 
 const char* groupName (Group g);
@@ -61,6 +62,8 @@ struct Field
     double CymbalTuning::*member;
     bool rebuild;      // the cymbal is rebuilt when it changes (ring length)
     Scope scope = Scope::all;
+    double step = 0.0; // slider step (0: continuous)
+    bool band = false; // a one-third-octave band index, shown as the band's centre frequency
 };
 
 // Every numeric per-cymbal value, in display order.

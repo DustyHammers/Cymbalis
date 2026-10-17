@@ -46,6 +46,12 @@
 //     with a band envelope, drive that strike's level from it for the onset window
 //     (PORT_MAP, "602 and Bettis"). For those the shared oscillator carries no decay and
 //     the control block is 1/7 or 1/8 of the envelope's 20 ms frame.
+//   - Energy cascade (docs/TUNING.md; PORT_MAP, plugin mechanism 10), off at amount 0: at
+//     every control point the ringing energy of each one-third-octave band is measured; a
+//     band above its threshold gives energy to the bands above it. The source modes are
+//     scaled down through the shared oscillator's gain (every strike in them alike); the
+//     energy arrives in the target modes as a component of its own (cascade component) that
+//     decays with each mode's T60. Both change over the block, with no step.
 //
 // Thread use: the constructor and prepare() allocate and must not run on the audio
 // thread. strike() and process() never allocate, lock or touch files.
@@ -155,6 +161,7 @@ private:
     {
         bool used = false;
         bool pending = false;     // its contact is still running; Br/Bi hold the coupling
+        bool cascade = false;     // it holds the energy cascade's moved energy and nothing else
         uint64_t order = 0;       // creation order, for "oldest"
         int64_t contactStart = 0; // engine sample where its contact began
         double eps = 0.0;         // decay relative to the oscillator's (wash_damp - oscWash_), energy-weighted
@@ -238,6 +245,13 @@ private:
     void computeWanderTables() noexcept;
     void computeHertzRef() noexcept;
     void computeRemapTable() noexcept;
+    void setCascade(const CymbalTuning& c) noexcept;
+    void updateCascade() noexcept;
+    void computeCascadeRef() noexcept;
+    void cascadeBlock() noexcept;
+    Component* cascadeComponent() noexcept;
+    void commitBlockGains() noexcept;
+    void clearBlockGains() noexcept;
     void applyPendingWander(double t) noexcept;
     void updateGainBounds() noexcept;
     void velocityParticipation(const VelocityTable& t, double v, double* out) const noexcept;
@@ -295,6 +309,26 @@ private:
     DecaySet pendDecay_;
     bool decayPending_ = false;
     double oscWash_ = 1.0;              // wash_damp of the shared oscillator's decay (the smallest a strike has)
+
+    // Energy cascade (docs/TUNING.md). cascOn_: amount > 0 (otherwise none of it runs).
+    bool cascOn_ = false;
+    double cascAmount_ = 0.0, cascThrDb_ = -12.0, cascSpeedS_ = 0.1, cascReleaseS_ = 0.15;
+    int cascSpread_ = 2, cascLo_ = 0, cascHi_ = kExcitationBands - 1;
+    double cascAtk_ = 0.0, cascRel_ = 0.0;   // activation one-pole coefficients per control block
+    int cascSlot_ = 0;                       // the BOW articulation (the threshold's reference)
+    int cascComp_ = -1;                      // the cascade component (index), -1: none
+    std::array<double, kExcitationBands> cascRef_ {};  // band energy of a velocity-1 BOW strike
+    std::array<double, kExcitationBands> cascThr_ {};  // threshold energy per band
+    std::array<double, kExcitationBands> cascAct_ {};  // activation per band (0 .. 1)
+    std::vector<float> cascW_;               // per mode: its share weight of the moved energy (exc_norm)
+    // Gains of the ringing modes through the shared oscillator (mode order): this block's,
+    // reaching its value at the block's end, and the product of the earlier blocks' since the
+    // segment started; and additions to the cascade component's amplitudes at this block's
+    // end. The next control point puts them into the state (commitBlockGains); a strike
+    // inside the block takes the part already rendered.
+    std::vector<float> blkG_, injR_, injI_;
+    std::vector<double> oscG_;
+    bool blkGainOn_ = false, oscGainOn_ = false, injOn_ = false;
     std::vector<double> hertzRef_;      // sqrt(1 + (pi f tau_ref)^2) per mode (hertz_vel_scale)
 
     // NPZ band envelope (bakes that have one): the shared oscillator has no decay
