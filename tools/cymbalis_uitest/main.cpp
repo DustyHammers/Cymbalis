@@ -17,6 +17,7 @@
 //   stick     click the BELL stick box, then TIP                      -> stick_BELL TIP
 //   preset    click the CYMBAL box, then HAMMERED THIN RIDE            -> preset hammered_thin_ride
 //   shoulder  (after preset) click the BELL stick box, then SHOULDER  -> stick_hammered_thin_ride_BELL SHOULDER
+//   swish     click the CYMBAL box, then SWISH (the fourth)          -> preset swish
 //
 // Cymbalis Tuning only (docs/TUNING.md); these read the windows, not the saved state:
 //
@@ -255,6 +256,13 @@ private:
             s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + 2.0f * 40.0f + 20.0f), wait };
             s.key = "preset";
             s.expected = "hammered_thin_ride";
+        }
+        else if (name == "swish")
+        {
+            // The same list; SWISH is its fourth row.
+            s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + 3.0f * 40.0f + 20.0f), wait };
+            s.key = "preset";
+            s.expected = "swish";
         }
         else
         {

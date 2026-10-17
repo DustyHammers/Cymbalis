@@ -182,7 +182,7 @@ private:
     std::vector<std::unique_ptr<ValueRow>> rows;
     std::vector<std::unique_ptr<ButtonRow>> buttonRows;
     std::vector<std::function<void()>> refreshers; // one per row: shows its current value
-    std::unique_ptr<ToggleRow> restartRow;
+    std::unique_ptr<ToggleRow> restartRow, envelopeRow;
     std::unique_ptr<BandEq> bandEq;
     TuningLookAndFeel bandLook; // the whole-cymbal band rows' numbers and labels
     std::vector<std::unique_ptr<BandRow>> cymbalBandRows;

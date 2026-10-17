@@ -1,6 +1,6 @@
 #pragma once
 
-// The five articulation rows (docs/UI_SPEC.md sections 7-8) and the three presets
+// The five articulation rows (docs/UI_SPEC.md sections 7-8) and the four presets
 // (UI_SPEC section 8, docs/PORT_MAP.md "Live-engine decisions"). Each preset maps every
 // row to the bake entries it plays with TIP and with SHOULDER (by entry name in the
 // preset's bake, tools/bake_preset.py), or to none, says how its stick box shows and, where
@@ -74,7 +74,7 @@ struct PresetInfo
     const char* blend1Left = "BELL"; // the left end label of BLEND POSITION 1 (its right end: BOW)
 };
 
-constexpr int kNumPresets = 3;
+constexpr int kNumPresets = 4;
 
 // Every EDGE row is SHOULDER only. The other rows choose TIP or SHOULDER and start with the
 // stick of the articulation they played before the shoulder versions existed.
@@ -100,6 +100,15 @@ constexpr std::array<PresetInfo, kNumPresets> kPresets {{
     }}, "CENTER" },
     // Bettis: no overlays; one entry per position, and the shoulder copies of the bell and bow.
     { "hammered_thin_ride", "HAMMERED THIN RIDE", "hammered_thin_ride.bake.json", "HammeredThinRide.png", {{
+        { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
+        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
+        { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },
+        { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
+        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
+    }} },
+    // Swish: BELL the base preset at the bell (TIP) and BELL_SHOULDER its copy; BOW and
+    // BOW_SHOULDER the bow_tip and bow_shoulder overlays; EDGE the base preset at the edge.
+    { "swish", "SWISH", "swish.bake.json", "Swish.png", {{
         { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
         { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
         { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },

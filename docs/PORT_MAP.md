@@ -643,3 +643,67 @@ Every other key the two presets set either has its default effect or is not read
 - **Bettis's `edge_band_env_path` file is never used.** It is a 4-band, 200-frame envelope that the NPZ path overrides. 602's file is an all-zero trigger: it only switches the NPZ envelope on.
 - **NPZ edge coupling ignores the excitation table.** It skips `exc_norm`, the edge position weights and `edge_level_boost`. The calibration strike (Python's `_compute_calib_scalar`) is rendered without the band envelope, so the calibration scalar does not reflect the envelope's level. The trims make up for it.
 - **`hertz_vel_scale` scales amplitude by v².** Its docstring says the Hertz peak force goes as v^(6/5); the code comments that v² is a perceptual calibration.
+
+## Swish (22" China)
+
+Added 2026-10-17. As for the 602 and Bettis, the plugin is the reference: Swish was ported with the Python engine as a guide and is checked by ear, with no render comparison. It is baked with `nl_amount = 0`, as its JSON sets. NOVA RIDE, SMOKE FLAT RIDE and HAMMERED THIN RIDE play bit for bit as before (checked), because each new mechanism acts only where a bake asks for it: a stick gain above 0, or an NPZ band envelope switched on by the bake.
+
+### What Swish uses
+
+| | Swish (`Swish_Baseline1.json`) |
+|---|---|
+| Modes | 900 (every mode is born before `birth_gate_s` 100) |
+| Velocity response | `hertz_vel_scale`, `tau_ref_ms` 0.2 (no participation tables) |
+| Contact | per mode (`permode_contact`, `tip_contact_ms` 2.0): tip and shoulder taus 2 and 7 samples, `sigma_ratio` 0.28, 13 samples at 44.1 kHz; the same at every position, as Nova's |
+| Edge strikes (`edge_frac > 0.1`) | NPZ velw coupling (6 velocities, 0.2–1.0) and, switched on by the bake, the NPZ band envelope: 20 bands, 100 Hz–10 kHz, 20 s window, `edge_rms_correction` all 1, level exponent `vel_gain_power` 1.0 |
+| Bow and bell strikes | standard coupling with the edge ratios (neutral, all 1) and the bell ratios (v11) as position weights |
+| Onset ramp data | bow pk_t (BowV4), velocity-bracketed edge pk_t (6 velocities), edge velocity tilt (4 bands) |
+| MF / LF accumulators | MF in boost mode (depth 0.4, tau 3 s, max 1.4, 500 Hz–4 kHz; bow 1, edge 1, bell 0.2); LF in boost mode (depth 0.2, tau 3 s, max 1.7, cutoff 1.5 kHz; bow 0.5, edge 1, bell 0.1), applied as live-engine decision 6 |
+| Stick click | `bow_tip` only (`stick_gain` 6.0; 2–6 kHz, 8 ms, decay 3 ms; bow weight 1, bell 0, edge 0) |
+| Wander, `vel_len_tilt`, onset gains, bloom, sparkle, attack noise, NL, edge level boost, rate jitter, hammering tilt | off |
+
+Every other key either has its default effect or is not read by the engine: `alpha_contact`, `stick_hp`, `atk_len`, `atk_dec`, and `tip_contact_ms` and `shld_contact_ms` beyond switching the per-mode contact on (the per-mode contact uses only the taus).
+
+### What was ported, and where
+
+- **Stick click** (`_add_transient`, lines 1194-1211; `FastEngine::startStick`, `renderStick`, `butterworthBandPass2`). The plugin's first noise source.
+  - **When.** `render()` calls it right after `_apply_strike` (line 620); `strike()` starts it after the strike's own random draws.
+  - **The burst.** `int(stick_len_ms × 0.001 × rate)` standard normal values × `exp(−k / (stick_decay_ms × 0.001 × rate))`. Python draws them with `rng.standard_normal` from the strike rng. The plugin draws them from the same strike-phase sequence, at the same point, as Box–Muller pairs of uniforms. numpy's ziggurat is not reproduced, so the strikes after a bow-tip strike draw other phases than Python's would; there is no comparison.
+  - **The band-pass.** `dsp_filters._bp`: scipy `butter(2, [lo, hi] / nyquist, 'band')`, here designed at the host rate as two biquads (checked against scipy: coefficients and response to about 1e-15). Each click has its own filter starting from zero, as Python filters each click on its own.
+  - **The level.** `stick_gain` × the position weight (`stick_bow_weight` × bow fraction + `stick_bell_weight` × bell fraction + `stick_edge_weight` × edge fraction, Python's fractions of the strike position) × velocity^1.7, at the strike's level: calibration × level trim × velocity curve. Python scales the whole output by the calibration (line 704); the trim and the velocity curve are the plugin's, and the click keeps its balance with the strike it belongs to.
+  - **Output.** Both channels, before the right channel's 120 Hz high-pass, as in `render()`.
+  - **Rate.** Python runs at 44.1 kHz. The noise is scaled by √(rate / 44.1 kHz), so the band-limited burst keeps its level at every rate.
+  - **Voices.** Eight, each with a burst buffer of up to 50 ms, allocated in `prepare()`. When all are busy the oldest is replaced. A voice ends when its burst is over and its filter has rung down below 1e-9 of the noise level, or a second after the burst; Python's filter runs to the end of the render. `strike()` and `process()` do not allocate. Per strike: the burst and the filter design; per sample: two biquads per running voice.
+  - **Loader.** `stick_gain` is per articulation (an overlay sets it) and no longer counts as an engine-wide value. The band, length, decay and weights are read from the slot's parameters with Python's `p.get` defaults (2500 Hz, 9000 Hz, 8 ms, 3 ms, weights 1). `Engine`, the retired path, refuses a click. Every articulation of the other presets has `stick_gain` 0, so nothing changes there.
+- **NPZ edge data with its own band layout.** The NPZ code of the 602 and Bettis already takes the band count from the data (`EdgeNpz::numBands`, `band_index`). Swish's 20 bands load as they are: `our_band_idx` agrees with `band_edges_hz` for every mode. The one place tied to the 22 bands is the onset shift, where each envelope band takes the shift band of its middle mode; for Swish 14 of the 20 envelope bands map to the shift band of the same number. Nothing assumes 22 envelope bands.
+- **The edge band envelope, switched on by the bake.** Python builds the NPZ envelope only when an edge band envelope file is also set (line 691); `Swish_Baseline1.json` sets none, so Python never runs it. The bake sets `edge_npz.envelope_active` and records why in `edge_npz.envelope_set_by` and in its `notes` (`tools/bake_preset.py` `ENVELOPE_ON`), as the 602's all-zero trigger file does in Python. The loader accepts an `envelope_active` that differs from the preset's `edge_band_env` only with that note.
+  - **With a contact.** Swish is the first preset with both a contact and an envelope. The envelope scales what the contact leaves, and its time runs from the strike, contact included (`_s0`, line 877).
+  - **EDGE ONSET ENVELOPE** (tuning build, `edge_band_envelope`; `docs/TUNING.md`) switches it per strike, from the next strike. Off, edge strikes play as Python plays Swish: the velw coupling and the edge onset ramp. So that the switch can act live, an NPZ preset's engine structure now follows its NPZ data rather than the switch: the control block that divides the 20 ms frame, the shared oscillator without decay, and the envelope buffers. For the 602 and Bettis, whose envelope is on, that is what it was.
+- **Bake** (`tools/bake_preset.py --preset swish`; entries in `tools/ab_common.py` `PRESETS`). `BELL` (no overlay, 1.0, the base preset's v11 bell ratios), `BOW` (`bow_tip`, 0.5), `BOW_SHOULDER` (`bow_shoulder`, 0.5), `EDGE` (no overlay, 0.0), and `BELL_SHOULDER`, a copy of `BELL` (`COPIED_ENTRIES`). Every entry has the same calibration scalar, 0.0435: Python's calibration is an edge strike at velocity 1.0, which no overlay changes and which has no click.
+
+### Live-engine decisions for Swish
+
+1. **Slots** (`docs/UI_SPEC.md` section 8). BELL and BELL2 play `bell` (TIP) or `bell_shoulder` (SHOULDER); BOW and BOW2 play `bow_tip` (TIP) or `bow_shoulder` (SHOULDER); EDGE plays `edge` (SHOULDER, fixed). Every row with a choice starts on TIP.
+2. **Level trims**, as for the 602 and Bettis (their decision 5): velocity 1.0, the mean level of the first 500 ms. BOW is matched to Nova BOW (tip) and never capped. BELL and EDGE go to their SPEAR targets (Bow V6, Bell V3, Edge V7: BELL +5.3 dB and EDGE +4.7 dB above BOW), capped where one hit (99th percentile of 1024 hits) would peak above 0.9. `bow_shoulder` takes BOW's target and `bell_shoulder` BELL's. Measured with `tools/cymbalis_trims --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target BELL=5.3 --spear-target BELL_SHOULDER=5.3 --spear-target EDGE=4.7 --peak-limit 0.9`. Each bake entry records its target, cap and reason (`slots[].level_trim`).
+
+   | Entry | SPEAR target vs BOW | Trim | Level vs BOW | Peak of one hit with trim (99th percentile) | Capped |
+   |---|---|---|---|---|---|
+   | BOW (`bow_tip`) | 0 dB | +8.86 dB | 0 dB | 1.45 (with the click) | no (BOW) |
+   | BOW_SHOULDER | 0 dB (BOW's) | +8.96 dB | 0 dB | 1.11 | no (BOW's target) |
+   | BELL | +5.3 dB | +7.60 dB | −0.23 dB | 0.90 | yes (+13.13 dB would peak at 1.70) |
+   | BELL_SHOULDER | +5.3 dB (BELL's) | +7.60 dB | −0.23 dB | 0.90 | yes (as BELL) |
+   | EDGE | +4.7 dB | −3.44 dB | −0.77 dB | 0.90 | yes (+2.03 dB would peak at 1.69) |
+
+3. **Seed.** The strike-phase sequence starts from Swish's seed, 7.
+
+### Things in the Swish data or engine that look wrong (ported as they are)
+
+- **The NPZ velw is the same at all six velocities.** An edge strike's spectrum therefore does not change with velocity through the captures; only its level (velocity^1.0) and the envelope's interpolation between velocities do. The NPZ notes call velw "per-band audio onset shape from actual recordings (0-50ms per velocity)", but the engine uses it as each mode's coupling weight.
+- **The edge excitation ratios are neutral** (all 1.0, "Pending real edge characterisation"), so a bow strike blended towards the edge has no position weighting. `edge_rms_correction` is all 1.0 too.
+- **The NPZ envelopes are shorter than the 20 s window.** They run 11.7–14 s (587–700 frames), are zero-padded, and end at 0.02–0.2 % of their peak. After the window a strike rings at its own decay, by then at least 120 dB down (T60 at most 10 s), so the jump at 20 s is inaudible.
+- **The outer envelope bands hold far more than their range.** Band 0 holds every mode below 125.9 Hz (106 modes, down to 19 Hz), band 19 every mode above 7.94 kHz (209 modes, up to 23.7 kHz); they follow the envelopes of the 100–126 Hz and 7.9–10 kHz bands.
+- **14 modes lie above 22.05 kHz** (up to 23.68 kHz). At 44.1 kHz they fold back below Nyquist, as in Python; the 602 has 8 such modes.
+- **pk_t runs up to 5 s**, bow and edge. With the envelope on, the edge pk_t and the edge velocity tilt are inaudible (the envelope skips the ramp, as for Bettis). With EDGE ONSET ENVELOPE off, some edge modes ramp in over up to 5 s. The bow pk_t (BowV4 at velocity 0.65) applies only to strikes blended towards the edge.
+- **The calibration does not see the envelope or the click.** The calibration strike (`_compute_calib_scalar`) is an edge strike without the band envelope and without `_add_transient`; the trims make up for the level.
+- **BOW (tip) peaks at 1.45 at velocity 1.0** (99th percentile, with its trim) before the Volume knob, from the click on top of the strike. BOW is never capped, by the rule; BOW_SHOULDER, without the click, peaks at 1.11.
+- **The click is bow-only.** `stick_bell_weight` and `stick_edge_weight` are 0: there is no click at the bell or the edge, and a bow row blended towards the edge clicks less, with its bow fraction.

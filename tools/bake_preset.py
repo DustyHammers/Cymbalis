@@ -28,6 +28,10 @@ can prove that it parsed every value exactly.
     shoulder articulations of the 602 and Bettis, the 602's CENTER (a copy of its BOW) and
     Nova's EDGE (a copy of BOW2, bow_shoulder, at the edge position). A copy named like an
     existing entry replaces it in place: Nova's EDGE was the base preset at the edge.
+  * the edge band envelope switched on by the bake (ENVELOPE_ON): Python builds the NPZ band
+    envelope only when an edge band envelope file is also set (line 691); for a preset in
+    ENVELOPE_ON the bake sets edge_npz.envelope_active and says why (envelope_set_by), as the
+    602's all-zero trigger file does in Python.
   * velocity-table fixes (VP_COLUMN_FIXES): columns of an overlay's velocity table replaced
     with another column of the same table, in the bake only (presets/ is unchanged), for every
     entry with that overlay, copies included. Each fix is recorded in the bake's notes.
@@ -69,6 +73,13 @@ COPIED_ENTRIES = {
             ('CENTER_SHOULDER', 'center_shoulder', 'CENTER', 1.0)],
     'bettis': [('BELL_SHOULDER', 'bell_shoulder', 'BELL', 1.0),
                ('BOW_SHOULDER', 'bow_shoulder', 'BOW', 0.5)],
+    'swish': [('BELL_SHOULDER', 'bell_shoulder', 'BELL', 1.0)],
+}
+# Presets whose NPZ edge band envelope the bake switches on (docs/PORT_MAP.md, "Swish"):
+# preset -> the reason recorded in edge_npz.envelope_set_by.
+ENVELOPE_ON = {
+    'swish': 'Swish_Baseline1.json sets no edge_band_env_path, so Python never runs the NPZ band '
+             'envelope; the plugin switches it on (Kris, 2026-10-17), as the 602\'s trigger file does',
 }
 # Velocity-table columns replaced in the bake (docs/PORT_MAP.md, live-engine decision 17):
 # (overlay, table, its data file, its column labels, label replaced, replacing label, reason).
@@ -559,6 +570,11 @@ def bake(overrides, preset='nova', allow_manifest_mismatch=False):
     probe = np.random.default_rng(1).standard_normal(4096)
     if not np.array_equal(g['_hp'](probe, 120), sosfilt(sos, probe)):
         raise BakeError('FAIL: baked high-pass SOS does not reproduce dsp_filters._hp exactly')
+
+    if ref_npz is not None and preset in ENVELOPE_ON and not ref_npz['envelope_active']:
+        ref_npz['envelope_active'] = True
+        ref_npz['envelope_set_by'] = ENVELOPE_ON[preset]
+        notes.append('edge_npz.envelope_active is set by the bake: ' + ENVELOPE_ON[preset])
 
     shared = {k: (None if v is None else enc(v, integer)) for k, (v, integer) in ref_arrays.items()
               if not (v is None and k in OPTIONAL_SHARED)}

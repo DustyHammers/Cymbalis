@@ -42,10 +42,10 @@
 //     contact force (Python's taus are 44.1 kHz samples) and the right-channel 120 Hz
 //     high-pass.
 //   - Presets without velocity participation tables use hertz_vel_scale. Presets with NPZ
-//     edge data (602, Bettis) take an edge strike's coupling from the NPZ velw tables and,
-//     with a band envelope, drive that strike's level from it for the onset window
-//     (PORT_MAP, "602 and Bettis"). For those the shared oscillator carries no decay and
-//     the control block is 1/7 or 1/8 of the envelope's 20 ms frame.
+//     edge data (602, Bettis, Swish) take an edge strike's coupling from the NPZ velw tables
+//     and, with a band envelope, drive that strike's level from it for the onset window
+//     (PORT_MAP, "602 and Bettis", "Swish"). For those the shared oscillator carries no decay
+//     and the control block is 1/7 or 1/8 of the envelope's 20 ms frame.
 //   - Energy cascade (docs/TUNING.md; PORT_MAP, plugin mechanism 10), off at amount 0: at
 //     every control point the ringing energy of each one-third-octave band is measured; a
 //     band above its threshold gives energy to the bands above it. The source modes are
@@ -57,6 +57,9 @@
 //   - Re-hit damping (plugin mechanism 12), off at amount 0: a strike scales the strikes
 //     already ringing down over a short ramp, a gain per component evaluated at the control
 //     points; the new strike's own energy is not scaled.
+//   - Stick click (_add_transient lines 1194-1211; Swish's bow tip), off at gain 0: a strike
+//     starts a band-passed noise burst from the strike-phase random sequence, mixed into
+//     both channels before the right-channel high-pass. It is the engine's only noise source.
 //
 // Thread use: the constructor and prepare() allocate and must not run on the audio
 // thread. strike() and process() never allocate, lock or touch files.
@@ -275,6 +278,8 @@ private:
     void hertzVelocity(double velocity, double* out) const noexcept;
     void npzCoupling(double velocity, double* out) const noexcept;
     void startEnvelope(Component& c, double velocity) noexcept;
+    void startStick(int slot, double velocity, double position, double level) noexcept;
+    void renderStick(float* left, float* right, int n) noexcept;
     double envelopeAt(const Component& c, int band, double te) const noexcept;
     void restartFrames(Component& c, double elapsed) noexcept;
 
@@ -370,10 +375,12 @@ private:
     bool blkGainOn_ = false, oscGainOn_ = false, injOn_ = false;
     std::vector<double> hertzRef_;      // sqrt(1 + (pi f tau_ref)^2) per mode (hertz_vel_scale)
 
-    // NPZ band envelope (bakes that have one): the shared oscillator has no decay
-    // (oscWash_ = 0, every strike carries its whole decay), and the control block divides
-    // the 20 ms frame of the in-frame decay into frameBlocks_ blocks.
-    bool envBake_ = false;
+    // NPZ band envelope (bakes with NPZ edge data, whether or not the envelope is on: the
+    // tuning can switch it): the shared oscillator has no decay (oscWash_ = 0, every strike
+    // carries its whole decay), and the control block divides the 20 ms frame of the
+    // in-frame decay into frameBlocks_ blocks. envOn_: edge strikes follow the envelope
+    // (edge_npz.envelope_active; EDGE ONSET ENVELOPE in the tuning build).
+    bool envBake_ = false, envOn_ = false;
     int frameBlocks_ = 0;
     std::vector<int> bandStart_, bandEnd_; // mode range of each envelope band
     std::vector<uint8_t> npzShiftBand_;    // the onset-shift band of each envelope band
@@ -477,6 +484,26 @@ private:
     // Right-channel high-pass at the host rate (direct form II transposed, double).
     double hpB0_ = 0.0, hpB1_ = 0.0, hpB2_ = 0.0, hpA1_ = 0.0, hpA2_ = 0.0;
     double hpZ0_ = 0.0, hpZ1_ = 0.0;
+
+    // Stick click voices (startStick): each plays one burst, drawn at its strike into its
+    // part of stickNoise_ (stickMaxLen_ samples each), through its own band-pass (order-2
+    // Butterworth as two sections b0 (1 - z^-2) / (1 + a1 z^-1 + a2 z^-2), direct form II
+    // transposed), times its gain. It ends when its burst is over and its filter has rung down.
+    struct StickVoice
+    {
+        bool on = false;
+        uint64_t order = 0;
+        int k = 0, len = 0;  // next sample of the burst, its length
+        double g = 0.0;      // gain x position weight x velocity^1.7 x level
+        double b0[2] {}, a1[2] {}, a2[2] {};
+        double s1[2] {}, s2[2] {};
+        float* noise = nullptr;
+    };
+    static constexpr int kStickVoices = 8;
+    std::array<StickVoice, kStickVoices> stick_ {};
+    std::vector<float> stickNoise_;
+    int stickMaxLen_ = 0, stickActive_ = 0;
+    uint64_t stickOrder_ = 0;
 
     // Per-strike scratch (preallocated).
     std::vector<double> scratchPhase_, scratchVel_, scratchBellVel_, scratchPosW_, scratchPkT_;

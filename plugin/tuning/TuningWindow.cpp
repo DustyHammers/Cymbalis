@@ -460,6 +460,7 @@ void TuningPanel::rebuild()
     buttonRows.clear();
     refreshers.clear();
     restartRow.reset();
+    envelopeRow.reset();
     bandEq.reset();
     cymbalBandRows.clear();
     list.removeAllChildren();
@@ -506,8 +507,8 @@ void TuningPanel::rebuild()
                 place (*row);
                 rows.push_back (std::move (row));
             }
-            // A shoulder articulation of SMOKE FLAT RIDE or HAMMERED THIN RIDE: Nova's
-            // shoulder-minus-tip band gains, on request.
+            // A shoulder articulation copied from its tip (SMOKE FLAT RIDE, HAMMERED THIN RIDE,
+            // SWISH's bell_shoulder): Nova's shoulder-minus-tip band gains, on request.
             if (const auto* profile = novaShoulderProfile (*bake, cymbalis::kPresets[(size_t) preset].id, s))
             {
                 auto row = std::make_unique<ButtonRow> (juce::String ("Band gains, attack gains and time: Nova's ") + profile->name
@@ -580,6 +581,15 @@ void TuningPanel::rebuild()
             if (! any)
                 continue;
             addHeader (groupName (group));
+            // EDGE ONSET ENVELOPE: whether edge strikes follow the NPZ band envelope.
+            if (group == Group::edgeEnvelope)
+            {
+                envelopeRow = std::make_unique<ToggleRow> ("EDGE ONSET ENVELOPE (off: the strike rings from the start, "
+                                                           "with its onset ramp): "
+                                                           + scopeNames (Scope::edge, *bake));
+                envelopeRow->onChange = [this] (bool v) { change ([&] (Tuning& t) { t.cymbal.edgeEnvelope = v; }); };
+                place (*envelopeRow);
+            }
             for (const auto& f : cymbalFields())
             {
                 if (f.group != group || ! applies (f.needs, *bake))
@@ -648,6 +658,8 @@ void TuningPanel::showValues()
         r();
     if (restartRow != nullptr && bake != nullptr)
         restartRow->setValues (processor.tuning (preset).cymbal.frameDecayRestart, bake->tuning.cymbal.frameDecayRestart);
+    if (envelopeRow != nullptr && bake != nullptr)
+        envelopeRow->setValues (processor.tuning (preset).cymbal.edgeEnvelope, bake->tuning.cymbal.edgeEnvelope);
     modified = bake != nullptr && isModified (*bake, processor.tuning (preset));
     repaint (0, 0, getWidth(), kTopHeight);
 }
