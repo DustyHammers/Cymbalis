@@ -44,6 +44,43 @@ void click (juce::Component& target, juce::Point<float> p)
     post (window, NSEventTypeLeftMouseUp, loc);
 }
 
+juce::String tuningWindowState (juce::Component& editor)
+{
+    auto* peer = editor.getPeer();
+    NSWindow* host = peer != nullptr ? [(NSView*) peer->getNativeHandle() window] : nil;
+    NSWindow* tuning = nil;
+    for (NSWindow* w in [NSApp windows])
+        if (w != host && [[w title] rangeOfString: @"Tuning"].location != NSNotFound)
+            tuning = w;
+    if (tuning == nil)
+        return "none";
+    if (! [tuning isVisible])
+        return "hidden";
+    // Window server order of the windows on screen, front to back.
+    long tuningAt = -1, hostAt = -1;
+    CFArrayRef list = CGWindowListCopyWindowInfo (kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+                                                  kCGNullWindowID);
+    if (list != nullptr)
+    {
+        for (CFIndex i = 0; i < CFArrayGetCount (list); ++i)
+        {
+            NSDictionary* d = (__bridge NSDictionary*) CFArrayGetValueAtIndex (list, i);
+            const long number = [d[(__bridge NSString*) kCGWindowNumber] longValue];
+            if (number == (long) [tuning windowNumber]) tuningAt = (long) i;
+            if (number == (long) [host windowNumber]) hostAt = (long) i;
+        }
+        CFRelease (list);
+    }
+    const bool onScreen = tuningAt >= 0;
+    const bool front = onScreen && hostAt >= 0 && tuningAt < hostAt;
+    const bool attached = [tuning parentWindow] == host;
+    const bool space = [tuning isOnActiveSpace];
+    if (onScreen && front && attached && space)
+        return "visible-front";
+    return juce::String ("on screen ") + (onScreen ? "yes" : "no") + ", in front of the editor " + (front ? "yes" : "no")
+           + ", attached " + (attached ? "yes" : "no") + ", active Space " + (space ? "yes" : "no");
+}
+
 void drag (juce::Component& target, juce::Point<float> from, juce::Point<float> to)
 {
     NSWindow* window = nil;

@@ -1,5 +1,9 @@
 #include "PluginEditor.h"
 
+#if CYMBALIS_TUNING
+#include "tuning/TuningWindow.h"
+#endif
+
 #include <cmath>
 
 namespace cymbalis::ui
@@ -25,6 +29,10 @@ const juce::Rectangle<int> kNoteBox (1424, 0, 66, 25);
 const juce::Rectangle<int> kPresetBox (61, 371, 277, 62);
 const juce::Rectangle<int> kChannelBox (632, 936, 277, 62);
 const juce::Rectangle<int> kPhoto (434, 94, 707, 713);
+#if CYMBALIS_TUNING
+const juce::Rectangle<int> kLogo (40, 80, 390, 130); // the CYMBALIS logo and its tagline in the background
+const juce::Rectangle<int> kTuningButton (1404, 30, 110, 36); // top right, above the column headers (y 98)
+#endif
 
 const juce::String emDash = juce::String::fromUTF8 ("\xe2\x80\x94");
 
@@ -57,6 +65,41 @@ void drawBoxOutline (juce::Graphics& g, juce::Rectangle<int> r, juce::Colour c)
     g.drawRect (r, 2);
 }
 } // namespace
+
+#if CYMBALIS_TUNING
+// =====================================================================================
+// Tuning build: the TUNING button, drawn like the editor's boxes.
+class Content::TuningButton final : public juce::Component
+{
+public:
+    explicit TuningButton (const Assets& a) : assets (a) { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
+    void setOpen (bool o)
+    {
+        if (o != open)
+        {
+            open = o;
+            repaint();
+        }
+    }
+    std::function<void()> onClick;
+    void paint (juce::Graphics& g) override
+    {
+        drawBoxOutline (g, getLocalBounds(), open ? palette::openOutline : (isMouseOver() ? palette::bronze : palette::boxOutline));
+        drawValue (g, assets.font (kRowSize, kStickValueSpacing), "TUNING", getLocalBounds().toFloat(), palette::label);
+    }
+    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { repaint(); }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (onClick && getLocalBounds().contains (e.getPosition()))
+            onClick();
+    }
+
+private:
+    const Assets& assets;
+    bool open = false;
+};
+#endif
 
 // =====================================================================================
 Knob::Knob (const Assets& a) : assets (a)
@@ -510,6 +553,13 @@ Content::Content (CymbalisProcessor& p)
     channelBox.onClick = [this] { openChannelMenu(); };
     addAndMakeVisible (channelBox);
 
+#if CYMBALIS_TUNING
+    tuningButton = std::make_unique<TuningButton> (assets);
+    tuningButton->setBounds (kTuningButton);
+    tuningButton->onClick = [this] { toggleTuningWindow (tuningWindow == nullptr || ! tuningWindow->isShowing()); };
+    addAndMakeVisible (*tuningButton);
+#endif
+
     for (int s = 0; s < kNumSlots; ++s)
     {
         auto box = std::make_unique<NoteBox> (assets);
@@ -540,6 +590,9 @@ Content::Content (CymbalisProcessor& p)
 
 Content::~Content()
 {
+#if CYMBALIS_TUNING
+    tuningWindow.reset(); // the Tuning window goes with the editor
+#endif
     removeMouseListener (this);
     for (auto& k : knobs)
         k->removeListener (this);
@@ -590,10 +643,36 @@ void Content::refresh()
     const float pulse = 0.6f + 0.4f * (float) std::cos (juce::MathConstants<double>::twoPi * 1.25 * t);
     for (int s = 0; s < kNumSlots; ++s)
         noteBoxes[(size_t) s]->setLearning (s == learn, pulse);
+#if CYMBALIS_TUNING
+    tuningButton->setOpen (tuningWindow != nullptr && tuningWindow->isShowing());
+#endif
 }
+
+#if CYMBALIS_TUNING
+void Content::toggleTuningWindow (bool open)
+{
+    if (open)
+    {
+        if (tuningWindow == nullptr)
+            tuningWindow = std::make_unique<tuning::TuningWindow> (processor, assets, *this);
+        tuningWindow->show (tuningButton->localAreaToGlobal (tuningButton->getLocalBounds()));
+    }
+    else if (tuningWindow != nullptr)
+        tuningWindow->hide();
+    tuningButton->setOpen (open);
+}
+#endif
 
 void Content::mouseDown (const juce::MouseEvent& e)
 {
+#if CYMBALIS_TUNING
+    // Tuning build: Cmd-click on the logo opens the Tuning window too (docs/TUNING.md).
+    if (e.eventComponent == this && e.mods.isCommandDown() && kLogo.contains (e.getPosition()))
+    {
+        toggleTuningWindow (true);
+        return;
+    }
+#endif
     const int learn = processor.midiLearnSlot();
     if (learn < 0 || popup != nullptr)
         return;
@@ -818,7 +897,8 @@ void Content::paintLabels (juce::Graphics& g)
             drawInkText (g, f, spec.label, spec.labelInk, spec.colour);
     }
 
-    small ("BELL", 1249.0f, 720.0f, 3.33f);
+    // BLEND POSITION 1 runs from the preset's bell rows (BELL; CENTER on SMOKE FLAT RIDE) to BOW.
+    small (kPresets[(size_t) processor.presetIndex()].blend1Left, 1249.0f, 720.0f, 3.33f);
     small ("BOW", 1409.0f, 720.0f, 2.88f);
     small ("BOW", 1249.0f, 958.0f, 2.88f);
     small ("EDGE", 1409.0f, 958.0f, 2.83f);
@@ -826,9 +906,15 @@ void Content::paintLabels (juce::Graphics& g)
 
 void Content::paintRows (juce::Graphics& g)
 {
+    // The preset's row labels (SlotTable.h), drawn like the row's own.
+    const auto& preset = kPresets[(size_t) processor.presetIndex()];
     for (size_t s = 0; s < kSlots.size(); ++s)
-        drawInkText (g, assets.font (kRowSize, kRowLabelSpacing[s]), kSlots[s].label, { 1201.0f, kRowLabelY[s] },
-                     palette::secondary);
+    {
+        const auto& ps = preset.slots[s];
+        const float spacing = ps.label != nullptr ? ps.labelSpacing : kRowLabelSpacing[s];
+        drawInkText (g, assets.font (kRowSize, spacing), rowLabel (processor.presetIndex(), (int) s),
+                     { 1201.0f, kRowLabelY[s] }, palette::secondary);
+    }
 }
 
 void Content::paintError (juce::Graphics& g)

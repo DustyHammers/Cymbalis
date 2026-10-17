@@ -23,6 +23,14 @@ can prove that it parsed every value exactly.
     envelopes and their switches ("edge_npz"); a velocity-bracketed edge pk_t is
     written as one row per velocity. Presets without velocity participation tables
     record tau_ref_ms for hertz_vel_scale.
+  * copied entries (COPIED_ENTRIES): an entry with another entry's data under its own
+    articulation id ("articulation", "copy_of"), tuned on its own in the plugin: the
+    shoulder articulations of the 602 and Bettis, the 602's CENTER (a copy of its BOW) and
+    Nova's EDGE (a copy of BOW2, bow_shoulder, at the edge position). A copy named like an
+    existing entry replaces it in place: Nova's EDGE was the base preset at the edge.
+  * velocity-table fixes (VP_COLUMN_FIXES): columns of an overlay's velocity table replaced
+    with another column of the same table, in the bake only (presets/ is unchanged), for every
+    entry with that overlay, copies included. Each fix is recorded in the bake's notes.
 
 Usage:
     python tools/bake_preset.py --overrides-from tests/sequences/edge_3hits_15s.json --out bake.json
@@ -30,6 +38,7 @@ Usage:
     python tools/bake_preset.py --preset 602 --overrides '{"nl_amount": 0.0}' --out bake.json
 """
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -48,6 +57,29 @@ AMP_SKIP_THRESHOLD = 1e-9          # multi_strike_engine_v19.py line 859: `if A 
 BOW_ONSET_EDGES = [50, 89, 178, 356, 713, 1425, 2851, 5702, 11404, 22050]   # lines 431-432
 # Shared arrays written only when a preset has them (absent from older bakes).
 OPTIONAL_SHARED = ('pk_t_edge_by_vel_s', 'pk_t_edge_velocities')
+# Entries that copy another entry's data under their own articulation id, so that the plugin
+# tunes them on their own (docs/TUNING.md): (name, articulation id, source entry, position).
+# A source can be an earlier copy. A copy named like an entry of the preset replaces that
+# entry where it stands. SMOKE FLAT RIDE's bell rows play CENTER; the rows' SHOULDER sticks
+# play the *_SHOULDER copies; every EDGE row is shoulder only (docs/UI_SPEC.md section 8).
+COPIED_ENTRIES = {
+    'nova': [('EDGE', 'edge', 'BOW2', 0.0)],
+    '602': [('CENTER', 'center', 'BOW', 1.0),
+            ('BOW_SHOULDER', 'bow_shoulder', 'BOW', 0.5),
+            ('CENTER_SHOULDER', 'center_shoulder', 'CENTER', 1.0)],
+    'bettis': [('BELL_SHOULDER', 'bell_shoulder', 'BELL', 1.0),
+               ('BOW_SHOULDER', 'bow_shoulder', 'BOW', 0.5)],
+}
+# Velocity-table columns replaced in the bake (docs/PORT_MAP.md, live-engine decision 17):
+# (overlay, table, its data file, its column labels, label replaced, replacing label, reason).
+# vel_norms stay as they are. The labels are checked against the data file.
+VP_COLUMN_FIXES = {
+    'nova': [('bow_shoulder', 'bow_vp', 'presets/nova/data/nova_vel_participation_shoulder_correct.json',
+              ['V4', 'V4', 'V5', 'V5', 'V5'], 'V5', 'V4',
+              'above velocity 0.9905 (MIDI 126-127) V5 made the bow shoulder bell-like: it has about '
+              'half of V4\'s modes (531 against 1091 above 0.01), its ring at velocity 1.0 is dominated '
+              'by 647 Hz and 2044 Hz, and it is 5.6 dB quieter than V4 at 0.98')],
+}
 
 
 class BakeError(SystemExit):
@@ -344,6 +376,46 @@ def slot_block(eng, name, overlay, position, preset):
     }
 
 
+def copied_entry(src, name, articulation, position):
+    """Entry `name`: a copy of the slot block `src` with its own articulation id and position.
+    The source's level trim, band gains and onset shift are not copied (a re-bake has none)."""
+    blk = {'name': name, 'articulation': articulation, 'copy_of': src['name']}
+    for key, val in src.items():
+        if key not in blk and key not in ('level_trim', 'excitation_band_gains_db', 'onset_shift'):
+            blk[key] = copy.deepcopy(val)
+    blk['position'] = float(position)
+    return blk
+
+
+def fix_vp_columns(slot_blocks, fixes, notes):
+    """Apply VP_COLUMN_FIXES to every slot block with the fix's overlay, copies included."""
+    for overlay, table, path, labels, old, new, reason in fixes:
+        with open(os.path.join(ab.REPO, path)) as f:
+            if json.load(f).get('vel_labels') != labels:
+                raise BakeError(f'FAIL: {path} does not have the column labels {labels}')
+        cols = [k for k, x in enumerate(labels) if x == old]
+        src = labels.index(new)
+        names, below = [], None
+        for blk in slot_blocks:
+            if blk['overlay'] != overlay:
+                continue
+            vp = blk[table]
+            if vp is None or vp['curves']['shape'][1] != len(labels):
+                raise BakeError(f'FAIL: slot {blk["name"]}: {table} does not have {len(labels)} columns')
+            c = np.array(vp['curves']['data'], dtype=np.float64).reshape(vp['curves']['shape'])
+            c[:, cols] = c[:, [src]]
+            vp['curves'] = enc(c)
+            names.append(blk['name'] + (f' (a copy of {blk["copy_of"]})' if 'copy_of' in blk else ''))
+            below = vp['vel_norms']['data'][cols[0] - 1] if cols[0] > 0 else None
+        if not names:
+            raise BakeError(f'FAIL: no slot plays overlay {overlay}')
+        notes.append(f'{overlay} {table} in slots {", ".join(names)}: every {old} column '
+                     f'({", ".join(str(k) for k in cols)}) replaced with {new} (column {src}), vel_norms '
+                     f'kept, so every velocity plays {new}'
+                     + (f' and nothing up to velocity {below} changes' if below is not None else '')
+                     + f'; {path} is unchanged. Why: {reason}.')
+
+
 # ---------------------------------------------------------------------------
 # RNG streams
 # ---------------------------------------------------------------------------
@@ -495,6 +567,19 @@ def bake(overrides, preset='nova', allow_manifest_mismatch=False):
     slot_blocks = [slot_block(eng, name, overlay, pos, preset) for name, overlay, pos, eng in engines]
     for blk, (name, overlay, pos, eng) in zip(slot_blocks, engines):
         blk['contact_force_python'] = enc_opt(python_contact_force(eng, strike_event, pos))
+    source_engine = [eng for _, _, _, eng in engines]  # the engine whose data each block holds
+    for name, articulation, src_name, pos in COPIED_ENTRIES.get(preset, []):
+        names = [blk['name'] for blk in slot_blocks]
+        k = names.index(src_name)
+        blk = copied_entry(slot_blocks[k], name, articulation, pos)
+        blk['contact_force_python'] = enc_opt(python_contact_force(source_engine[k], strike_event, pos))
+        if name in names:  # replaces that entry where it stands
+            slot_blocks[names.index(name)] = blk
+            source_engine[names.index(name)] = source_engine[k]
+        else:
+            slot_blocks.append(blk)
+            source_engine.append(source_engine[k])
+    fix_vp_columns(slot_blocks, VP_COLUMN_FIXES.get(preset, []), notes)
 
     out = {
         'format': BAKE_FORMAT,

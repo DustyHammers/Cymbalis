@@ -58,6 +58,21 @@ Engine::Engine(std::shared_ptr<const BakeData> bake, EngineConfig config)
             missing += " NPZ edge data";
         if (!bake_->pkTEdgeByVel.empty())
             missing += " velocity-bracketed edge pk_t";
+        // Python applies the LF scale in suppress mode (lf_max_scale <= 1, line 914); this
+        // path never did. FastEngine applies it in both modes (PORT_MAP, "Live-engine decisions", decision 6).
+        if (bake_->params.lfDepth > 0.0 && bake_->params.lfMax <= 1.0)
+            missing += " LF amplitude scaling (lf_max_scale <= 1)";
+        if (bake_->hasTuningBlock)
+            missing += " the bake's tuning block (docs/TUNING.md)";
+        for (const auto& s : bake_->slots)
+        {
+            if (hasBandGains(s.articulation))
+                missing += " excitation band gains (slot " + s.name + ")";
+            if (hasOnsetShift(s.articulation))
+                missing += " onset shifts (slot " + s.name + ")";
+            if (s.attackTuned)
+                missing += " attack band gains (slot " + s.name + ")";
+        }
         if (!missing.empty())
             throw BakeError("Engine does not implement:" + missing + "; use FastEngine");
     }

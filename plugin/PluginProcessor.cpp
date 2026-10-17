@@ -53,11 +53,22 @@ CymbalisProcessor::CymbalisProcessor()
     blend1 = apvts.getRawParameterValue (paramBlend1);
     blend2 = apvts.getRawParameterValue (paramBlend2);
     for (size_t i = 0; i < notes.size(); ++i)
-    {
         notes[i].store (cymbalis::kSlots[i].defaultNote);
-        sticks[i].store ((int) cymbalis::kSlots[i].defaultStick);
-    }
+    for (size_t k = 0; k < sticks.size(); ++k)
+        for (size_t i = 0; i < notes.size(); ++i)
+            sticks[k][i].store ((int) cymbalis::kPresets[k].slots[i].defaultStick);
     parsePresets();
+#if CYMBALIS_TUNING
+    size_t maxGains = 0;
+    for (size_t k = 0; k < presets.size(); ++k)
+        if (presets[k].bake != nullptr)
+        {
+            tunings[k] = presets[k].bake->tuning;
+            maxGains = std::max (maxGains, presets[k].bake->slots.size() * (size_t) presets[k].bake->numModes);
+        }
+    for (auto& m : tuningBuffers)
+        m.modeGains.reserve (maxGains);
+#endif
     // The cymbal: one engine, loaded with the first preset. Its clock starts here and carries
     // over to every preset loaded later; each preset's strike-phase sequence starts from its
     // own seed when it is loaded.
@@ -171,7 +182,11 @@ std::unique_ptr<CymbalisProcessor::Cymbal> CymbalisProcessor::buildCymbal (int p
         return c;
     try
     {
+#if CYMBALIS_TUNING
+        applyTuningToNewCymbal (*c); // with the preset's current tuning values
+#else
         c->engine = std::make_unique<cymbalis::FastEngine> (bake);
+#endif
         if (sampleRate > 0.0)
             c->engine->prepare (sampleRate);
     }
@@ -195,10 +210,19 @@ void CymbalisProcessor::loaderTick()
     const juce::ScopedLock sl (buildLock);
     const double rate = preparedRate.load();
     const int target = presetTarget.load();
-    if (rate <= 0.0 || target == scheduledPreset.load())
+#if CYMBALIS_TUNING
+    // A new ring length rebuilds the cymbal, like a preset switch.
+    const bool ringChanged = target == scheduledPreset.load() && ! juce::exactlyEqual (tuning (target).cymbal.ringLength, scheduledRing);
+#else
+    const bool ringChanged = false;
+#endif
+    if (rate <= 0.0 || (target == scheduledPreset.load() && ! ringChanged))
         return;
     auto c = buildCymbal (target, rate);
     scheduledPreset.store (target);
+#if CYMBALIS_TUNING
+    scheduledRing = c->ring;
+#endif
     // A cymbal still pending was never taken by the audio thread: it is ours to free.
     delete pending.exchange (c.release());
 }
@@ -223,7 +247,12 @@ void CymbalisProcessor::prepareToPlay (double sampleRate, int)
     delete fading;
     fading = nullptr;
     const int target = presetTarget.load();
-    if (current == nullptr || current->preset != target)
+#if CYMBALIS_TUNING
+    const bool ringChanged = current != nullptr && ! juce::exactlyEqual (current->ring, tuning (target).cymbal.ringLength);
+#else
+    const bool ringChanged = false;
+#endif
+    if (current == nullptr || current->preset != target || ringChanged)
     {
         auto c = buildCymbal (target, sampleRate);
         if (c->engine != nullptr && current != nullptr && current->engine != nullptr)
@@ -234,6 +263,9 @@ void CymbalisProcessor::prepareToPlay (double sampleRate, int)
     else if (current->engine != nullptr && ! juce::exactlyEqual (current->engine->sampleRate(), sampleRate))
         current->engine->prepare (sampleRate);
     scheduledPreset.store (target);
+#if CYMBALIS_TUNING
+    scheduledRing = current->ring;
+#endif
     preparedRate.store (sampleRate);
 
     fadeLength = std::max (1, juce::roundToInt (kPresetFadeSeconds * sampleRate));
@@ -269,6 +301,7 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     // (its strike phases start from its preset's seed) and plays from this block on. If the old cymbal is ringing it
     // fades out alongside for kPresetFadeSeconds; then the loader frees it. While a fade or a
     // free is outstanding the next switch waits. Nothing here allocates, frees or locks.
+    bool newCymbal = false;
     if (fading == nullptr && retired.load() == nullptr)
     {
         Cymbal* next = pending.load();
@@ -283,6 +316,7 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
                     next->engine->continueFrom (*current->engine);
                 Cymbal* old = current;
                 current = next;
+                newCymbal = true;
                 if (old != nullptr && old->engine != nullptr && old->engine->isPrepared() && ! old->engine->isSilent()
                     && ! fadeLeft.empty())
                 {
@@ -294,6 +328,11 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             }
         }
     }
+#if CYMBALIS_TUNING
+    takeTuning (newCymbal);
+#else
+    juce::ignoreUnused (newCymbal);
+#endif
     auto* engine = current != nullptr ? current->engine.get() : nullptr;
     const bool playing = engine != nullptr && engine->isPrepared();
 
@@ -352,6 +391,9 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         }
     }
 
+#if CYMBALIS_TUNING
+    meterBlock (left, right, n, false);
+#endif
     gain.setTargetValue (juce::Decibels::decibelsToGain (volumeDb->load(), -1000.0f));
     if (gain.isSmoothing())
     {
@@ -367,6 +409,9 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         buffer.applyGain (0, 0, n, gain.getTargetValue());
         buffer.applyGain (1, 0, n, gain.getTargetValue());
     }
+#if CYMBALIS_TUNING
+    meterBlock (left, right, n, true);
+#endif
 }
 
 // Strikes every slot whose note is `note`, at sample `at` of the block, after rendering the
@@ -382,7 +427,7 @@ void CymbalisProcessor::strikeSlots (Cymbal& c, int note, double velocity, doubl
         if (notes[s].load() != note)
             continue;
         const bool choice = info.slots[s].stick == cymbalis::StickDisplay::choice;
-        const int stick = choice && sticks[s].load() == (int) cymbalis::Stick::shoulder ? 1 : 0;
+        const int stick = choice && sticks[(size_t) c.preset][s].load() == (int) cymbalis::Stick::shoulder ? 1 : 0;
         const int entry = preset.entry[s][(size_t) stick];
         if (entry < 0)
             continue;
@@ -392,6 +437,9 @@ void CymbalisProcessor::strikeSlots (Cymbal& c, int note, double velocity, doubl
             pos = at;
         }
         c.engine->strike (entry, velocity, cymbalis::slotPosition (cymbalis::kSlots[s], b1, b2));
+#if CYMBALIS_TUNING
+        startHitMeter ((int) s, entry, velocity, at);
+#endif
     }
 }
 
@@ -429,10 +477,19 @@ void CymbalisProcessor::setSlotNote (int slot, int note) noexcept
         notes[(size_t) slot].store (juce::jlimit (-1, 127, note));
 }
 
-void CymbalisProcessor::setSlotStick (int slot, cymbalis::Stick stick) noexcept
+void CymbalisProcessor::setSlotStick (int preset, int slot, cymbalis::Stick stick) noexcept
 {
-    if (slot >= 0 && slot < cymbalis::kNumSlots && cymbalis::hasStickChoice (slot) && stick != cymbalis::Stick::none)
-        sticks[(size_t) slot].store ((int) stick);
+    if (preset >= 0 && preset < cymbalis::kNumPresets && slot >= 0 && slot < cymbalis::kNumSlots
+        && cymbalis::hasStickChoice (preset, slot) && stick != cymbalis::Stick::none)
+        sticks[(size_t) preset][(size_t) slot].store ((int) stick);
+}
+
+// Session key of a row's stick in a preset: NOVA RIDE keeps the keys it had before the other
+// presets had a choice (stick_BELL), the others name the preset (stick_smoke_flat_ride_BELL).
+static juce::String stickKey (int preset, int slot)
+{
+    return juce::String ("stick_") + (preset == 0 ? juce::String() : juce::String (cymbalis::kPresets[(size_t) preset].id) + "_")
+           + cymbalis::kSlots[(size_t) slot].label;
 }
 
 void CymbalisProcessor::setEditorSize (int w, int h) noexcept
@@ -442,7 +499,7 @@ void CymbalisProcessor::setEditorSize (int w, int h) noexcept
 }
 
 // The parameters, plus the session settings that are not automatable: MIDI channel,
-// note and stick per slot, preset and editor size (UI_SPEC section 9).
+// note per slot, stick per slot and preset, preset and editor size (UI_SPEC section 9).
 void CymbalisProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
@@ -453,14 +510,16 @@ void CymbalisProcessor::getStateInformation (juce::MemoryBlock& destData)
     session->setAttribute ("preset", cymbalis::kPresets[(size_t) presetIndex()].id);
     session->setAttribute ("midiChannel", channel.load());
     for (size_t i = 0; i < notes.size(); ++i)
-    {
         session->setAttribute (juce::String ("note_") + cymbalis::kSlots[i].label, notes[i].load());
-        if (cymbalis::hasStickChoice ((int) i)) // kept whatever preset plays
-            session->setAttribute (juce::String ("stick_") + cymbalis::kSlots[i].label,
-                                   cymbalis::stickName ((cymbalis::Stick) sticks[i].load()));
-    }
+    for (int k = 0; k < cymbalis::kNumPresets; ++k) // every preset's, whatever preset plays
+        for (int i = 0; i < cymbalis::kNumSlots; ++i)
+            if (cymbalis::hasStickChoice (k, i))
+                session->setAttribute (stickKey (k, i), cymbalis::stickName (slotStick (k, i)));
     session->setAttribute ("editorWidth", editorWidth.load());
     session->setAttribute ("editorHeight", editorHeight.load());
+#if CYMBALIS_TUNING
+    writeTuningState (*session);
+#endif
     copyXmlToBinary (*xml, destData);
 }
 
@@ -477,13 +536,15 @@ void CymbalisProcessor::setStateInformation (const void* data, int sizeInBytes)
         {
             const auto& slot = cymbalis::kSlots[i];
             setSlotNote ((int) i, session->getIntAttribute (juce::String ("note_") + slot.label, slot.defaultNote));
-            if (cymbalis::hasStickChoice ((int) i))
-            {
-                const auto stick = session->getStringAttribute (juce::String ("stick_") + slot.label,
-                                                                cymbalis::stickName (slot.defaultStick));
-                setSlotStick ((int) i, stick == "TIP" ? cymbalis::Stick::tip : cymbalis::Stick::shoulder);
-            }
         }
+        for (int k = 0; k < cymbalis::kNumPresets; ++k)
+            for (int i = 0; i < cymbalis::kNumSlots; ++i)
+                if (cymbalis::hasStickChoice (k, i))
+                {
+                    const auto stick = session->getStringAttribute (
+                        stickKey (k, i), cymbalis::stickName (cymbalis::kPresets[(size_t) k].slots[(size_t) i].defaultStick));
+                    setSlotStick (k, i, stick == "TIP" ? cymbalis::Stick::tip : cymbalis::Stick::shoulder);
+                }
         setEditorSize (session->getIntAttribute ("editorWidth", 0), session->getIntAttribute ("editorHeight", 0));
         const auto id = session->getStringAttribute ("preset", cymbalis::kPresets[0].id);
         int preset = 0;
@@ -491,6 +552,9 @@ void CymbalisProcessor::setStateInformation (const void* data, int sizeInBytes)
             if (id == cymbalis::kPresets[(size_t) k].id)
                 preset = k;
         setPreset (preset);
+#if CYMBALIS_TUNING
+        readTuningState (*session);
+#endif
         xml->removeChildElement (session, true);
     }
     learnSlot.store (-1);

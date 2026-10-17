@@ -193,8 +193,6 @@ std::vector<std::string> unsupportedMechanisms(const json::Value& e)
     if (eff(e, "release_gain") > 0.0 && eff(e, "tip_contact_ms") > 0.0 && !e.at("permode_contact").boolean())
         out.push_back("contact release pulse");
     if (eff(e, "rate_jitter") > 0.0) out.push_back("wander rate jitter (draws extra random numbers)");
-    if (eff(e, "lf_sens_depth") > 0.0 && eff(e, "lf_max_scale") <= 1.0)
-        out.push_back("LF amplitude scaling (lf_max_scale <= 1)");
     if (eff(e, "nl_amount") > 1e-6) out.push_back("NL redistribution (nl_amount > 0; off in the plugin)");
     if (eff(e, "hf_bloom_modes") > 0) out.push_back("HF bloom bank");
     if (eff(e, "sparkle_clusters") > 0 && eff(e, "sparkle_depth") > 0.0) out.push_back("sparkle");
@@ -375,11 +373,13 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
             const json::Value& v = sh.at(key);
             if (!v.isNull()) readArray(v, std::string("shared.") + key, {n}, rep);
         }
-        for (const char* key : {"vel_tilt_velocities", "vel_tilt_reference", "bow_onset_band_edges_hz"})
+        for (const char* key : {"vel_tilt_velocities", "vel_tilt_reference"})
         {
             const json::Value& v = sh.at(key);
             if (!v.isNull()) readArray(v, std::string("shared.") + key, {0}, rep);
         }
+        if (const json::Value& v = sh.at("bow_onset_band_edges_hz"); !v.isNull())
+            b.bowOnsetBandEdges = readArray(v, "shared.bow_onset_band_edges_hz", {0}, rep);
         if (!sh.at("vel_tilt_fractions").isNull())
             readArray(sh.at("vel_tilt_fractions"), "shared.vel_tilt_fractions", {0, 0}, rep);
 
@@ -414,6 +414,7 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
         ep.shldTauMax = eff(e0, "shld_tau_max");
         ep.sigmaRatio = eff(e0, "sigma_ratio");
         ep.wanderDepth = eff(e0, "wander_depth");
+        ep.wanderRateHz = eff(e0, "wander_rate_hz");
         ep.edgeWanderDepth = eff(e0, "edge_wander_depth");
         ep.edgeWanderRate = eff(e0, "edge_wander_rate");
         ep.lfDepth = eff(e0, "lf_sens_depth");
@@ -424,6 +425,7 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
         ep.lfWBow = eff(e0, "lf_bow_weight");
         ep.lfWBell = eff(e0, "lf_bell_weight");
         ep.lfWanderRateBoost = eff(e0, "lf_wander_rate_boost");
+        ep.lfCutoffHz = eff(e0, "lf_cutoff_hz");
         ep.velLenTilt = eff(e0, "vel_len_tilt");
         ep.velLenTiltRef = eff(e0, "vel_len_tilt_ref");
         ep.mfDepth = eff(e0, "mf_sens_depth");
@@ -433,6 +435,8 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
         ep.mfWEdge = eff(e0, "mf_edge_weight");
         ep.mfWBow = eff(e0, "mf_bow_weight");
         ep.mfWBell = eff(e0, "mf_bell_weight");
+        ep.mfLoHz = eff(e0, "mf_lo_hz");
+        ep.mfHiHz = eff(e0, "mf_hi_hz");
         ep.bandEnvOnset = e0.at("band_env_onset").boolean();
         ep.birthFrac = eff(e0, "band_env_birth_frac");
         ep.velTilt = e0.at("vel_tilt").boolean();
@@ -486,6 +490,12 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
                 throw BakeError("mf_sens_depth > 0 but the bake has no mf_bandpass");
             b.mfBandpass = readArray(sh.at("mf_bandpass"), "shared.mf_bandpass (used)", {n}, rep);
         }
+        if (ep.lfDepth > 0.0)
+        {
+            if (sh.at("lf_sigmoid").isNull())
+                throw BakeError("lf_sens_depth > 0 but the bake has no lf_sigmoid");
+            b.lfSigmoid = readArray(sh.at("lf_sigmoid"), "shared.lf_sigmoid (used)", {n}, rep);
+        }
         rep.push_back("params ok    engine-wide parameters identical across slots");
 
         // ---- slots
@@ -494,6 +504,19 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
             SlotData slot;
             slot.name = s.at("name").string();
             slot.overlay = s.at("overlay").isNull() ? std::string() : s.at("overlay").string();
+            // Optional (plugin bake): an explicit articulation id, for an entry that copies
+            // another's data ("copy_of"), such as the 602's CENTER (a copy of BOW).
+            const json::Value* idKey = s.find("articulation");
+            slot.id = idKey != nullptr && ! idKey->isNull() ? idKey->string() : articulationId(slot.name, slot.overlay);
+            if (slot.id.empty())
+                throw BakeError("slot " + slot.name + ": empty articulation id");
+            for (const auto& other : b.slots)
+                if (other.id == slot.id)
+                    throw BakeError("slots " + other.name + " and " + slot.name + " have the same articulation id '" +
+                                    slot.id + "'");
+            if (const json::Value* copyOf = s.find("copy_of"); copyOf != nullptr && ! copyOf->isNull())
+                rep.push_back("copy         slot " + slot.name + " (" + slot.id + "): a copy of " + copyOf->string() +
+                              "'s data");
             slot.position = s.at("position").number();
             slot.calibScalar = s.at("calib_scalar").number();
             // Optional (plugin bake): the level trim of this slot in dB, measured with
@@ -505,6 +528,57 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
                     throw BakeError("slot " + slot.name + ": level_trim.gain_db must be a finite value within 60 dB");
                 slot.levelTrim = std::pow(10.0, db / 20.0);
                 rep.push_back("level trim   slot " + slot.name + ": " + fmt("%+.2f dB", db));
+            }
+            // Optional (plugin bake, docs/TUNING.md): this articulation's excitation gain per
+            // one-third-octave band, written by tools/apply_tuning.py.
+            if (const auto* bands = s.find("excitation_band_gains_db"); bands != nullptr && ! bands->isNull())
+            {
+                const auto& edges = bands->at("band_edges_hz").array();
+                const auto& gains = bands->at("gains_db").array();
+                if (edges.size() != size_t(kExcitationBands + 1) || gains.size() != size_t(kExcitationBands))
+                    throw BakeError("slot " + slot.name + ": excitation_band_gains_db needs " +
+                                    std::to_string(kExcitationBands + 1) + " band edges and " +
+                                    std::to_string(kExcitationBands) + " gains");
+                for (int j = 0; j <= kExcitationBands; ++j)
+                    if (std::fabs(edges[size_t(j)].number() - excitationBandEdge(j)) > 0.5)
+                        throw BakeError("slot " + slot.name + ": excitation_band_gains_db band edges differ from the "
+                                        "engine's one-third-octave bands");
+                for (int j = 0; j < kExcitationBands; ++j)
+                {
+                    const double g = gains[size_t(j)].number();
+                    if (! std::isfinite(g) || std::fabs(g) > 60.0)
+                        throw BakeError("slot " + slot.name + ": excitation band gains must be finite, within 60 dB");
+                    slot.articulation.bandDb[size_t(j)] = g;
+                }
+                rep.push_back("band gains   slot " + slot.name + ": excitation gain per one-third-octave band");
+            }
+            // Optional (plugin bake, docs/TUNING.md): this articulation's onset shift per
+            // one-third-octave band (delay and speed), written by tools/apply_tuning.py.
+            if (const auto* shift = s.find("onset_shift"); shift != nullptr && ! shift->isNull())
+            {
+                const auto& edges = shift->at("band_edges_hz").array();
+                const auto& delays = shift->at("delay_ms").array();
+                const auto& speeds = shift->at("speed").array();
+                if (edges.size() != size_t(kExcitationBands + 1) || delays.size() != size_t(kExcitationBands) ||
+                    speeds.size() != size_t(kExcitationBands))
+                    throw BakeError("slot " + slot.name + ": onset_shift needs " + std::to_string(kExcitationBands + 1) +
+                                    " band edges, " + std::to_string(kExcitationBands) + " delays and " +
+                                    std::to_string(kExcitationBands) + " speeds");
+                for (int j = 0; j <= kExcitationBands; ++j)
+                    if (std::fabs(edges[size_t(j)].number() - excitationBandEdge(j)) > 0.5)
+                        throw BakeError("slot " + slot.name + ": onset_shift band edges differ from the engine's "
+                                        "one-third-octave bands");
+                for (int j = 0; j < kExcitationBands; ++j)
+                {
+                    const double d = delays[size_t(j)].number(), v = speeds[size_t(j)].number();
+                    if (! std::isfinite(d) || std::fabs(d) > 1000.0)
+                        throw BakeError("slot " + slot.name + ": onset delays must be finite, within 1000 ms");
+                    if (! std::isfinite(v) || v < 1.0 / 16.0 || v > 16.0)
+                        throw BakeError("slot " + slot.name + ": onset speeds must lie in 1/16 to 16");
+                    slot.articulation.delayMs[size_t(j)] = d;
+                    slot.articulation.speed[size_t(j)] = v;
+                }
+                rep.push_back("onset shift  slot " + slot.name + ": onset delay and speed per one-third-octave band");
             }
             if (s.at("bow_vp").isNull())
             {
@@ -540,6 +614,46 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
                         throw BakeError("slot " + slot.name + ": onset band index out of range");
             }
             slot.onsetTauS = s.at("onset_tau_s").number();
+            // Attack band gains (docs/TUNING.md): the onset gains in one-third-octave bands,
+            // each band the onset band that contains it, with the onset time. Python's time is
+            // bow_onset_tau_ms x 0.001 (line 435), so the whole milliseconds give it back exactly.
+            slot.articulation.attackMs = std::round(slot.onsetTauS * 1e9) / 1e6;
+            if (slot.onsetGainsActive)
+            {
+                if (b.bowOnsetBandEdges.size() != slot.onsetGains.size() + 1)
+                    throw BakeError("slot " + slot.name + ": the onset gains need " +
+                                    std::to_string(slot.onsetGains.size() + 1) + " band edges");
+                attackFromOnsetGains(slot.onsetGains.data(), static_cast<int>(slot.onsetGains.size()),
+                                     b.bowOnsetBandEdges.data(), slot.articulation.attackDb);
+            }
+            // Optional (plugin bake, docs/TUNING.md): the attack band gains and time set by
+            // tools/apply_tuning.py, instead of those from the onset gains.
+            if (const auto* attack = s.find("attack_band_gains"); attack != nullptr && ! attack->isNull())
+            {
+                const auto& edges = attack->at("band_edges_hz").array();
+                const auto& gains = attack->at("gains_db").array();
+                if (edges.size() != size_t(kExcitationBands + 1) || gains.size() != size_t(kExcitationBands))
+                    throw BakeError("slot " + slot.name + ": attack_band_gains needs " +
+                                    std::to_string(kExcitationBands + 1) + " band edges and " +
+                                    std::to_string(kExcitationBands) + " gains");
+                for (int j = 0; j <= kExcitationBands; ++j)
+                    if (std::fabs(edges[size_t(j)].number() - excitationBandEdge(j)) > 0.5)
+                        throw BakeError("slot " + slot.name + ": attack_band_gains band edges differ from the "
+                                        "engine's one-third-octave bands");
+                for (int j = 0; j < kExcitationBands; ++j)
+                {
+                    const double g = gains[size_t(j)].number();
+                    if (! std::isfinite(g) || std::fabs(g) > 60.0)
+                        throw BakeError("slot " + slot.name + ": attack band gains must be finite, within 60 dB");
+                    slot.articulation.attackDb[size_t(j)] = g;
+                }
+                const double ms = attack->at("time_ms").number();
+                if (! std::isfinite(ms) || ms < 1.0 || ms > 10000.0)
+                    throw BakeError("slot " + slot.name + ": attack_band_gains.time_ms must lie in 1 to 10000 ms");
+                slot.articulation.attackMs = ms;
+                slot.attackTuned = true;
+                rep.push_back("attack       slot " + slot.name + ": attack gain per one-third-octave band and time");
+            }
             slot.velGainPower = e.at("vel_gain_power").number();
             slot.edgeLevelBoost = e.at("edge_level_boost").number();
 
@@ -652,6 +766,68 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
     catch (const std::out_of_range& e)
     {
         throw BakeError(path + ": malformed bake (" + e.what() + ")");
+    }
+
+    // ---- plugin tuning (docs/TUNING.md): the bake's own values, then its tuning block
+    {
+        if (b.slots.size() > size_t(kMaxArticulations))
+            throw BakeError(path + ": more slots than the tuning model holds");
+        Tuning& u = b.untuned;
+        const EngineParams& ep = b.params;
+        CymbalTuning& c = u.cymbal;
+        c.tauRefMs = ep.tauRefMs;
+        c.wanderDepth = ep.wanderDepth;
+        c.wanderRateHz = ep.wanderRateHz;
+        c.edgeWanderDepth = ep.edgeWanderDepth;
+        c.edgeWanderRate = ep.edgeWanderRate;
+        c.mfDepth = ep.mfDepth;
+        c.mfTau = ep.mfTau;
+        c.mfMin = ep.mfMin;
+        c.mfMax = ep.mfMax;
+        c.mfWBow = ep.mfWBow;
+        c.mfWEdge = ep.mfWEdge;
+        c.mfWBell = ep.mfWBell;
+        c.mfLoHz = ep.mfLoHz;
+        c.mfHiHz = ep.mfHiHz;
+        c.lfDepth = ep.lfDepth;
+        c.lfTau = ep.lfTau;
+        c.lfMin = ep.lfMin;
+        c.lfMax = ep.lfMax;
+        c.lfCutoffHz = ep.lfCutoffHz;
+        c.lfWBow = ep.lfWBow;
+        c.lfWEdge = ep.lfWEdge;
+        c.lfWBell = ep.lfWBell;
+        c.lfWanderRateBoost = ep.lfWanderRateBoost;
+        c.edgeEnvWindowS = b.edgeNpz.onsetS;
+        u.numArticulations = static_cast<int>(b.slots.size());
+        for (size_t s = 0; s < b.slots.size(); ++s)
+        {
+            u.articulations[s].levelDb = 20.0 * std::log10(b.slots[s].levelTrim);
+            u.articulations[s].bandDb = b.slots[s].articulation.bandDb;
+            u.articulations[s].delayMs = b.slots[s].articulation.delayMs;
+            u.articulations[s].speed = b.slots[s].articulation.speed;
+            u.articulations[s].attackDb = b.slots[s].articulation.attackDb;
+            u.articulations[s].attackMs = b.slots[s].articulation.attackMs;
+        }
+        b.pythonT60S = b.t60S;
+        b.pythonLfoRateHz = b.lfoRateHz;
+        b.tuning = u;
+        try
+        {
+            if (const json::Value* block = root.find("tuning"); block != nullptr && ! block->isNull())
+            {
+                applyTuning(b, parseTuningBlock(*block, b, u));
+                b.hasTuningBlock = true;
+                rep.push_back("tuning       the bake's tuning block is applied");
+            }
+        }
+        catch (const std::exception& e)
+        {
+            throw BakeError(path + ": " + e.what());
+        }
+        for (const auto& s : b.slots)
+            if (! s.hasBowVp && ! (b.params.tauRefMs > 0.0))
+                throw BakeError(path + ": slot " + s.name + ": hertz_vel_scale needs tau_ref_ms > 0");
     }
 
     return bake;

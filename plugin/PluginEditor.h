@@ -7,6 +7,13 @@
 #include <functional>
 #include <memory>
 
+#if CYMBALIS_TUNING
+namespace cymbalis::tuning
+{
+class TuningWindow;
+}
+#endif
+
 namespace cymbalis::ui
 {
 
@@ -213,6 +220,12 @@ private:
     int draggingKnob = -1;
 
     DropdownBox presetBox, channelBox;
+#if CYMBALIS_TUNING
+    // Tuning build: the TUNING button (top right) opens and closes the Tuning window.
+    class TuningButton;
+    std::unique_ptr<TuningButton> tuningButton;
+    void toggleTuningWindow (bool open);
+#endif
     std::array<std::unique_ptr<NoteBox>, kNumSlots> noteBoxes;
     std::array<std::unique_ptr<StickBox>, kNumSlots> stickBoxes;
 
@@ -227,6 +240,9 @@ private:
     int shownPreset = -1;
     int shownLearn = -1;
     double learnStartMs = 0.0;
+#if CYMBALIS_TUNING
+    std::unique_ptr<tuning::TuningWindow> tuningWindow; // tuning build: TUNING button, or Cmd-click on the logo
+#endif
 };
 
 } // namespace cymbalis::ui

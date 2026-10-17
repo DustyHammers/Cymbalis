@@ -7,11 +7,17 @@
 //   Each strike's own effects apply only to the energy that strike added. The onset band
 //   gains and their tau, the edge onset ramp with its velocity tilt, and the
 //   velocity-dependent decay (wash_damp / vel_len_tilt) belong to the strike. What stays
-//   cymbal-wide, as in Python: the shared modal state (strikes add together), the MF
-//   accumulator's damping, the LF accumulator's wander-rate boost, and the wander itself.
+//   cymbal-wide, as in Python: the shared modal state (strikes add together), the LF and
+//   MF accumulators' scales, the LF accumulator's wander-rate boost, and the wander itself.
 //   For a single strike on its own this is the same computation as before. During a
-//   strike's contact phase the whole state is output without any factor, as in Python
-//   (PORT_MAP f.4), so for those samples older strikes' gains and ramps pause too.
+//   strike's contact phase the whole state is output with only the cymbal-wide LF/MF gain
+//   and wander phase (PORT_MAP f.4), so for those samples older strikes' gains and ramps
+//   pause.
+//
+//   The LF and MF accumulators decay continuously; their scales are evaluated at every
+//   control point and smoothed (one-pole, 20 ms). The LF scale applies in both its modes.
+//   Each mode's wander phase is integrated over time, so changes of the wander rate and
+//   depth never make it jump (PORT_MAP, "Live-engine decisions", decision 6).
 //
 // How it is computed:
 //
@@ -40,6 +46,17 @@
 //     with a band envelope, drive that strike's level from it for the onset window
 //     (PORT_MAP, "602 and Bettis"). For those the shared oscillator carries no decay and
 //     the control block is 1/7 or 1/8 of the envelope's 20 ms frame.
+//   - Energy cascade (docs/TUNING.md; PORT_MAP, plugin mechanism 10), off at amount 0: at
+//     every control point the ringing energy of each one-third-octave band is measured; a
+//     band above its threshold gives energy to the bands above it. The source modes are
+//     scaled down through the shared oscillator's gain (every strike in them alike); the
+//     energy arrives in the target modes as a component of its own (cascade component) that
+//     decays with each mode's T60. Both change over the block, with no step.
+//   - Loud-band damping (plugin mechanism 11), off at amount 0: from the same measurement,
+//     the modes of a band above its threshold decay faster, through the same oscillator gain.
+//   - Re-hit damping (plugin mechanism 12), off at amount 0: a strike scales the strikes
+//     already ringing down over a short ramp, a gain per component evaluated at the control
+//     points; the new strike's own energy is not scaled.
 //
 // Thread use: the constructor and prepare() allocate and must not run on the audio
 // thread. strike() and process() never allocate, lock or touch files.
@@ -62,6 +79,30 @@ public:
     static constexpr int kMaxControlBlock = 256;
     static constexpr int kMaxContacts = 64;   // overlapping contacts before the oldest is flushed
     static constexpr int kMaxComponents = 24; // strikes kept apart before merging
+
+    // Per-mode decay coefficients at one sample rate and control block: the decay rate
+    // -ln(1000) / T60, the undamped per-sample step (contact phase), the shared oscillator's
+    // per-sample and per-block steps (decay T60 / oscWash) and the contact's response H.
+    // prepare() computes them; the tuning build's live per-band ring lengths compute them
+    // off the audio thread (computeDecay) and hand them to setTuning.
+    struct DecaySet
+    {
+        double sampleRate = 0.0;
+        int controlBlock = 0;
+        std::vector<double> negLambda, stepR, stepI, oscR, oscI, PKr, PKi, Hr, Hi;
+        std::vector<float> H32r, H32i; // H in float, padded
+    };
+    // The control block at a rate (and the blocks per 20 ms frame with a band envelope).
+    static int controlBlockFor(const BakeData& b, double sampleRate, int* frameBlocks = nullptr) noexcept;
+    // The shared oscillator's wash_damp (0 with a band envelope).
+    static double oscillatorWash(const BakeData& b, const EngineParams& p) noexcept;
+    // The contact force at a rate, len x numModes. Allocates.
+    static void contactForce(const BakeData& b, const EngineParams& p, double sampleRate, std::vector<double>& force,
+                             int& len);
+    // Every coefficient from each mode's decay rate (negLambda). Allocates only when `out`
+    // does not have the bake's sizes.
+    static void computeDecay(const BakeData& b, double sampleRate, int K, double oscWash, const double* negLambda,
+                             const std::vector<double>& force, int contactLen, DecaySet& out);
 
     // Throws BakeError if the bake needs something this engine does not do.
     explicit FastEngine(std::shared_ptr<const BakeData> bake);
@@ -92,6 +133,20 @@ public:
     // Nothing rings: no ringing mode, no running contact, no strike energy.
     bool isSilent() const noexcept;
 
+#if CYMBALIS_TUNING
+    // Tuning build only (docs/TUNING.md): the live tuning values, every one but the ring
+    // length (which needs a new bake: applyTuning). Per-strike values apply from the next
+    // strike; the accumulators' values from the next control point, smoothed; wander depth
+    // and rate at the next control point without a phase jump; the output gain smoothed.
+    // modeGains holds every slot's per-mode excitation gains (slot s at s x numModes, from
+    // excitationModeGains), precomputed off the audio thread; with nullptr they are computed
+    // here from the band gains of `t`. A change of the per-band ring lengths takes `decay`,
+    // computed off the audio thread for this engine's rate and control block (else it is
+    // computed here), and applies it at the next control point: the ringing strikes decay
+    // at the new rates from there, with no step. Does not allocate.
+    void setTuning(const Tuning& t, const float* modeGains, const DecaySet* decay = nullptr) noexcept;
+#endif
+
     // Engine time of the next sample, in seconds since construction.
     double timeSeconds() const noexcept;
     uint64_t strikesApplied() const noexcept { return strikesApplied_; }
@@ -111,11 +166,12 @@ private:
     {
         bool used = false;
         bool pending = false;     // its contact is still running; Br/Bi hold the coupling
+        bool cascade = false;     // it holds the energy cascade's moved energy and nothing else
         uint64_t order = 0;       // creation order, for "oldest"
         int64_t contactStart = 0; // engine sample where its contact began
         double eps = 0.0;         // decay relative to the oscillator's (wash_damp - oscWash_), energy-weighted
         double tStrike = 0.0;     // engine time of the strike
-        bool onsetOn = false;     // onset band gains (its slot's overlay, not at the edge)
+        bool onsetOn = false;     // attack band gains (its articulation's; not blended to the edge)
         double onsetTau = 0.08, gm1Max = 0.0;
         bool rampOn = false;      // edge onset ramp
         double ptMax = 0.0;
@@ -129,6 +185,12 @@ private:
         double envVt = 0.0;         //   and the weight of the second
         double envScale = 1.0;      // 1 / peak of the interpolated envelope (line 549-550)
         int frameBlocksLeft = 0;    // control blocks until the in-frame decay restarts
+        double envWindow = 1.5;     // its envelope window (edge_band_env_onset_s)
+        bool frameRestart = true;   // its in-frame decay restarts every frame (else: none)
+        // Its articulation's onset shift at the strike (docs/TUNING.md): band j's envelope
+        // is read at (t - envDelay[j]) x envSpeed[j] (seconds). Only with envShift.
+        bool envShift = false;
+        std::array<float, kExcitationBands> envDelay {}, envSpeed {};
         // Per mode, padded to nPad_. The arrays the control loop streams are float.
         std::vector<float> Br, Bi;      // amplitude at the segment's reference time
         std::vector<float> D;           // its own decay since then, at the next control point
@@ -137,6 +199,12 @@ private:
         std::vector<float> rc0, rsl;    // ramp = clamp(rc0 + rsl * t, 0, 1): bf, (1 - bf) / pt (1, 0: none)
         std::vector<double> epsK;       // wash_damp - oscWash_ (merged components differ per mode)
         std::vector<double> pt;         // ramp peak time (0 = none)
+        // Re-hit damping: a later strike scales this one by rhoA + (rhoB - rhoA) x
+        // smoothstep((t - rhoT0) / rhoT) (rhoT0 < 0: from the start of the next free phase),
+        // rho0 and rho1 at the current block's ends. Off: 1.
+        bool rhoOn = false;
+        double rhoA = 1.0, rhoB = 1.0, rhoT0 = 0.0, rhoT = 0.01;
+        float rho0 = 1.0f, rho1 = 1.0f;
         // Envelope strikes only (allocated when the bake has an NPZ band envelope):
         std::vector<float> Er, Ei;      // |coupling| with this strike's phase
         std::vector<float> fd;          // in-frame decay at the next control point
@@ -151,12 +219,18 @@ private:
         int sa;         // ringing slot of the mode (its oscillator step)
         double dps;     // the component's own decay per sample
         double pl, pr, gm1, pt, te0, env0, env1;
+        double g0, g1;  // cymbal-wide LF/MF gain at the block's ends
     };
 
     void renderContactSample(float* left, float* right) noexcept;
+    void renderContactRotated(float* left, float* right) noexcept;
+    void endContactSample() noexcept;
     void renderFree(float* left, float* right, int n) noexcept;
     void beginControlBlock() noexcept;
     void sumComponents(double t0, double t1) noexcept;
+    template <bool Rho>
+    void sumBlock(double t0, double t1, int nS, int nO, int nR, int nE) noexcept;
+    double rhoAt(const Component& c, double t) const noexcept;
     void dropQuietModes() noexcept;
     void renderKinks(float* left, float* right, int j0, int m) noexcept;
     void addKink(const Component& c, int mode, double d0, double te0) noexcept;
@@ -168,7 +242,35 @@ private:
     Component& allocateComponent() noexcept;
     void mergeComponents(Component& into, Component& from, bool dropEnvelopes) noexcept;
     void setDecay(Component& c, int mode) noexcept;
-    void startFreePhase() noexcept;
+    void startFreePhase(bool sameGrid = false) noexcept;
+    void takeDecay(DecaySet& d) noexcept;
+    void applyDecay() noexcept;
+    double wanderRate(double t) const noexcept;
+    void smoothScalesTo(double t, double tTarget) noexcept;
+    void smoothScalesTo(double t) noexcept { smoothScalesTo(t, t); }
+    // Cymbal-wide LF x MF gain of one mode for the scales lf and mf (lines 914-919).
+    double modeGain(size_t mode, double lf, double mf) const noexcept
+    {
+        return (1.0 + (lf - 1.0) * lfW_[mode]) * (1.0 + (mf - 1.0) * mfW_[mode]);
+    }
+    void cymbalWideAtStrike(double t) noexcept;
+    void computeLfWeights() noexcept;
+    void computeMfWeights() noexcept;
+    void computeWanderTables() noexcept;
+    void computeHertzRef() noexcept;
+    void computeRemapTable() noexcept;
+    void computeAttack(size_t slot) noexcept;
+    void setMechanisms(const CymbalTuning& c) noexcept;
+    void updateMechanisms() noexcept;
+    void computeBandRef() noexcept;
+    void bandBlock() noexcept;
+    void startRehit(const Component& struck, int slot, double velocity) noexcept;
+    Component* cascadeComponent() noexcept;
+    void commitBlockGains() noexcept;
+    void clearBlockGains() noexcept;
+    void renormOscillators() noexcept;
+    void applyPendingWander(double t) noexcept;
+    void updateGainBounds() noexcept;
     void velocityParticipation(const VelocityTable& t, double v, double* out) const noexcept;
     void hertzVelocity(double velocity, double* out) const noexcept;
     void npzCoupling(double velocity, double* out) const noexcept;
@@ -178,6 +280,35 @@ private:
 
     std::shared_ptr<const BakeData> bake_;
     const int n_;
+
+    // Values the plugin tuning can change (docs/TUNING.md): copies of the bake's, which the
+    // engine reads instead of the bake. Only the tuning build changes them (setTuning).
+    EngineParams params_;
+    std::vector<double> slotTrim_;              // per slot: level trim (gain)
+    std::vector<ArticulationTuning> slotCurve_; // per slot: velocity curve
+    // Per slot: excitation gain of every mode (slot s at s x n_, from its band gains), and
+    // whether any of them is not 1.
+    std::vector<float> excGain_;
+    std::vector<uint8_t> excGainOn_;
+    // Each mode's one-third-octave band (excitationBand), and per slot whether its onset
+    // shift (slotCurve_[s].delayMs, .speed) is not the identity.
+    std::vector<uint8_t> modeBand_;
+    std::vector<uint8_t> onsetShiftOn_;
+    // Per slot: its attack band gains (docs/TUNING.md) as gain - 1 per band (0 within 1e-3 of
+    // 0 dB; slot s at s x kExcitationBands), the largest |gain - 1| over the bands that have
+    // modes, whether any is not 0, and the attack time constant (s).
+    std::vector<double> attackGm1_, attackGm1Max_, attackTauS_;
+    std::vector<uint8_t> attackOn_;
+    std::array<bool, kExcitationBands> bandHasModes_ {};
+    // Brightness vs velocity: ln(f / 1 kHz) per mode.
+    std::vector<double> logF1k_;
+    double remapExp_ = 0.5;    // NPZ velocity remap exponent (0.5: sqrt, line 1049)
+    double envWindowS_ = 1.5;  // NPZ band envelope window after an edge strike
+    bool frameRestart_ = true; // the in-frame decay restarts every 20 ms
+    double outGain_ = 1.0, outGainTarget_ = 1.0, outGainCoef_ = 1.0; // output gain, smoothed per sample
+    // Wander changes from setTuning wait for the next control point.
+    bool wanderPending_ = false;
+    double pendingWanderDepth_ = 0.0, pendingWanderRateHz_ = 0.0;
     int nPad_ = 0; // n_ rounded up to the kernel's mode group
     double sr_ = 0.0;
     int K_ = 32;   // control block, samples
@@ -196,7 +327,47 @@ private:
     std::vector<double> oscR_, oscI_;   // shared oscillator: per-sample step (decay T60 / oscWash_)
     std::vector<double> PKr_, PKi_;     // shared oscillator: step over one control block
     std::vector<double> negLambda_;     // -ln(1000) / T60 per mode (undamped decay rate, 1/s)
+    // Per-band ring lengths (docs/TUNING.md): the band factors negLambda_ holds, the ring
+    // length the engine was built with, and new coefficients waiting for a control point.
+    std::array<double, kExcitationBands> ringBandNow_ = kUnitBands;
+    double ringLengthBuilt_ = 1.0;
+    DecaySet pendDecay_;
+    bool decayPending_ = false;
     double oscWash_ = 1.0;              // wash_damp of the shared oscillator's decay (the smallest a strike has)
+
+    // Energy cascade (docs/TUNING.md). cascOn_: amount > 0 (otherwise none of it runs).
+    bool cascOn_ = false;
+    double cascAmount_ = 0.0, cascThrDb_ = -12.0, cascSpeedS_ = 0.1, cascReleaseS_ = 0.15;
+    int cascSpread_ = 2, cascLo_ = 0, cascHi_ = kExcitationBands - 1;
+    double cascAtk_ = 0.0, cascRel_ = 0.0;   // activation one-pole coefficients per control block
+    int cascSlot_ = 0;                       // the BOW articulation (the threshold's reference)
+    int cascComp_ = -1;                      // the cascade component (index), -1: none
+    std::array<double, kExcitationBands> bandRef_ {};  // band energy of a velocity-1 BOW strike (also the damping's reference)
+    std::array<double, kExcitationBands> cascThr_ {};  // threshold energy per band
+    std::array<double, kExcitationBands> cascAct_ {};  // activation per band (0 .. 1)
+    std::vector<float> cascW_;               // per mode: its share weight of the moved energy (exc_norm)
+    std::vector<double> modeE_;              // per ringing mode: its energy at this block's end (scratch)
+
+    // Loud-band damping (docs/TUNING.md). dampOn_: amount > 0.
+    bool dampOn_ = false;
+    double dampAmount_ = 0.0, dampThrDb_ = -12.0, dampTilt_ = 0.0, dampCoef_ = 0.0;
+    std::array<double, kExcitationBands> dampThr_ {};  // threshold energy per band
+    std::array<double, kExcitationBands> dampX_ {};    // how far above it (0 .. 1), smoothed
+    std::array<double, kExcitationBands> dampTiltW_ {}; // tilt weight per band (0 .. 2)
+
+    // Re-hit damping (docs/TUNING.md). rehitOn_: amount > 0. rhoAny_: some component has a
+    // ramp (the control loop then applies the components' gains).
+    bool rehitOn_ = false, rhoAny_ = false;
+    double rehitAmount_ = 0.0, rehitTimeS_ = 0.01;
+    std::array<double, kMaxArticulations> rehitW_ {};
+    // Gains of the ringing modes through the shared oscillator (mode order): this block's,
+    // reaching its value at the block's end, and the product of the earlier blocks' since the
+    // segment started (with renormOscillators()' factors); and additions to the cascade
+    // component's amplitudes at this block's end. The next control point puts them into the state (commitBlockGains); a strike
+    // inside the block takes the part already rendered.
+    std::vector<float> blkG_, injR_, injI_;
+    std::vector<double> oscG_;
+    bool blkGainOn_ = false, oscGainOn_ = false, injOn_ = false;
     std::vector<double> hertzRef_;      // sqrt(1 + (pi f tau_ref)^2) per mode (hertz_vel_scale)
 
     // NPZ band envelope (bakes that have one): the shared oscillator has no decay
@@ -205,7 +376,8 @@ private:
     bool envBake_ = false;
     int frameBlocks_ = 0;
     std::vector<int> bandStart_, bandEnd_; // mode range of each envelope band
-    std::vector<double> sqrtVelsNorm_;     // sqrt of the NPZ velocities normalised to 0..1 (line 1049)
+    std::vector<uint8_t> npzShiftBand_;    // the onset-shift band of each envelope band
+    std::vector<double> remapTable_;       // the NPZ velocities normalised to 0..1, ^ remapExp_ (line 1049)
     std::vector<double> bandVal0_, bandVal1_; // per band, scratch for one block
 
     // Contact force at the host rate (contactLen_ x numModes, DC-normalised per mode) and
@@ -230,14 +402,51 @@ private:
     int lastSlot_ = -1;
 
     // Cymbal-wide state that Python keeps on the engine object.
-    double wanderScale_ = 1.0, wanderRateScale_ = 1.0;
-    double lfS_ = 0.0, lfTLast_ = 0.0, lfScaleNow_ = 1.0;
-    double mfS_ = 0.0, mfTLast_ = 0.0, mfScaleNow_ = 1.0;
+    double wanderScale_ = 1.0;   // wander depth scale set by the latest strike (edge_wander_depth)
+    double edgeRateScale_ = 1.0; // wander rate scale set by the latest strike (edge_wander_rate)
     std::vector<double> scratchBandScale_;
 
+    // LF and MF accumulators (render() lines 652-688), decaying continuously:
+    // S(t) = s0 exp(-(t - t0) / tau), t0 the latest strike. Its scale follows the part
+    // without that strike's own contribution (`latest`), which enters at the next strike, as
+    // in Python. `started` is the explicit "there was a strike" flag (Python tests
+    // t_last > 0, f.8).
+    struct Accumulator
+    {
+        double s0 = 0.0, latest = 0.0, t0 = 0.0;
+        bool started = false;
+        double at(double t, double tau) const noexcept;       // all of S
+        double forScale(double t, double tau) const noexcept; // S without the latest strike
+        void add(double t, double tau, double amount) noexcept;
+    };
+    Accumulator lfAcc_, mfAcc_;
+    bool lfOn_ = false, mfOn_ = false; // lf_sens_depth > 0, mf_sens_depth > 0
+    std::vector<double> lfW_, mfW_;    // per mode: LF weight (1 - sigmoid), MF band-pass weight; 0 when off
+    // Their scales after the 20 ms smoothing, at time smTime_, and at the current control
+    // block's ends (the gains are interpolated between them).
+    double lfSm_ = 1.0, mfSm_ = 1.0, smTime_ = 0.0;
+    double blkT0_ = 0.0, blkT1_ = 0.0, blkLf0_ = 1.0, blkLf1_ = 1.0, blkMf0_ = 1.0, blkMf1_ = 1.0;
+
+    // Wander, integrated over time. The LFO phase of mode k is 2 pi lfoUnit_k tau + lfoPhase_k,
+    // where tau, the LFO time, rises at wander_rate_hz x the wander rate scale: tauRef_ at
+    // tauRefTime_, then tauRate_ per second. Its wander phase W changes by
+    // wC_k (wanderScale_ / tauRate_) times the change of cos(LFO phase), which is line 867
+    // while the rate and depth stay constant. W_ also holds a mode's phase when wander is off.
+    bool wanderOn_ = false;
+    double tauRef_ = 0.0, tauRefTime_ = 0.0, tauRate_ = 1.0;
+    double blkRate_ = -1.0;   // rate scale of the current control block (-1: none yet)
+    double maxDriftDepth_ = 0.0; // largest |drift x wander_depth| of a mode with wander
+    std::vector<double> lfoUnit_; // per mode: LFO rate / wander_rate_hz (uniform 0.7..1.3, line 210)
+    std::vector<double> wC_;  // per mode: -drift x wander_depth / lfoUnit (0: no wander)
+    std::vector<double> W_, cW_; // per mode: wander phase at the latest strike, and cos of its LFO phase then
+    // Contact phase: the cymbal-wide gain x exp(i W) of each mode at the latest strike,
+    // times each pick (off when the bake has no LF/MF accumulator and no wander).
+    bool contactRot_ = false;
+    std::vector<double> cuLr_, cuLi_, cuRr_, cuRi_;
+
     // Segment state.
-    bool segMfOn_ = false;
     double segThreshold_ = 0.0;
+    double segGm1Max_ = 0.0; // largest onset gain - 1 of the segment's components
     bool wanderSmall_ = true; // the wander phase moves < 0.05 rad per block for every mode
 
     // Ringing modes of the free phase, compacted (nAct_ used, nPad_ allocated).
@@ -248,10 +457,10 @@ private:
     std::vector<float> yr_, yi_, sr32_, si32_, ar_, ai_, dar_, dai_, pl32_, pr32_;
     // double control-rate state per active mode
     std::vector<double> Yr_, Yi_;   // oscillator at the next control point (wander included)
-    std::vector<double> cr_, ci_;   // LFO phasor exp(i (2 pi lr t + lp)) at the next control point
-    std::vector<double> qr_, qi_;   // LFO step over one control block
-    std::vector<double> phiW_;      // wander phase at the next control point
-    std::vector<double> negDlr_, mf_, gBound_;
+    std::vector<double> cr_, ci_;   // LFO phasor at the next control point
+    std::vector<double> qr_, qi_;   // LFO step over one control block (at blkRate_)
+    std::vector<double> phiW0_, phiW_; // wander phase at the current block's start and at the next control point
+    std::vector<double> gBound_;    // bound of the mode's output gains (dropping)
     // the components' sum at the two ends of the block, per mode (mode order, nPad_)
     std::vector<float> A0r_, A0i_, A1r_, A1i_;
     std::vector<float> dropW_, dropE_; // dropQuietModes(): per-mode weight and energy (mode order)

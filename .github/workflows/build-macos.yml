@@ -22,6 +22,10 @@ env:
   AU_TYPE: aumu
   AU_SUBTYPE: Cymb
   AU_MANUFACTURER: Dham
+  # The tuning build (CYMBALIS_TUNING, docs/TUNING.md): its own identity
+  TUNING_TARGET: CymbalisTuning
+  TUNING_PRODUCT: Cymbalis Tuning
+  TUNING_AU_SUBTYPE: CymT
 
 jobs:
   build:
@@ -63,7 +67,21 @@ jobs:
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
-        run: cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU CymbalisSnapshot CymbalisUiTest cymbalis_bench cymbalis_trims --parallel
+        run: cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU CymbalisUiTest cymbalis_bench cymbalis_trims --parallel
+
+      # Cymbalis Tuning: the same plugin with the hidden tuning window, installed next to it.
+      - name: Configure the tuning build
+        run: >
+          cmake -B build-tuning -G Ninja
+          -DCMAKE_BUILD_TYPE=${BUILD_TYPE}
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          -DCYMBALIS_TUNING=ON
+          -DFETCHCONTENT_BASE_DIR="${GITHUB_WORKSPACE}/.deps"
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build the tuning build
+        run: cmake --build build-tuning --target ${TUNING_TARGET}_VST3 ${TUNING_TARGET}_AU --parallel
 
       # CPU cost of the real-time engine on this runner (Apple Silicon), every slot playing.
       # Printed to the log and the job summary only; nothing is uploaded.
@@ -88,94 +106,112 @@ jobs:
       - name: Locate bundles
         run: |
           ART="build/${PRODUCT}_artefacts/${BUILD_TYPE}"
+          TART="build-tuning/${TUNING_TARGET}_artefacts/${BUILD_TYPE}"
           echo "VST3=$ART/VST3/${PRODUCT}.vst3" >> "$GITHUB_ENV"
           echo "AU=$ART/AU/${PRODUCT}.component" >> "$GITHUB_ENV"
-          ls -la "$ART/VST3" "$ART/AU"
+          echo "TVST3=$TART/VST3/${TUNING_PRODUCT}.vst3" >> "$GITHUB_ENV"
+          echo "TAU=$TART/AU/${TUNING_PRODUCT}.component" >> "$GITHUB_ENV"
+          ls -la "$ART/VST3" "$ART/AU" "$TART/VST3" "$TART/AU"
 
       - name: Check both architectures are present
         run: |
-          for B in "$VST3" "$AU"; do
-            BIN="$B/Contents/MacOS/${PRODUCT}"
+          check() {
+            local BIN="$1/Contents/MacOS/$2"
             ARCHS=$(lipo -archs "$BIN")
             echo "$BIN -> $ARCHS"
             [[ "$ARCHS" == *arm64* && "$ARCHS" == *x86_64* ]] || { echo "::error::$BIN is not universal"; exit 1; }
-          done
+          }
+          check "$VST3" "$PRODUCT"; check "$AU" "$PRODUCT"
+          check "$TVST3" "$TUNING_PRODUCT"; check "$TAU" "$TUNING_PRODUCT"
 
       - name: Check x86_64 slice has no AVX instructions
         run: |
-          COUNT=$(otool -arch x86_64 -tv "$VST3/Contents/MacOS/${PRODUCT}" | grep -cE '%[yz]mm' || true)
-          echo "AVX/AVX-512 register uses in x86_64 slice: $COUNT"
-          [ "$COUNT" -eq 0 ] || { echo "::error::AVX found in x86_64 slice (Rosetta 2 crash risk)"; exit 1; }
+          for BIN in "$VST3/Contents/MacOS/${PRODUCT}" "$TVST3/Contents/MacOS/${TUNING_PRODUCT}"; do
+            COUNT=$(otool -arch x86_64 -tv "$BIN" | grep -cE '%[yz]mm' || true)
+            echo "AVX/AVX-512 register uses in the x86_64 slice of $BIN: $COUNT"
+            [ "$COUNT" -eq 0 ] || { echo "::error::AVX found in x86_64 slice (Rosetta 2 crash risk)"; exit 1; }
+          done
 
       - name: Ad-hoc code sign
         run: |
-          for B in "$VST3" "$AU"; do
+          for B in "$VST3" "$AU" "$TVST3" "$TAU"; do
             codesign --force --deep --sign - "$B"
             codesign --verify --deep --strict --verbose=2 "$B"
           done
 
-      - name: Validate VST3 (pluginval)
+      - name: Validate VST3 (pluginval, both builds)
         run: |
           curl -sSL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
           unzip -q pluginval.zip
-          ./pluginval.app/Contents/MacOS/pluginval \
-            --strictness-level 5 \
-            --validate-in-process \
-            --skip-gui-tests \
-            --timeout-ms 300000 \
-            --validate "$VST3"
+          for B in "$VST3" "$TVST3"; do
+            echo "--- $B ---"
+            ./pluginval.app/Contents/MacOS/pluginval \
+              --strictness-level 5 \
+              --validate-in-process \
+              --skip-gui-tests \
+              --timeout-ms 300000 \
+              --validate "$B"
+          done
 
-      - name: Validate AU (auval, native + Rosetta)
+      - name: Validate AU (auval, both builds, native + Rosetta)
         run: |
           mkdir -p ~/Library/Audio/Plug-Ins/Components
-          cp -R "$AU" ~/Library/Audio/Plug-Ins/Components/
+          cp -R "$AU" "$TAU" ~/Library/Audio/Plug-Ins/Components/
           killall -9 AudioComponentRegistrar 2>/dev/null || true
           sleep 2
           auval -a | grep -i "$AU_MANUFACTURER" || true
-          auval -strict -v $AU_TYPE $AU_SUBTYPE $AU_MANUFACTURER
-          if arch -x86_64 /usr/bin/true 2>/dev/null; then
-            echo "--- x86_64 slice under Rosetta ---"
-            arch -x86_64 auval -strict -v $AU_TYPE $AU_SUBTYPE $AU_MANUFACTURER
-          else
-            echo "Rosetta not installed on this runner; skipping x86_64 auval"
-          fi
+          for SUB in $AU_SUBTYPE $TUNING_AU_SUBTYPE; do
+            echo "--- $AU_TYPE $SUB $AU_MANUFACTURER ---"
+            auval -strict -v $AU_TYPE $SUB $AU_MANUFACTURER
+            if arch -x86_64 /usr/bin/true 2>/dev/null; then
+              echo "--- x86_64 slice under Rosetta ---"
+              arch -x86_64 auval -strict -v $AU_TYPE $SUB $AU_MANUFACTURER
+            else
+              echo "Rosetta not installed on this runner; skipping x86_64 auval"
+            fi
+          done
 
       # Real mouse events through the AU and VST3 wrappers: change the MIDI channel, the slot
-      # notes (drag, menu, note list), a stick and the preset in the editor, and check the
-      # plugin's saved state (tools/cymbalis_uitest).
+      # notes (drag, menu, note list), a stick, the preset and a stick of that preset in the
+      # editor, and check the plugin's saved state (tools/cymbalis_uitest).
       - name: Editor mouse test (AU and VST3)
         timeout-minutes: 5
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
-          STEPS="channel drag reset none list stick preset"
+          STEPS="channel drag reset none list stick preset shoulder"
           echo "--- VST3 ---"
           "$UITEST" "$PWD/$VST3" $STEPS
           echo "--- AU ---"
           "$UITEST" AU $STEPS
+
+      # Cymbalis Tuning: click TUNING in a real AU and VST3 host; the Tuning window must be
+      # visible, in front of the editor and attached to it, then hidden after a second click.
+      - name: Tuning window test (AU and VST3, tuning build)
+        timeout-minutes: 5
+        run: |
+          UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
+          echo "--- VST3 ---"
+          "$UITEST" "$PWD/$TVST3" tuning tuningclose
+          echo "--- AU ---"
+          "$UITEST" "AU:${TUNING_AU_SUBTYPE}" tuning tuningclose
 
       - name: Package
         run: |
           SHA=$(git rev-parse --short HEAD)
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then TAG="${GITHUB_REF_NAME}"; else TAG="$SHA"; fi
           mkdir -p dist
-          ditto -c -k --keepParent "$VST3" "dist/${PRODUCT}-VST3-macOS-${TAG}.zip"
-          ditto -c -k --keepParent "$AU"   "dist/${PRODUCT}-AU-macOS-${TAG}.zip"
+          ditto -c -k --keepParent "$VST3"  "dist/${PRODUCT}-VST3-macOS-${TAG}.zip"
+          ditto -c -k --keepParent "$AU"    "dist/${PRODUCT}-AU-macOS-${TAG}.zip"
+          ditto -c -k --keepParent "$TVST3" "dist/${TUNING_TARGET}-VST3-macOS-${TAG}.zip"
+          ditto -c -k --keepParent "$TAU"   "dist/${TUNING_TARGET}-AU-macOS-${TAG}.zip"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
-          ls -la dist
-
-      # PNG snapshots of the editor at its largest and smallest sizes, next to the zips.
-      - name: Editor snapshots
-        run: |
-          "build/${PRODUCT}Snapshot_artefacts/${BUILD_TYPE}/${PRODUCT}Snapshot" dist "${PRODUCT}-editor-${TAG}"
           ls -la dist
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.PRODUCT }}-macOS-${{ env.TAG }}
-          path: |
-            dist/*.zip
-            dist/*.png
+          path: dist/*.zip
           if-no-files-found: error
           retention-days: 30
 
