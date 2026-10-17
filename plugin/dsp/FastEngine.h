@@ -69,6 +69,30 @@ public:
     static constexpr int kMaxContacts = 64;   // overlapping contacts before the oldest is flushed
     static constexpr int kMaxComponents = 24; // strikes kept apart before merging
 
+    // Per-mode decay coefficients at one sample rate and control block: the decay rate
+    // -ln(1000) / T60, the undamped per-sample step (contact phase), the shared oscillator's
+    // per-sample and per-block steps (decay T60 / oscWash) and the contact's response H.
+    // prepare() computes them; the tuning build's live per-band ring lengths compute them
+    // off the audio thread (computeDecay) and hand them to setTuning.
+    struct DecaySet
+    {
+        double sampleRate = 0.0;
+        int controlBlock = 0;
+        std::vector<double> negLambda, stepR, stepI, oscR, oscI, PKr, PKi, Hr, Hi;
+        std::vector<float> H32r, H32i; // H in float, padded
+    };
+    // The control block at a rate (and the blocks per 20 ms frame with a band envelope).
+    static int controlBlockFor(const BakeData& b, double sampleRate, int* frameBlocks = nullptr) noexcept;
+    // The shared oscillator's wash_damp (0 with a band envelope).
+    static double oscillatorWash(const BakeData& b, const EngineParams& p) noexcept;
+    // The contact force at a rate, len x numModes. Allocates.
+    static void contactForce(const BakeData& b, const EngineParams& p, double sampleRate, std::vector<double>& force,
+                             int& len);
+    // Every coefficient from each mode's decay rate (negLambda). Allocates only when `out`
+    // does not have the bake's sizes.
+    static void computeDecay(const BakeData& b, double sampleRate, int K, double oscWash, const double* negLambda,
+                             const std::vector<double>& force, int contactLen, DecaySet& out);
+
     // Throws BakeError if the bake needs something this engine does not do.
     explicit FastEngine(std::shared_ptr<const BakeData> bake);
 
@@ -105,8 +129,11 @@ public:
     // and rate at the next control point without a phase jump; the output gain smoothed.
     // modeGains holds every slot's per-mode excitation gains (slot s at s x numModes, from
     // excitationModeGains), precomputed off the audio thread; with nullptr they are computed
-    // here from the band gains of `t`. Does not allocate.
-    void setTuning(const Tuning& t, const float* modeGains) noexcept;
+    // here from the band gains of `t`. A change of the per-band ring lengths takes `decay`,
+    // computed off the audio thread for this engine's rate and control block (else it is
+    // computed here), and applies it at the next control point: the ringing strikes decay
+    // at the new rates from there, with no step. Does not allocate.
+    void setTuning(const Tuning& t, const float* modeGains, const DecaySet* decay = nullptr) noexcept;
 #endif
 
     // Engine time of the next sample, in seconds since construction.
@@ -194,7 +221,9 @@ private:
     Component& allocateComponent() noexcept;
     void mergeComponents(Component& into, Component& from, bool dropEnvelopes) noexcept;
     void setDecay(Component& c, int mode) noexcept;
-    void startFreePhase() noexcept;
+    void startFreePhase(bool sameGrid = false) noexcept;
+    void takeDecay(DecaySet& d) noexcept;
+    void applyDecay() noexcept;
     double wanderRate(double t) const noexcept;
     void smoothScalesTo(double t, double tTarget) noexcept;
     void smoothScalesTo(double t) noexcept { smoothScalesTo(t, t); }
@@ -259,6 +288,12 @@ private:
     std::vector<double> oscR_, oscI_;   // shared oscillator: per-sample step (decay T60 / oscWash_)
     std::vector<double> PKr_, PKi_;     // shared oscillator: step over one control block
     std::vector<double> negLambda_;     // -ln(1000) / T60 per mode (undamped decay rate, 1/s)
+    // Per-band ring lengths (docs/TUNING.md): the band factors negLambda_ holds, the ring
+    // length the engine was built with, and new coefficients waiting for a control point.
+    std::array<double, kExcitationBands> ringBandNow_ = kUnitBands;
+    double ringLengthBuilt_ = 1.0;
+    DecaySet pendDecay_;
+    bool decayPending_ = false;
     double oscWash_ = 1.0;              // wash_damp of the shared oscillator's decay (the smallest a strike has)
     std::vector<double> hertzRef_;      // sqrt(1 + (pi f tau_ref)^2) per mode (hertz_vel_scale)
 

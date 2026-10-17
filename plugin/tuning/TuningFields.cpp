@@ -35,27 +35,44 @@ bool applies (Needs needs, const BakeData& b)
     return false;
 }
 
+juce::String scopeNames (Scope scope, const BakeData& b)
+{
+    juce::StringArray names;
+    for (const auto& s : b.slots)
+    {
+        const double x = s.position;
+        const bool in = scope == Scope::edge   ? x <= 0.25
+                        : scope == Scope::bow  ? x > 0.25 && x < 0.75
+                        : scope == Scope::bell ? x >= 0.75
+                        : scope == Scope::hertz ? x > 0.25 && ! s.hasBowVp
+                                                : false;
+        if (in)
+            names.add (juce::String (s.id).toUpperCase());
+    }
+    return names.joinIntoString (", ");
+}
+
 const std::vector<Field>& cymbalFields()
 {
     using C = CymbalTuning;
     static const std::vector<Field> fields {
         { "output_gain_db", "Output gain", "dB", Group::cymbal, Needs::always, -24.0, 12.0, 1, &C::outputGainDb, false },
-        { "edge_velocity_remap_exponent", "Edge capture curve", "", Group::cymbal, Needs::npzEdge, 0.25, 2.0, 2, &C::edgeRemapExponent, false },
-        { "tau_ref_ms", "Bow brightness vs velocity (tau_ref)", "ms", Group::cymbal, Needs::noVelocityTables, 0.05, 8.0, 2, &C::tauRefMs, false },
+        { "edge_velocity_remap_exponent", "Edge capture curve", "", Group::cymbal, Needs::npzEdge, 0.25, 2.0, 2, &C::edgeRemapExponent, false, Scope::edge },
+        { "tau_ref_ms", "Bow brightness vs velocity (tau_ref)", "ms", Group::cymbal, Needs::noVelocityTables, 0.05, 8.0, 2, &C::tauRefMs, false, Scope::hertz },
         { "ring_length", "Ring length (x t60_scale)", "x", Group::cymbal, Needs::always, 0.5, 2.0, 2, &C::ringLength, true },
 
         { "wander_depth", "Wander depth", "", Group::wander, Needs::always, 0.0, 4.0, 2, &C::wanderDepth, false },
         { "wander_rate_hz", "Wander rate", "Hz", Group::wander, Needs::always, 0.05, 10.0, 2, &C::wanderRateHz, false },
-        { "edge_wander_depth", "Edge wander depth", "", Group::wander, Needs::always, 0.0, 4.0, 2, &C::edgeWanderDepth, false },
-        { "edge_wander_rate", "Edge wander rate", "", Group::wander, Needs::always, 0.0, 4.0, 2, &C::edgeWanderRate, false },
+        { "edge_wander_depth", "Edge wander depth", "", Group::wander, Needs::always, 0.0, 4.0, 2, &C::edgeWanderDepth, false, Scope::edge },
+        { "edge_wander_rate", "Edge wander rate", "", Group::wander, Needs::always, 0.0, 4.0, 2, &C::edgeWanderRate, false, Scope::edge },
 
         { "mf_sens_depth", "Depth", "", Group::mf, Needs::always, 0.0, 2.0, 3, &C::mfDepth, false },
         { "mf_sens_tau", "Tau", "s", Group::mf, Needs::always, 0.05, 20.0, 2, &C::mfTau, false },
         { "mf_min_scale", "Min scale", "", Group::mf, Needs::always, 0.0, 1.0, 2, &C::mfMin, false },
         { "mf_max_scale", "Max scale (above 1 = boost)", "", Group::mf, Needs::always, 0.1, 3.0, 2, &C::mfMax, false },
-        { "mf_bow_weight", "Bow weight", "", Group::mf, Needs::always, 0.0, 2.0, 2, &C::mfWBow, false },
-        { "mf_edge_weight", "Edge weight", "", Group::mf, Needs::always, 0.0, 2.0, 2, &C::mfWEdge, false },
-        { "mf_bell_weight", "Bell weight", "", Group::mf, Needs::always, 0.0, 2.0, 2, &C::mfWBell, false },
+        { "mf_bow_weight", "Bow weight", "", Group::mf, Needs::always, 0.0, 2.0, 2, &C::mfWBow, false, Scope::bow },
+        { "mf_edge_weight", "Edge weight", "", Group::mf, Needs::always, 0.0, 2.0, 2, &C::mfWEdge, false, Scope::edge },
+        { "mf_bell_weight", "Bell weight", "", Group::mf, Needs::always, 0.0, 2.0, 2, &C::mfWBell, false, Scope::bell },
         { "mf_lo_hz", "Low edge", "Hz", Group::mf, Needs::always, 50.0, 8000.0, 0, &C::mfLoHz, false },
         { "mf_hi_hz", "High edge", "Hz", Group::mf, Needs::always, 200.0, 16000.0, 0, &C::mfHiHz, false },
 
@@ -64,12 +81,12 @@ const std::vector<Field>& cymbalFields()
         { "lf_min_scale", "Min scale", "", Group::lf, Needs::always, 0.0, 1.0, 2, &C::lfMin, false },
         { "lf_max_scale", "Max scale (above 1 = boost)", "", Group::lf, Needs::always, 0.1, 3.0, 2, &C::lfMax, false },
         { "lf_cutoff_hz", "Cutoff", "Hz", Group::lf, Needs::always, 100.0, 8000.0, 0, &C::lfCutoffHz, false },
-        { "lf_bow_weight", "Bow weight", "", Group::lf, Needs::always, 0.0, 2.0, 2, &C::lfWBow, false },
-        { "lf_edge_weight", "Edge weight", "", Group::lf, Needs::always, 0.0, 2.0, 2, &C::lfWEdge, false },
-        { "lf_bell_weight", "Bell weight", "", Group::lf, Needs::always, 0.0, 2.0, 2, &C::lfWBell, false },
+        { "lf_bow_weight", "Bow weight", "", Group::lf, Needs::always, 0.0, 2.0, 2, &C::lfWBow, false, Scope::bow },
+        { "lf_edge_weight", "Edge weight", "", Group::lf, Needs::always, 0.0, 2.0, 2, &C::lfWEdge, false, Scope::edge },
+        { "lf_bell_weight", "Bell weight", "", Group::lf, Needs::always, 0.0, 2.0, 2, &C::lfWBell, false, Scope::bell },
         { "lf_wander_rate_boost", "Wander-rate boost", "", Group::lf, Needs::always, 0.0, 2.0, 2, &C::lfWanderRateBoost, false },
 
-        { "edge_band_env_onset_s", "Window", "s", Group::edgeEnvelope, Needs::envelope, 0.1, 30.0, 2, &C::edgeEnvWindowS, false },
+        { "edge_band_env_onset_s", "Window", "s", Group::edgeEnvelope, Needs::envelope, 0.1, 30.0, 2, &C::edgeEnvWindowS, false, Scope::edge },
     };
     return fields;
 }
@@ -88,15 +105,42 @@ const std::vector<ArticulationField>& articulationFields()
 const std::vector<BandField>& bandFields()
 {
     static const std::vector<BandField> fields {
-        { kBandGainsKey, "GAIN", "dB", kBandGainMinDb, kBandGainMaxDb, 0.0, 1, &ArticulationTuning::bandDb, false },
-        { kOnsetDelayKey, "ONSET DELAY", "ms", kOnsetDelayMinMs, kOnsetDelayMaxMs, 0.0, 1, &ArticulationTuning::delayMs, false },
-        { kOnsetSpeedKey, "ONSET SPEED", "x", kOnsetSpeedMin, kOnsetSpeedMax, 1.0, 2, &ArticulationTuning::speed, true },
+        { { kBandGainsKey, "GAIN", "dB", kBandGainMinDb, kBandGainMaxDb, 0.0, 1, false }, &ArticulationTuning::bandDb },
+        { { kOnsetDelayKey, "ONSET DELAY", "ms", kOnsetDelayMinMs, kOnsetDelayMaxMs, 0.0, 1, false }, &ArticulationTuning::delayMs },
+        { { kOnsetSpeedKey, "ONSET SPEED", "x", kOnsetSpeedMin, kOnsetSpeedMax, 1.0, 2, true }, &ArticulationTuning::speed },
+    };
+    return fields;
+}
+
+const std::vector<CymbalBandField>& cymbalBandFields()
+{
+    static const std::vector<CymbalBandField> fields {
+        { { kRingBandsKey, "RING LENGTH PER BAND", "x", kRingBandMin, kRingBandMax, 1.0, 2, true }, Group::cymbal, &CymbalTuning::ringBand },
     };
     return fields;
 }
 
 namespace
 {
+// 22 numbers within the spec's range from a JSON array into `out`; an error message, or empty.
+juce::String readBands (const juce::var& value, const BandSpec& f, const juce::String& name,
+                        std::array<double, kExcitationBands>& out)
+{
+    const auto* bands = value.getArray();
+    if (bands == nullptr || bands->size() != kExcitationBands)
+        return name + " needs " + juce::String (kExcitationBands) + " values.";
+    for (int j = 0; j < kExcitationBands; ++j)
+    {
+        const auto& item = (*bands)[j];
+        const double g = (double) item;
+        const bool number = item.isDouble() || item.isInt() || item.isInt64();
+        if (! number || ! std::isfinite (g) || g < f.lo - 1e-9 || g > f.hi + 1e-9)
+            return name + " values must lie in " + juce::String (f.lo) + " to " + juce::String (f.hi) + " " + f.unit + ".";
+        out[(size_t) j] = g;
+    }
+    return {};
+}
+
 juce::String idOf (const BakeData& b, size_t s) { return b.slots[s].id; }
 
 juce::var cymbalObject (const BakeData& b, const Tuning& t, bool onlyChanged)
@@ -113,6 +157,15 @@ juce::var cymbalObject (const BakeData& b, const Tuning& t, bool onlyChanged)
     if (applies (Needs::envelope, b)
         && (! onlyChanged || t.cymbal.frameDecayRestart != b.tuning.cymbal.frameDecayRestart))
         o->setProperty (kFrameDecayRestartKey, t.cymbal.frameDecayRestart);
+    // The per-band values: all 22 when any differs.
+    for (const auto& f : cymbalBandFields())
+        if (! onlyChanged || t.cymbal.*(f.member) != b.tuning.cymbal.*(f.member))
+        {
+            juce::Array<juce::var> bands;
+            for (double g : t.cymbal.*(f.member))
+                bands.add (g);
+            o->setProperty (f.spec.key, bands);
+        }
     return juce::var (o);
 }
 
@@ -139,7 +192,7 @@ juce::var articulationObject (const BakeData& b, const Tuning& t, bool onlyChang
                 juce::Array<juce::var> bands;
                 for (double g : t.articulations[s].*(f.member))
                     bands.add (g);
-                a->setProperty (f.key, bands);
+                a->setProperty (f.spec.key, bands);
                 any = true;
             }
         if (any)
@@ -200,6 +253,16 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
                 continue;
             }
             bool known = false;
+            for (const auto& f : cymbalBandFields())
+                if (key == f.spec.key)
+                {
+                    const auto error = readBands (p.value, f.spec, key, t.cymbal.*(f.member));
+                    if (error.isNotEmpty())
+                        return error;
+                    known = true;
+                }
+            if (known)
+                continue;
             for (const auto& f : cymbalFields())
                 if (key == f.key)
                 {
@@ -226,22 +289,12 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
                     bool known = false;
                     for (const auto& f : bandFields())
                     {
-                        if (q.name.toString() != f.key)
+                        if (q.name.toString() != f.spec.key)
                             continue;
-                        const auto* bands = q.value.getArray();
-                        const juce::String name = p.name.toString() + "." + f.key;
-                        if (bands == nullptr || bands->size() != kExcitationBands)
-                            return name + " needs " + juce::String (kExcitationBands) + " values.";
-                        for (int j = 0; j < kExcitationBands; ++j)
-                        {
-                            const auto& item = (*bands)[j];
-                            const double g = (double) item;
-                            const bool number = item.isDouble() || item.isInt() || item.isInt64();
-                            if (! number || ! std::isfinite (g) || g < f.lo - 1e-9 || g > f.hi + 1e-9)
-                                return name + " values must lie in " + juce::String (f.lo) + " to " + juce::String (f.hi)
-                                       + " " + f.unit + ".";
-                            (t.articulations[(size_t) slot].*(f.member))[(size_t) j] = g;
-                        }
+                        const auto error = readBands (q.value, f.spec, p.name.toString() + "." + f.spec.key,
+                                                      t.articulations[(size_t) slot].*(f.member));
+                        if (error.isNotEmpty())
+                            return error;
                         known = true;
                     }
                     if (known)
@@ -270,6 +323,9 @@ bool isModified (const BakeData& b, const Tuning& t)
             return true;
     if (t.cymbal.frameDecayRestart != b.tuning.cymbal.frameDecayRestart)
         return true;
+    for (const auto& f : cymbalBandFields())
+        if (t.cymbal.*(f.member) != b.tuning.cymbal.*(f.member))
+            return true;
     for (size_t s = 0; s < b.slots.size(); ++s)
     {
         for (const auto& f : articulationFields())

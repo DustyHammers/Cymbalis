@@ -18,6 +18,35 @@ juce::String dbfs (float x)
     return x > 1e-6f ? juce::String (20.0 * std::log10 ((double) x), 1) + " dBFS" : juce::String ("-inf dBFS");
 }
 
+// One of the window's two parts: articulations, or the whole cymbal. A filled band with a
+// bronze rule, the part's name and what its values affect.
+class PartHeader final : public juce::Component
+{
+public:
+    PartHeader (const juce::String& n, const juce::String& w, const TuningLookAndFeel& l) : name (n), what (w), laf (l) {}
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().withTrimmedTop (14);
+        g.setColour (ui::palette::popup);
+        g.fillRect (r);
+        g.setColour (ui::palette::bronze);
+        g.fillRect (r.removeFromTop (2));
+        r.reduce (10, 0);
+        g.setColour (ui::palette::label);
+        g.setFont (laf.font (19.0f));
+        const int w = (int) laf.font (19.0f).getStringWidthFloat (name) + 16;
+        g.drawText (name, r.removeFromLeft (w), juce::Justification::centredLeft);
+        g.setColour (ui::palette::bronze);
+        g.setFont (laf.font (kTextSize));
+        g.drawText (what, r, juce::Justification::centredLeft);
+    }
+    static constexpr int height = 56;
+
+private:
+    juce::String name, what;
+    const TuningLookAndFeel& laf;
+};
+
 // A section title in the list.
 class Header final : public juce::Component
 {
@@ -197,11 +226,11 @@ void ToggleRow::paint (juce::Graphics& g)
 }
 
 // =====================================================================================
-BandRow::BandRow (const BandField& f, TuningLookAndFeel& small) : field (f)
+BandRow::BandRow (const BandSpec& f, TuningLookAndFeel& small, const juce::String& scope) : field (f)
 {
     title.setText (juce::String (field.title) + "  (" + field.unit + ")", juce::dontSendNotification);
     addAndMakeVisible (title);
-    flat.setTooltip ("Every band of this articulation to " + juce::String (field.flat, field.decimals) + " " + field.unit);
+    flat.setTooltip ("Every band of " + scope + " to " + juce::String (field.flat, field.decimals) + " " + field.unit);
     flat.onClick = [this] {
         if (onFlat)
             onFlat();
@@ -313,7 +342,7 @@ BandEq::BandEq (const ui::Assets& a) : small (a, 11.5f)
     addAndMakeVisible (selector);
     for (const auto& f : bandFields())
     {
-        rows.push_back (std::make_unique<BandRow> (f, small));
+        rows.push_back (std::make_unique<BandRow> (f.spec, small, "this articulation"));
         addAndMakeVisible (*rows.back());
     }
 }
@@ -337,7 +366,8 @@ void BandEq::resized()
 }
 
 // =====================================================================================
-TuningPanel::TuningPanel (CymbalisProcessor& p, const ui::Assets& a) : processor (p), assets (a), lookAndFeel (a)
+TuningPanel::TuningPanel (CymbalisProcessor& p, const ui::Assets& a)
+    : processor (p), assets (a), lookAndFeel (a), bandLook (a, 11.5f)
 {
     setLookAndFeel (&lookAndFeel);
     saveButton.onClick = [this] { save(); };
@@ -383,6 +413,7 @@ void TuningPanel::rebuild()
     refreshers.clear();
     restartRow.reset();
     bandEq.reset();
+    cymbalBandRows.clear();
     list.removeAllChildren();
     int y = 0;
     auto addHeader = [&] (const juce::String& text) {
@@ -397,9 +428,17 @@ void TuningPanel::rebuild()
         y += kRowHeight;
         list.addAndMakeVisible (c);
     };
+    auto addPart = [&] (const juce::String& name, const juce::String& what) {
+        auto h = std::make_unique<PartHeader> (name, what, lookAndFeel);
+        h->setBounds (0, y, 10, PartHeader::height);
+        y += PartHeader::height;
+        list.addAndMakeVisible (*h);
+        headers.push_back (std::move (h));
+    };
     if (bake != nullptr)
     {
         // Articulations: one bake entry each.
+        addPart ("ARTICULATIONS", "affects only this articulation");
         for (size_t s = 0; s < bake->slots.size(); ++s)
         {
             const auto& slot = bake->slots[s];
@@ -429,7 +468,7 @@ void TuningPanel::rebuild()
         bandEq->onSelect = [this] { showValues(); };
         for (size_t fi = 0; fi < bandFields().size(); ++fi)
         {
-            const auto& f = bandFields()[fi];
+            const auto& f = bandFields()[fi]; // static: the lambdas may keep a reference
             auto& row = bandEq->row (fi);
             row.onBandChange = [this, bandArt, &f] (int band, double v) {
                 const size_t s = bandArt();
@@ -437,7 +476,7 @@ void TuningPanel::rebuild()
             };
             row.onFlat = [this, bandArt, &f] {
                 const size_t s = bandArt();
-                change ([&] (Tuning& t) { (t.articulations[s].*(f.member)).fill (f.flat); });
+                change ([&] (Tuning& t) { (t.articulations[s].*(f.member)).fill (f.spec.flat); });
             };
             refreshers.push_back ([this, bandArt, &row, &f] {
                 const size_t s = bandArt();
@@ -447,7 +486,9 @@ void TuningPanel::rebuild()
         bandEq->setBounds (0, y, 10, BandEq::height());
         y += BandEq::height();
         list.addAndMakeVisible (*bandEq);
-        // Per cymbal, by group.
+        // Per cymbal, by group. A value that acts on some articulations only names them.
+        addPart ("WHOLE CYMBAL", "affects every articulation");
+        y += 4;
         for (auto group : { Group::cymbal, Group::wander, Group::mf, Group::lf, Group::edgeEnvelope })
         {
             bool any = false;
@@ -460,7 +501,9 @@ void TuningPanel::rebuild()
             {
                 if (f.group != group || ! applies (f.needs, *bake))
                     continue;
-                auto row = std::make_unique<ValueRow> (f.label, f.unit, f.lo, f.hi, f.decimals, f.rebuild);
+                const auto acts = scopeNames (f.scope, *bake);
+                auto row = std::make_unique<ValueRow> (juce::String (f.label) + (acts.isEmpty() ? "" : ": " + acts), f.unit,
+                                                       f.lo, f.hi, f.decimals, f.rebuild);
                 auto* r = row.get();
                 const auto member = f.member;
                 row->onChange = [this, member] (double v) { change ([&] (Tuning& t) { t.cymbal.*member = v; }); };
@@ -470,9 +513,28 @@ void TuningPanel::rebuild()
                 place (*row);
                 rows.push_back (std::move (row));
             }
+            for (const auto& f : cymbalBandFields())
+            {
+                if (f.group != group)
+                    continue;
+                auto row = std::make_unique<BandRow> (f.spec, bandLook, "the cymbal");
+                auto* r = row.get();
+                row->onBandChange = [this, &f] (int band, double v) {
+                    change ([&] (Tuning& t) { (t.cymbal.*(f.member))[(size_t) band] = v; });
+                };
+                row->onFlat = [this, &f] { change ([&] (Tuning& t) { (t.cymbal.*(f.member)).fill (f.spec.flat); }); };
+                refreshers.push_back ([this, r, &f] {
+                    r->setValues (processor.tuning (preset).cymbal.*(f.member), bake->tuning.cymbal.*(f.member));
+                });
+                row->setBounds (0, y, 10, BandRow::height);
+                y += BandRow::height;
+                list.addAndMakeVisible (*row);
+                cymbalBandRows.push_back (std::move (row));
+            }
             if (group == Group::edgeEnvelope)
             {
-                restartRow = std::make_unique<ToggleRow> ("20 ms frame-decay restart (off: no in-frame decay)");
+                restartRow = std::make_unique<ToggleRow> ("20 ms frame-decay restart (off: no in-frame decay): "
+                                                          + scopeNames (Scope::edge, *bake));
                 restartRow->onChange = [this] (bool v) { change ([&] (Tuning& t) { t.cymbal.frameDecayRestart = v; }); };
                 place (*restartRow);
             }

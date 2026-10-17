@@ -189,7 +189,25 @@ private:
         int preset = -1;
         cymbalis::Tuning tuning;
         std::vector<float> modeGains; // every slot's per-mode excitation gains, computed by the writer
+        // The decay coefficients for its per-band ring lengths at the prepared rate, computed by
+        // the writer when they changed (decayValid).
+        cymbalis::FastEngine::DecaySet decay;
+        bool decayValid = false;
     };
+    // Per preset (message thread): the decay coefficients for its latest per-band ring lengths
+    // at the prepared rate, sent with every message once they differ from the bake (so a
+    // message that overtakes another still carries them), and the contact force they use.
+    struct WriterDecay
+    {
+        bool valid = false;
+        std::array<double, cymbalis::kExcitationBands> ringBand {};
+        double ringLength = 0.0, rate = 0.0;
+        cymbalis::FastEngine::DecaySet set;
+        std::vector<double> force;
+        int forceLen = 0;
+        double forceRate = 0.0;
+    };
+    std::array<WriterDecay, cymbalis::kNumPresets> writerDecay;
     std::array<TuningMessage, 3> tuningBuffers {};
     int tuningBack = 0, tuningFront = 2;  // writer's and audio thread's buffers
     std::atomic<int> tuningMiddle { 1 };  // index | kTuningNew

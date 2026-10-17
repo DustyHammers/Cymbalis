@@ -92,6 +92,12 @@ bool hasBandGains(const ArticulationTuning& a) noexcept
     return false;
 }
 
+void tunedT60(const CymbalTuning& c, const double* pythonT60, const double* freqHz, int numModes, double* out) noexcept
+{
+    for (int i = 0; i < numModes; ++i)
+        out[i] = pythonT60[i] * c.ringLength * c.ringBand[size_t(excitationBand(freqHz[i]))];
+}
+
 bool hasOnsetShift(const ArticulationTuning& a) noexcept
 {
     for (int j = 0; j < kExcitationBands; ++j)
@@ -164,13 +170,14 @@ void applyTuning(BakeData& b, const Tuning& t)
     p.lfWBell = c.lfWBell;
     p.lfWanderRateBoost = c.lfWanderRateBoost;
 
-    // Ring length: every mode's T60 times the multiplier, and the contact-phase step with it.
-    if (c.ringLength != py.ringLength || b.t60S.size() != n)
+    // Ring length: every mode's T60 times the multiplier and its band's multiplier, and the
+    // contact-phase step with it.
+    if (c.ringLength != py.ringLength || c.ringBand != py.ringBand || b.t60S.size() != n)
     {
         b.t60S.resize(n);
+        tunedT60(c, b.pythonT60S.data(), b.freqHz.data(), static_cast<int>(n), b.t60S.data());
         for (size_t i = 0; i < n; ++i)
         {
-            b.t60S[i] = b.pythonT60S[i] * c.ringLength;
             const double w = b.twoPi * b.freqHz[i] / b.sampleRate;
             const double e = std::exp(-b.log1000 / (b.t60S[i] * b.sampleRate));
             b.modeStepRe[i] = std::cos(w) * e;
@@ -225,6 +232,20 @@ Tuning parseTuningBlock(const json::Value& block, const BakeData& b, const Tunin
             if (kv.first == kFrameDecayRestartKey)
             {
                 t.cymbal.frameDecayRestart = kv.second.boolean();
+                continue;
+            }
+            if (kv.first == kRingBandsKey)
+            {
+                const auto& a = kv.second.array();
+                if (a.size() != size_t(kExcitationBands))
+                    throw std::runtime_error("tuning: ring_length_bands needs 22 values");
+                for (size_t j = 0; j < a.size(); ++j)
+                {
+                    const double x = a[j].number();
+                    if (! std::isfinite(x) || ! (x > 0.0))
+                        throw std::runtime_error("tuning: ring_length_bands values must be > 0");
+                    t.cymbal.ringBand[j] = x;
+                }
                 continue;
             }
             bool known = false;

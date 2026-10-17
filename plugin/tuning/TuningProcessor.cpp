@@ -33,12 +33,46 @@ void CymbalisProcessor::publishTuning (int preset, const cymbalis::Tuning& t)
     auto& m = tuningBuffers[(size_t) tuningBack];
     m.preset = preset;
     m.tuning = t;
+    m.decayValid = false;
     if (const auto& bake = presets[(size_t) preset].bake)
     {
         const size_t n = (size_t) bake->numModes;
         m.modeGains.resize (bake->slots.size() * n);
         for (size_t s = 0; s < bake->slots.size(); ++s)
             cymbalis::excitationModeGains (t.articulations[s], bake->freqHz.data(), bake->numModes, m.modeGains.data() + s * n);
+        // Per-band ring lengths: every decay coefficient at the prepared rate, here, for the
+        // cymbal to take at its next control point (computed when they change, then sent
+        // with every message).
+        const double rate = preparedRate.load();
+        auto& w = writerDecay[(size_t) preset];
+        if (rate > 0.0 && (w.valid || t.cymbal.ringBand != bake->tuning.cymbal.ringBand))
+        {
+            if (! w.valid || w.ringBand != t.cymbal.ringBand || ! juce::exactlyEqual (w.ringLength, t.cymbal.ringLength)
+                || ! juce::exactlyEqual (w.rate, rate))
+            {
+                if (! juce::exactlyEqual (w.forceRate, rate))
+                {
+                    w.force.clear();
+                    w.forceLen = 0;
+                    if (bake->params.contactPermode)
+                        cymbalis::FastEngine::contactForce (*bake, bake->params, rate, w.force, w.forceLen);
+                    w.forceRate = rate;
+                }
+                std::vector<double> rates (n);
+                cymbalis::tunedT60 (t.cymbal, bake->pythonT60S.data(), bake->freqHz.data(), bake->numModes, rates.data());
+                for (auto& r : rates)
+                    r = -bake->log1000 / r;
+                cymbalis::FastEngine::computeDecay (*bake, rate, cymbalis::FastEngine::controlBlockFor (*bake, rate),
+                                                    cymbalis::FastEngine::oscillatorWash (*bake, bake->params), rates.data(),
+                                                    w.force, w.forceLen, w.set);
+                w.valid = true;
+                w.ringBand = t.cymbal.ringBand;
+                w.ringLength = t.cymbal.ringLength;
+                w.rate = rate;
+            }
+            m.decay = w.set;
+            m.decayValid = true;
+        }
     }
     tuningBack = tuningMiddle.exchange (tuningBack | kTuningNew) & 3;
 }
@@ -56,7 +90,7 @@ void CymbalisProcessor::takeTuning (bool newCymbal) noexcept
     }
     const auto& m = tuningBuffers[(size_t) tuningFront];
     if ((fresh || newCymbal) && current != nullptr && current->engine != nullptr && m.preset == current->preset)
-        current->engine->setTuning (m.tuning, m.modeGains.data());
+        current->engine->setTuning (m.tuning, m.modeGains.data(), m.decayValid ? &m.decay : nullptr);
 }
 
 // Loader thread or prepareToPlay: a new cymbal starts with the current values of its preset.
@@ -69,7 +103,7 @@ void CymbalisProcessor::applyTuningToNewCymbal (Cymbal& c)
         return;
     const auto t = tuning (c.preset);
     c.ring = t.cymbal.ringLength;
-    if (! juce::exactlyEqual (t.cymbal.ringLength, bake->tuning.cymbal.ringLength))
+    if (! juce::exactlyEqual (t.cymbal.ringLength, bake->tuning.cymbal.ringLength) || t.cymbal.ringBand != bake->tuning.cymbal.ringBand)
     {
         auto copy = std::make_shared<cymbalis::BakeData> (*bake);
         cymbalis::applyTuning (*copy, t);
