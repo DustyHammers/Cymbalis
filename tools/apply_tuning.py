@@ -65,6 +65,9 @@ def fail(msg):
 
 
 def articulation_id(slot):
+    """The entry's "articulation" key (a copied entry), else its overlay, else its name in lower case."""
+    if slot.get('articulation'):
+        return slot['articulation']
     return slot['overlay'] if slot.get('overlay') else slot['name'].lower()
 
 

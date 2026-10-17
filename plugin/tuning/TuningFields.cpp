@@ -87,7 +87,7 @@ const std::vector<ArticulationField>& articulationFields()
 
 namespace
 {
-juce::String idOf (const BakeData& b, size_t s) { return articulationId (b.slots[s].name, b.slots[s].overlay); }
+juce::String idOf (const BakeData& b, size_t s) { return b.slots[s].id; }
 
 juce::var cymbalObject (const BakeData& b, const Tuning& t, bool onlyChanged)
 {

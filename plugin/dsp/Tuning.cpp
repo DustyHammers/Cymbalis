@@ -238,7 +238,7 @@ Tuning parseTuningBlock(const json::Value& block, const BakeData& b, const Tunin
         {
             int slot = -1;
             for (size_t s = 0; s < b.slots.size(); ++s)
-                if (articulationId(b.slots[s].name, b.slots[s].overlay) == kv.first)
+                if (b.slots[s].id == kv.first)
                     slot = static_cast<int>(s);
             if (slot < 0 || slot >= kMaxArticulations)
                 throw std::runtime_error("tuning: the bake has no articulation \"" + kv.first + "\"");

@@ -59,12 +59,15 @@ The CYMBALIS logo and "BRONZE MODELING INSTRUMENT" are part of the background im
 | STICK ARTICULATION | 1201, 98 | 17.1 | 3.29 | `#A7A7A4` |
 | MIDI NOTE | 1424, 98 | 17.1 | 3.00 | `#A7A7A4` |
 | BELL / BOW / EDGE / BELL2 / BOW2 (rows) | x1201; y 148 / 228 / 307 / 387 / 468 | 15.6 | 3.33 / 2.88 / 2.83 / 3.50 / 3.25 | `#695E52` |
+| CENTER / CENTER2 (rows 1 and 4 on SMOKE FLAT RIDE, section 8) | x1201; y 148 / 387 | 15.6 | 1.5 / 0.0 | `#695E52` |
 | BLEND POSITION 1 | 1269, 545 | 17.1 | 3.18 | `#A7A7A4` |
-| BELL · BOW (under Blend 1) | 1249, 720 · 1409, 720 | 15.6 | 3.33 · 2.88 | `#695E52` |
+| BELL · BOW (under Blend 1; CENTER · BOW on SMOKE FLAT RIDE) | 1249, 720 · 1409, 720 | 15.6 | 3.33 · 2.88 | `#695E52` |
 | BLEND POSITION 2 | 1270, 783 | 17.1 | 2.98 | `#A7A7A4` |
 | BOW · EDGE (under Blend 2) | 1249, 958 · 1409, 958 | 15.6 | 2.88 · 2.83 | `#695E52` |
 
 Values drawn inside boxes use the same font in `#A7A7A4`; secondary values (note number) use `#695E52`.
+
+CENTER and CENTER2 are drawn like the other row labels but with tighter letter spacing. At the other labels' spacing (about 3), CENTER2 would reach x 1277, into the stick box at x 1265; at 1.5 and 0.0 both end about 7.5 units clear of it.
 
 ## 5. Palette
 (sampled from the background artwork)
@@ -119,6 +122,8 @@ Blend 2 inherits the engine's hard bow-to-edge switch near position 0.45 (PORT_M
 
 The rows, their base positions, blends and default notes are the same in every preset; what each row plays depends on the preset. Notes are per row and are kept across presets.
 
+A preset can name a row: SMOKE FLAT RIDE labels its bell rows CENTER and CENTER2 (`PresetSlot::label` in `plugin/SlotTable.h`). The name is shown only. The row keeps its notes, its MIDI behaviour and its session keys (`note_BELL`, `note_BELL2`).
+
 | Slot | Base position | Blend | Default note |
 |---|---|---|---|
 | BELL | 1.0 | Blend 1: 1.0 → 0.5 | C3 (60) |
@@ -139,15 +144,17 @@ The rows, their base positions, blends and default notes are the same in every p
 
 The baked preset holds all four overlays and the no-overlay edge data, so any bell or bow row can play either stick.
 
-**SMOKE FLAT RIDE** (602, `resources/presets/smoke_flat_ride.bake.json`): bow and edge only.
+**SMOKE FLAT RIDE** (602, `resources/presets/smoke_flat_ride.bake.json`): no bell. Its bell rows play **center**, a copy of the 602 bow that is tuned on its own (`docs/TUNING.md`).
 
-| Slot | Plays | Stick box |
-|---|---|---|
-| BELL | nothing (its note stays saved) | dash |
-| BOW | 602 bow (`bow.json`, empty overlay) | dash |
-| EDGE | 602 edge (`edge.json`, empty overlay) | dash |
-| BELL2 | nothing (its note stays saved) | dash |
-| BOW2 | 602 bow | dash |
+| Slot | Label | Plays (bake entry) | Stick box |
+|---|---|---|---|
+| BELL | CENTER | 602 center (`CENTER`: a copy of `BOW`, with its own level trim, initialised to BOW's) | dash |
+| BOW | BOW | 602 bow (`BOW`: `bow.json`, empty overlay) | dash |
+| EDGE | EDGE | 602 edge (`EDGE`: `edge.json`, empty overlay) | dash |
+| BELL2 | CENTER2 | 602 center | dash |
+| BOW2 | BOW2 | 602 bow | dash |
+
+CENTER and CENTER2 strike where the bell rows do, at 1.0 − 0.5·blend_1. The 602's position weights are flat, so position does not change its excitation. Untuned, CENTER sounds like the bow at any Blend 1 setting. The only effect of position is through the MF/LF build-up: a strike at 0.75 or above counts with the bell weights. The 602 has its build-up off.
 
 **HAMMERED THIN RIDE** (Bettis, `resources/presets/hammered_thin_ride.bake.json`): no overlays.
 
@@ -159,7 +166,7 @@ The baked preset holds all four overlays and the no-overlay edge data, so any be
 | BELL2 | Bettis bell | TIP (fixed) |
 | BOW2 | Bettis bow | TIP (fixed) |
 
-None of the stick boxes in these two presets opens a popup. The blend knobs move whichever rows play: in SMOKE FLAT RIDE Blend 1 has nothing to move.
+None of the stick boxes in these two presets opens a popup. The blend knobs move whichever rows play. In SMOKE FLAT RIDE, Blend 1 moves CENTER and CENTER2, and its end labels read CENTER · BOW.
 
 ## 9. Parameters — exactly these four, no others
 Placeholder ranges until Kris revises them. At the defaults the plugin sounds the same as the Python engine.
@@ -171,6 +178,6 @@ Placeholder ranges until Kris revises them. At the defaults the plugin sounds th
 | `blend_1` | Blend Position 1 (BELL → BOW) | 0–1 (shown 0–100%) | **0 (full BELL)** | BELL and BELL2 strike at position 1.0 − 0.5·blend_1 (1.0 = bell, 0.5 = bow). Read at strike time | `BELL 100 · 0 BOW` |
 | `blend_2` | Blend Position 2 (BOW → EDGE) | 0–1 (shown 0–100%) | **0 (full BOW)** | BOW and BOW2 strike at position 0.5 − 0.5·blend_2 (0.5 = bow, 0.0 = edge). Read at strike time. The engine's bow-to-edge excitation switches abruptly near position 0.45 (engine as-is) | `BOW 100 · 0 EDGE` |
 
-EDGE always strikes at position 0.0. All four are automatable. No other parameters.
+EDGE always strikes at position 0.0. All four are automatable. No other parameters. Their host-visible names and value texts are the same in every preset; on SMOKE FLAT RIDE, Blend Position 1 still reads BELL → BOW in the host, although its knob labels read CENTER · BOW.
 
 Non-automatable state saved with the session: MIDI channel, note per slot, stick per slot (rows with a choice), current preset, editor size.

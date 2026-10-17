@@ -78,7 +78,8 @@ constexpr const char* kVel03Key = "vel_0.3_db";
 constexpr const char* kBandGainsKey = "band_gains_db";
 constexpr double kBandGainMinDb = -24.0, kBandGainMaxDb = 12.0;
 
-// The articulation id of a bake entry: its overlay, or its name in lower case.
+// The articulation id of a bake entry without an "articulation" key: its overlay, or its
+// name in lower case (the loader's SlotData::id).
 std::string articulationId(const std::string& entryName, const std::string& overlay);
 
 // Level offset (dB) of the velocity curve at velocity v: 0 at 1.0, vel06Db at 0.6, vel03Db

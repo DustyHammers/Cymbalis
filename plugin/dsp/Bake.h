@@ -102,6 +102,9 @@ struct SlotData
 {
     std::string name;
     std::string overlay;       // empty = no overlay
+    // The articulation id (docs/TUNING.md): the entry's "articulation" key, else its overlay,
+    // else its name in lower case. Unique within a bake.
+    std::string id;
     double position = 0.0;     // 0 edge, 0.5 bow, 1 bell
     double calibScalar = 1.0;  // the slot engine's _calib_scalar
     // Plugin tuning of this articulation (docs/TUNING.md): its velocity curve (level offsets
