@@ -78,3 +78,27 @@ Imported 2026-10-14 from `Cymbalis_V8_Package_602_final.zip`, unchanged. SPEAR f
 - Bettis has no articulation overlays. `Bettis_Baseline1.json` sets `nl_amount` 1.0; the plugin bakes every preset with `nl_amount` 0.
 - Bettis data files not referenced by `Bettis_Baseline1.json` (`bettis_band_envelopes.json`, `bettis_bow_vel_tilt.json`, `bettis_clusters_full.json`, `bettis_edge_excitation_ratios_neutral.json`, `bettis_exc_norm_band4.json`) are kept as delivered.
 - Photos: `resources/ui/SmokeFlatRide.png` (714 x 718) and `resources/ui/HammeredThinRide.png` (709 x 713).
+
+# Swish (22" China, medium heavy)
+
+Imported 2026-10-17 from `Cymbalis_V8_Package_602_final.zip`, unchanged. SPEAR files excluded. No baseline render check: the plugin is the reference (see `CLAUDE.md`).
+
+| File | MD5 |
+|---|---|
+| `presets/swish/Swish_Baseline1.json` | `05424a58a7f2af49c80cf2d5906d5ed4` |
+| `presets/swish/articulations/bow_shoulder.json` | `9754980a4d39c9876a5ae8e053cbdf1c` |
+| `presets/swish/articulations/bow_tip.json` | `4a358134c4d7fa0fa485b95389ddbcdc` |
+| `presets/swish/data/swish_bell_excitation_ratios.json` | `b14d367d4579e726295fbb961d2c430a` |
+| `presets/swish/data/swish_edge_excitation_ratios_neutral.json` | `c02e2f89161eaf66aa98d2badb6ed3e6` |
+| `presets/swish/data/swish_edge_npz_data.json` | `75873ff5d13ce3a35446685d79aeb041` |
+| `presets/swish/data/swish_edge_vel_tilt.json` | `affb0b8d8187c0b2e19f999e9d7558a5` |
+| `presets/swish/data/swish_fingerprint.json` | `2e8334cdea45b65bd81ed40e106c1066` |
+| `presets/swish/data/swish_pkt_data.json` | `32bc33fbfcec5b0c1fc199f4cc758340` |
+
+## Notes
+
+- Python baseline: Render 15 (MD5 `314fc74156f202fbf355b4dd269cfce4`), bell ratios v11.
+- Overlays: `bow_tip.json` sets `stick_gain` 6.0 (stick-click transient); `bow_shoulder.json` sets it to 0.0.
+- The edge NPZ has 20 bands, 100-10000 Hz, six velocities (0.2-1.0) and one velw for all velocities.
+- `Swish_Baseline1.json` sets no `edge_band_env_path`, so in Python V19 the NPZ band envelopes never run for Swish (the session summary's "_eb_band_scale not active").
+- Photo: `resources/ui/Swish.png` (737 x 747).
