@@ -18,7 +18,7 @@ namespace cymbalis::tuning
 class TuningLookAndFeel final : public juce::LookAndFeel_V4
 {
 public:
-    explicit TuningLookAndFeel (const ui::Assets& assets);
+    explicit TuningLookAndFeel (const ui::Assets& assets, float textSize = 15.0f);
     juce::Font getLabelFont (juce::Label&) override;
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
     juce::Font getAlertWindowMessageFont() override;
@@ -27,6 +27,7 @@ public:
 
 private:
     const ui::Assets& assets;
+    float textSize;
 };
 
 // One value: name, slider with numeric entry, unit, and a reset-to-baked button.
@@ -69,6 +70,43 @@ private:
     bool updating = false;
 };
 
+// The excitation band gains of one articulation: a selector, FLAT, and one vertical slider
+// per one-third-octave band (a graphic EQ) with numeric entry, a reset-to-baked button and
+// the band's centre frequency. A changed band is marked like any changed value.
+class BandEq final : public juce::Component
+{
+public:
+    explicit BandEq (const ui::Assets& assets);
+    ~BandEq() override;
+
+    void setArticulations (const juce::StringArray& names);
+    int selected() const { return selector.getSelectedItemIndex(); }
+    void setValues (const std::array<double, kExcitationBands>& values, const std::array<double, kExcitationBands>& baked);
+
+    std::function<void (int band, double db)> onBandChange;
+    std::function<void()> onFlat;
+    std::function<void()> onSelect;
+
+    void resized() override;
+    void paint (juce::Graphics& g) override;
+    static constexpr int height = 290;
+
+private:
+    struct Column
+    {
+        juce::Slider slider;
+        juce::Label label;
+        std::unique_ptr<juce::Button> reset;
+    };
+    TuningLookAndFeel small; // the band sliders' numbers and labels, in a smaller size
+    juce::Label title;
+    juce::ComboBox selector;
+    juce::TextButton flat { "FLAT" };
+    std::array<std::unique_ptr<Column>, kExcitationBands> columns;
+    std::array<double, kExcitationBands> baked {};
+    bool updating = false;
+};
+
 class TuningPanel final : public juce::Component, private juce::Timer
 {
 public:
@@ -100,6 +138,7 @@ private:
     std::vector<std::unique_ptr<ValueRow>> rows;
     std::vector<std::function<void()>> refreshers; // one per row: shows its current value
     std::unique_ptr<ToggleRow> restartRow;
+    std::unique_ptr<BandEq> bandEq;
     std::unique_ptr<juce::FileChooser> chooser;
 
     CymbalisProcessor::Meters meters;

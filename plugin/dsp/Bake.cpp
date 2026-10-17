@@ -514,6 +514,29 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
                 slot.levelTrim = std::pow(10.0, db / 20.0);
                 rep.push_back("level trim   slot " + slot.name + ": " + fmt("%+.2f dB", db));
             }
+            // Optional (plugin bake, docs/TUNING.md): this articulation's excitation gain per
+            // one-third-octave band, written by tools/apply_tuning.py.
+            if (const auto* bands = s.find("excitation_band_gains_db"); bands != nullptr && ! bands->isNull())
+            {
+                const auto& edges = bands->at("band_edges_hz").array();
+                const auto& gains = bands->at("gains_db").array();
+                if (edges.size() != size_t(kExcitationBands + 1) || gains.size() != size_t(kExcitationBands))
+                    throw BakeError("slot " + slot.name + ": excitation_band_gains_db needs " +
+                                    std::to_string(kExcitationBands + 1) + " band edges and " +
+                                    std::to_string(kExcitationBands) + " gains");
+                for (int j = 0; j <= kExcitationBands; ++j)
+                    if (std::fabs(edges[size_t(j)].number() - excitationBandEdge(j)) > 0.5)
+                        throw BakeError("slot " + slot.name + ": excitation_band_gains_db band edges differ from the "
+                                        "engine's one-third-octave bands");
+                for (int j = 0; j < kExcitationBands; ++j)
+                {
+                    const double g = gains[size_t(j)].number();
+                    if (! std::isfinite(g) || std::fabs(g) > 60.0)
+                        throw BakeError("slot " + slot.name + ": excitation band gains must be finite, within 60 dB");
+                    slot.articulation.bandDb[size_t(j)] = g;
+                }
+                rep.push_back("band gains   slot " + slot.name + ": excitation gain per one-third-octave band");
+            }
             if (s.at("bow_vp").isNull())
             {
                 if (s.at("effective").at("vel_participation").boolean())
@@ -695,7 +718,10 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
         c.edgeEnvWindowS = b.edgeNpz.onsetS;
         u.numArticulations = static_cast<int>(b.slots.size());
         for (size_t s = 0; s < b.slots.size(); ++s)
+        {
             u.articulations[s].levelDb = 20.0 * std::log10(b.slots[s].levelTrim);
+            u.articulations[s].bandDb = b.slots[s].articulation.bandDb;
+        }
         b.pythonT60S = b.t60S;
         b.pythonLfoRateHz = b.lfoRateHz;
         b.tuning = u;

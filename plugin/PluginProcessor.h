@@ -188,6 +188,7 @@ private:
     {
         int preset = -1;
         cymbalis::Tuning tuning;
+        std::vector<float> modeGains; // every slot's per-mode excitation gains, computed by the writer
     };
     std::array<TuningMessage, 3> tuningBuffers {};
     int tuningBack = 0, tuningFront = 2;  // writer's and audio thread's buffers

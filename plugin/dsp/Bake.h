@@ -104,9 +104,10 @@ struct SlotData
     std::string overlay;       // empty = no overlay
     double position = 0.0;     // 0 edge, 0.5 bow, 1 bell
     double calibScalar = 1.0;  // the slot engine's _calib_scalar
-    // Velocity curve of this articulation (plugin tuning, docs/TUNING.md): level offsets at
-    // velocity 0.6 and 0.3 on top of the level law (levelDb is unused here: see levelTrim).
-    ArticulationTuning velocityCurve;
+    // Plugin tuning of this articulation (docs/TUNING.md): its velocity curve (level offsets
+    // at velocity 0.6 and 0.3 on top of the level law) and its excitation band gains
+    // (slots[].excitation_band_gains_db). levelDb is unused here: see levelTrim.
+    ArticulationTuning articulation;
     // Level trim (plugin bake only), as a gain: level_trim.gain_db of the bake, measured
     // with FastEngine so that a velocity-0.9 strike at the base position matches BOW (tip)
     // by 1-second RMS, and editable by hand. 1.0 when the bake has none. FastEngine applies

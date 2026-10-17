@@ -103,8 +103,10 @@ public:
     // length (which needs a new bake: applyTuning). Per-strike values apply from the next
     // strike; the accumulators' values from the next control point, smoothed; wander depth
     // and rate at the next control point without a phase jump; the output gain smoothed.
-    // Does not allocate.
-    void setTuning(const Tuning& t) noexcept;
+    // modeGains holds every slot's per-mode excitation gains (slot s at s x numModes, from
+    // excitationModeGains), precomputed off the audio thread; with nullptr they are computed
+    // here from the band gains of `t`. Does not allocate.
+    void setTuning(const Tuning& t, const float* modeGains) noexcept;
 #endif
 
     // Engine time of the next sample, in seconds since construction.
@@ -220,6 +222,10 @@ private:
     EngineParams params_;
     std::vector<double> slotTrim_;              // per slot: level trim (gain)
     std::vector<ArticulationTuning> slotCurve_; // per slot: velocity curve
+    // Per slot: excitation gain of every mode (slot s at s x n_, from its band gains), and
+    // whether any of them is not 1.
+    std::vector<float> excGain_;
+    std::vector<uint8_t> excGainOn_;
     double remapExp_ = 0.5;    // NPZ velocity remap exponent (0.5: sqrt, line 1049)
     double envWindowS_ = 1.5;  // NPZ band envelope window after an edge strike
     bool frameRestart_ = true; // the in-frame decay restarts every 20 ms

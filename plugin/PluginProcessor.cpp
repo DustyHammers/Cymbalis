@@ -59,9 +59,15 @@ CymbalisProcessor::CymbalisProcessor()
     }
     parsePresets();
 #if CYMBALIS_TUNING
+    size_t maxGains = 0;
     for (size_t k = 0; k < presets.size(); ++k)
         if (presets[k].bake != nullptr)
+        {
             tunings[k] = presets[k].bake->tuning;
+            maxGains = std::max (maxGains, presets[k].bake->slots.size() * (size_t) presets[k].bake->numModes);
+        }
+    for (auto& m : tuningBuffers)
+        m.modeGains.reserve (maxGains);
 #endif
     // The cymbal: one engine, loaded with the first preset. Its clock starts here and carries
     // over to every preset loaded later; each preset's strike-phase sequence starts from its

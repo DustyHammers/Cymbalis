@@ -16,6 +16,8 @@ The file's changes are applied on top of the bake's current values (its own valu
 tuning block it already has). Then:
 
   * each articulation's level at velocity 1.0 goes into slots[].level_trim.gain_db;
+  * each articulation's excitation band gains go into its slot's excitation data,
+    slots[].excitation_band_gains_db (band edges and 22 gains in dB); all 0 dB removes it;
   * every other value that differs from the bake's own value goes into the bake's
     "tuning" block, which the plugin's bake loader applies. A value equal to the bake's own
     drops out of the block, so applying the same file twice gives the same bake.
@@ -49,6 +51,12 @@ CYMBAL_KEYS = [
 ]
 RESTART_KEY = 'edge_frame_decay_restart'
 LEVEL_KEY, VEL06_KEY, VEL03_KEY = 'level_db', 'vel_0.6_db', 'vel_0.3_db'
+# Excitation band gains (plugin/dsp/Tuning.h): 22 one-third-octave bands, edge j at
+# 11404 x 2^((j - 21) / 3) Hz, 89.1 Hz up to 14368 Hz.
+BANDS_KEY, SLOT_BANDS_KEY = 'band_gains_db', 'excitation_band_gains_db'
+N_BANDS = 22
+BAND_MIN_DB, BAND_MAX_DB = -24.0, 12.0
+BAND_EDGES_HZ = [round(11404.0 * 2.0 ** ((j - 21) / 3.0), 3) for j in range(N_BANDS + 1)]
 POSITIVE = ('ring_length', 'edge_velocity_remap_exponent', 'wander_rate_hz')
 
 
@@ -78,6 +86,20 @@ def finite(name, v):
     if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
         fail(f'{name} must be a finite number, got {v!r}')
     return float(v)
+
+
+def slot_bands(slot):
+    """The slot's current excitation band gains (22 dB values; 0 dB without the entry)."""
+    entry = slot.get(SLOT_BANDS_KEY)
+    if not entry:
+        return [0.0] * N_BANDS
+    edges, gains = entry.get('band_edges_hz'), entry.get('gains_db')
+    if not isinstance(edges, list) or not isinstance(gains, list) \
+            or len(edges) != N_BANDS + 1 or len(gains) != N_BANDS:
+        fail(f'slot {slot["name"]}: {SLOT_BANDS_KEY} needs {N_BANDS + 1} band edges and {N_BANDS} gains')
+    if any(abs(finite('band edge', e) - want) > 0.5 for e, want in zip(edges, BAND_EDGES_HZ)):
+        fail(f'slot {slot["name"]}: {SLOT_BANDS_KEY} band edges differ from the engine\'s bands')
+    return [finite(f'slot {slot["name"]} band gain', g) for g in gains]
 
 
 def main():
@@ -113,6 +135,7 @@ def main():
     current.update(block.get('cymbal', {}))
     ids = {articulation_id(s): i for i, s in enumerate(bake['slots'])}
     curves = {aid: dict(block.get('articulations', {}).get(aid, {})) for aid in ids}
+    bands = {aid: slot_bands(bake['slots'][i]) for aid, i in ids.items()}
 
     # The file's changes on top of the bake's current values.
     for key, v in (tun.get('cymbal') or {}).items():
@@ -138,6 +161,13 @@ def main():
                 levels[aid] = finite(f'{aid}.{key}', v)
             elif key in (VEL06_KEY, VEL03_KEY):
                 curves[aid][key] = finite(f'{aid}.{key}', v)
+            elif key == BANDS_KEY:
+                if not isinstance(v, list) or len(v) != N_BANDS:
+                    fail(f'{aid}.{key} needs {N_BANDS} values')
+                gains = [finite(f'{aid}.{key}[{j}]', g) for j, g in enumerate(v)]
+                if any(g < BAND_MIN_DB or g > BAND_MAX_DB for g in gains):
+                    fail(f'{aid}.{key} values must lie in {BAND_MIN_DB:g} to +{BAND_MAX_DB:g} dB')
+                bands[aid] = gains
             else:
                 fail(f'unknown articulation value {aid}.{key}')
 
@@ -171,10 +201,26 @@ def main():
                        'fields describe the trim before that'
         slot['level_trim'] = lt
 
+    # Band gains: stored with the slot's excitation data; the loader applies them to every
+    # coupling path of that articulation's strikes.
+    for aid, gains in bands.items():
+        slot = bake['slots'][ids[aid]]
+        if any(g != 0.0 for g in gains):
+            slot[SLOT_BANDS_KEY] = {
+                'band_edges_hz': BAND_EDGES_HZ,
+                'gains_db': [round(g, 3) for g in gains],
+                'set_by': f'tools/apply_tuning.py from {os.path.basename(args.tuning)} ({now})',
+            }
+        else:
+            slot.pop(SLOT_BANDS_KEY, None)
+
     print(f'{os.path.basename(bake_path)}:')
     for aid, i in ids.items():
         lt = bake['slots'][i].get('level_trim') or {}
         print(f'  {aid:14s} level {lt.get("gain_db", 0.0):+.2f} dB   curve {new_arts.get(aid, {})}')
+        if SLOT_BANDS_KEY in bake['slots'][i]:
+            gains = bake['slots'][i][SLOT_BANDS_KEY]['gains_db']
+            print(f'  {"":14s} band gains {" ".join(f"{g:+g}" for g in gains)} dB')
     print('  tuning block: ' + (json.dumps(new_cymbal) if new_cymbal else 'no cymbal values'))
     if args.dry_run:
         print('  (dry run: nothing written)')
