@@ -193,6 +193,13 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
             excitationModeGains(b.slots[s].articulation, b.freqHz.data(), n_, excGain_.data() + s * n);
             excGainOn_[s] = 1;
         }
+    // Each mode's band and each slot's onset shift (delay, speed per band).
+    modeBand_.resize(n);
+    for (size_t i = 0; i < n; ++i)
+        modeBand_[i] = static_cast<uint8_t>(excitationBand(b.freqHz[i]));
+    onsetShiftOn_.assign(b.slots.size(), 0);
+    for (size_t s = 0; s < b.slots.size(); ++s)
+        onsetShiftOn_[s] = hasOnsetShift(b.slots[s].articulation) ? 1 : 0;
     remapExp_ = b.edgeNpz.remapExponent;
     envWindowS_ = b.edgeNpz.onsetS;
     frameRestart_ = b.edgeNpz.frameDecayRestart;
@@ -263,6 +270,16 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
         }
         bandVal0_.assign(size_t(z.numBands), 0.0);
         bandVal1_.assign(size_t(z.numBands), 0.0);
+        // The onset-shift band of each envelope band: that of its middle mode (the NPZ bands
+        // are the same one-third octaves, to about 0.1 %).
+        npzShiftBand_.assign(size_t(z.numBands), 0);
+        for (int band = 0; band < z.numBands; ++band)
+        {
+            const size_t bs = size_t(band);
+            npzShiftBand_[bs] = bandEnd_[bs] > bandStart_[bs]
+                                    ? modeBand_[size_t((bandStart_[bs] + bandEnd_[bs] - 1) / 2)]
+                                    : static_cast<uint8_t>(std::min(band, kExcitationBands - 1));
+        }
     }
     if (p.contactPermode)
     {
@@ -1156,10 +1173,19 @@ void FastEngine::sumComponents(double t0, double t1) noexcept
             const size_t bs = size_t(band);
             if (bandEnd_[bs] <= bandStart_[bs])
                 continue;
+            // With an onset shift the band envelope is read at (t - delay) x speed; before the
+            // delay it holds its first frame (envelopeAt clamps at 0).
+            double te0 = t0 - c.tStrike, te1 = t1 - c.tStrike;
+            if (c.envShift)
+            {
+                const size_t j = npzShiftBand_[bs];
+                te0 = (te0 - static_cast<double>(c.envDelay[j])) * static_cast<double>(c.envSpeed[j]);
+                te1 = (te1 - static_cast<double>(c.envDelay[j])) * static_cast<double>(c.envSpeed[j]);
+            }
             std::fill(c.em0.begin() + bandStart_[bs], c.em0.begin() + bandEnd_[bs],
-                      static_cast<float>(envelopeAt(c, band, t0 - c.tStrike)));
+                      static_cast<float>(envelopeAt(c, band, te0)));
             std::fill(c.em1.begin() + bandStart_[bs], c.em1.begin() + bandEnd_[bs],
-                      static_cast<float>(envelopeAt(c, band, t1 - c.tStrike)));
+                      static_cast<float>(envelopeAt(c, band, te1)));
         }
     }
     nKinks_ = 0;
@@ -1758,6 +1784,7 @@ void FastEngine::setTuning(const Tuning& t, const float* modeGains) noexcept
         else
             excitationModeGains(t.articulations[s], bake_->freqHz.data(), n_, row);
         excGainOn_[s] = hasBandGains(t.articulations[s]) ? 1 : 0;
+        onsetShiftOn_[s] = hasOnsetShift(t.articulations[s]) ? 1 : 0;
     }
     if (c.edgeRemapExponent != remapExp_ && c.edgeRemapExponent > 0.0)
     {
@@ -1989,6 +2016,17 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     comp.frameRestart = frameRestart_;
     if (comp.envOn)
         startEnvelope(comp, velocity);
+    // This articulation's onset shift (docs/TUNING.md), kept with the strike: a later change
+    // applies from the next strike.
+    const ArticulationTuning& art = slotCurve_[size_t(slotIndex)];
+    const bool shift = onsetShiftOn_[size_t(slotIndex)] != 0;
+    comp.envShift = comp.envOn && shift;
+    if (comp.envShift)
+        for (size_t j = 0; j < size_t(kExcitationBands); ++j)
+        {
+            comp.envDelay[j] = static_cast<float>(art.delayMs[j] * 1e-3);
+            comp.envSpeed[j] = static_cast<float>(art.speed[j]);
+        }
     if (p.bandEnvOnset)
     {
         const double ef = clamp01(1.0 - rawPos / 0.5);
@@ -2023,17 +2061,30 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
                 scratchPkT_[i] = scratchPkT_[i] * sm;
             }
         }
-        comp.rampOn = ef > 0.1 && !comp.envOn; // lines 848-851
+        // Lines 848-851: the onset ramp runs for strikes towards the edge. The articulation's
+        // onset shift moves each mode's peak time to peak / speed + delay, never below 0. A
+        // strike without a ramp has peak time 0, so there a delay brings the band in over
+        // the delay and the speed has nothing to act on.
+        const bool baseRamp = ef > 0.1 && !comp.envOn;
+        comp.rampOn = baseRamp || (shift && !comp.envOn);
         if (comp.rampOn)
             for (size_t i = 0; i < n; ++i)
             {
                 // ramp = clamp(bf + (1 - bf) * te / pt, 0, 1) (lines 896-901); 1 without a peak time
-                const double pt = scratchPkT_[i] > 0.001 ? scratchPkT_[i] : 0.0;
+                double pt = baseRamp && scratchPkT_[i] > 0.001 ? scratchPkT_[i] : 0.0;
+                if (shift)
+                {
+                    const size_t j = modeBand_[i];
+                    pt = pt / art.speed[j] + art.delayMs[j] * 1e-3;
+                    pt = pt > 0.001 ? pt : 0.0;
+                }
                 comp.pt[i] = pt;
                 comp.rc0[i] = pt > 0.0 ? static_cast<float>(p.birthFrac) : 1.0f;
                 comp.rsl[i] = pt > 0.0 ? static_cast<float>((1.0 - p.birthFrac) / pt) : 0.0f;
                 comp.ptMax = std::max(comp.ptMax, pt);
             }
+        if (comp.rampOn && !baseRamp && comp.ptMax <= 0.0)
+            comp.rampOn = false; // the shift leaves every peak at 0: no ramp
         comp.onsetOn = s.onsetGainsActive && ef < 0.9;
         if (comp.onsetOn)
         {

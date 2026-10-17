@@ -7,6 +7,7 @@
 
 #include "Bake.h"
 
+#include <array>
 #include <vector>
 
 namespace cymbalis::tuning
@@ -60,6 +61,20 @@ struct ArticulationField
     double ArticulationTuning::*member;
 };
 const std::vector<ArticulationField>& articulationFields();
+
+// The per-band values of an articulation: one value per one-third-octave band each, saved
+// as all 22 (lowest band first) when any differs from the bake.
+struct BandField
+{
+    const char* key;
+    const char* title;    // row title in the window
+    const char* unit;
+    double lo, hi, flat;  // slider range; FLAT sets every band to `flat` (no change)
+    int decimals;
+    std::array<double, kExcitationBands> ArticulationTuning::*member;
+    bool logarithmic;     // the slider is logarithmic (speed)
+};
+const std::vector<BandField>& bandFields();
 
 constexpr const char* kFormat = "cymbalis-tuning";
 constexpr int kVersion = 1;

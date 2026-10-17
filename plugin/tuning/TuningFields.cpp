@@ -85,6 +85,16 @@ const std::vector<ArticulationField>& articulationFields()
     return fields;
 }
 
+const std::vector<BandField>& bandFields()
+{
+    static const std::vector<BandField> fields {
+        { kBandGainsKey, "GAIN", "dB", kBandGainMinDb, kBandGainMaxDb, 0.0, 1, &ArticulationTuning::bandDb, false },
+        { kOnsetDelayKey, "ONSET DELAY", "ms", kOnsetDelayMinMs, kOnsetDelayMaxMs, 0.0, 1, &ArticulationTuning::delayMs, false },
+        { kOnsetSpeedKey, "ONSET SPEED", "x", kOnsetSpeedMin, kOnsetSpeedMax, 1.0, 2, &ArticulationTuning::speed, true },
+    };
+    return fields;
+}
+
 namespace
 {
 juce::String idOf (const BakeData& b, size_t s) { return b.slots[s].id; }
@@ -122,15 +132,16 @@ juce::var articulationObject (const BakeData& b, const Tuning& t, bool onlyChang
                 any = true;
             }
         }
-        // The excitation band gains: all 22 when any of them differs.
-        if (! onlyChanged || t.articulations[s].bandDb != b.tuning.articulations[s].bandDb)
-        {
-            juce::Array<juce::var> bands;
-            for (double g : t.articulations[s].bandDb)
-                bands.add (g);
-            a->setProperty (kBandGainsKey, bands);
-            any = true;
-        }
+        // The per-band values (gains, onset delays, onset speeds): all 22 when any differs.
+        for (const auto& f : bandFields())
+            if (! onlyChanged || t.articulations[s].*(f.member) != b.tuning.articulations[s].*(f.member))
+            {
+                juce::Array<juce::var> bands;
+                for (double g : t.articulations[s].*(f.member))
+                    bands.add (g);
+                a->setProperty (f.key, bands);
+                any = true;
+            }
         if (any)
         {
             a->setProperty ("entry", juce::String (b.slots[s].name));
@@ -212,25 +223,29 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
                 {
                     if (q.name.toString() == "entry")
                         continue;
-                    if (q.name.toString() == kBandGainsKey)
+                    bool known = false;
+                    for (const auto& f : bandFields())
                     {
+                        if (q.name.toString() != f.key)
+                            continue;
                         const auto* bands = q.value.getArray();
+                        const juce::String name = p.name.toString() + "." + f.key;
                         if (bands == nullptr || bands->size() != kExcitationBands)
-                            return p.name.toString() + "." + kBandGainsKey + " needs " + juce::String (kExcitationBands)
-                                   + " values.";
+                            return name + " needs " + juce::String (kExcitationBands) + " values.";
                         for (int j = 0; j < kExcitationBands; ++j)
                         {
                             const auto& item = (*bands)[j];
                             const double g = (double) item;
                             const bool number = item.isDouble() || item.isInt() || item.isInt64();
-                            if (! number || ! std::isfinite (g) || g < kBandGainMinDb - 1e-9 || g > kBandGainMaxDb + 1e-9)
-                                return p.name.toString() + "." + kBandGainsKey + " values must lie in "
-                                       + juce::String (kBandGainMinDb) + " to +" + juce::String (kBandGainMaxDb) + " dB.";
-                            t.articulations[(size_t) slot].bandDb[(size_t) j] = g;
+                            if (! number || ! std::isfinite (g) || g < f.lo - 1e-9 || g > f.hi + 1e-9)
+                                return name + " values must lie in " + juce::String (f.lo) + " to " + juce::String (f.hi)
+                                       + " " + f.unit + ".";
+                            (t.articulations[(size_t) slot].*(f.member))[(size_t) j] = g;
                         }
-                        continue;
+                        known = true;
                     }
-                    bool known = false;
+                    if (known)
+                        continue;
                     for (const auto& f : articulationFields())
                         if (q.name.toString() == f.key)
                         {
@@ -260,8 +275,9 @@ bool isModified (const BakeData& b, const Tuning& t)
         for (const auto& f : articulationFields())
             if (! juce::exactlyEqual (t.articulations[s].*(f.member), b.tuning.articulations[s].*(f.member)))
                 return true;
-        if (t.articulations[s].bandDb != b.tuning.articulations[s].bandDb)
-            return true;
+        for (const auto& f : bandFields())
+            if (t.articulations[s].*(f.member) != b.tuning.articulations[s].*(f.member))
+                return true;
     }
     return false;
 }

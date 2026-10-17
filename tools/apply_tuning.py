@@ -18,6 +18,8 @@ tuning block it already has). Then:
   * each articulation's level at velocity 1.0 goes into slots[].level_trim.gain_db;
   * each articulation's excitation band gains go into its slot's excitation data,
     slots[].excitation_band_gains_db (band edges and 22 gains in dB); all 0 dB removes it;
+  * each articulation's onset shift goes into its slot's onset data, slots[].onset_shift
+    (band edges, 22 delays in ms and 22 speeds); delay 0 and speed 1 everywhere removes it;
   * every other value that differs from the bake's own value goes into the bake's
     "tuning" block, which the plugin's bake loader applies. A value equal to the bake's own
     drops out of the block, so applying the same file twice gives the same bake.
@@ -57,6 +59,10 @@ BANDS_KEY, SLOT_BANDS_KEY = 'band_gains_db', 'excitation_band_gains_db'
 N_BANDS = 22
 BAND_MIN_DB, BAND_MAX_DB = -24.0, 12.0
 BAND_EDGES_HZ = [round(11404.0 * 2.0 ** ((j - 21) / 3.0), 3) for j in range(N_BANDS + 1)]
+# Onset shift per band (docs/TUNING.md): delay in ms and speed, in the same bands.
+DELAY_KEY, SPEED_KEY, SLOT_SHIFT_KEY = 'onset_delay_ms', 'onset_speed', 'onset_shift'
+DELAY_MIN_MS, DELAY_MAX_MS = -50.0, 200.0
+SPEED_MIN, SPEED_MAX = 0.25, 4.0
 POSITIVE = ('ring_length', 'edge_velocity_remap_exponent', 'wander_rate_hz')
 
 
@@ -105,6 +111,31 @@ def slot_bands(slot):
     return [finite(f'slot {slot["name"]} band gain', g) for g in gains]
 
 
+def slot_shift(slot):
+    """The slot's current onset shift: (22 delays in ms, 22 speeds); 0 and 1 without the entry."""
+    entry = slot.get(SLOT_SHIFT_KEY)
+    if not entry:
+        return [0.0] * N_BANDS, [1.0] * N_BANDS
+    edges, delays, speeds = entry.get('band_edges_hz'), entry.get('delay_ms'), entry.get('speed')
+    if not all(isinstance(x, list) for x in (edges, delays, speeds)) \
+            or len(edges) != N_BANDS + 1 or len(delays) != N_BANDS or len(speeds) != N_BANDS:
+        fail(f'slot {slot["name"]}: {SLOT_SHIFT_KEY} needs {N_BANDS + 1} band edges, {N_BANDS} delays and {N_BANDS} speeds')
+    if any(abs(finite('band edge', e) - want) > 0.5 for e, want in zip(edges, BAND_EDGES_HZ)):
+        fail(f'slot {slot["name"]}: {SLOT_SHIFT_KEY} band edges differ from the engine\'s bands')
+    return ([finite(f'slot {slot["name"]} onset delay', d) for d in delays],
+            [finite(f'slot {slot["name"]} onset speed', v) for v in speeds])
+
+
+def band_values(name, v, lo, hi, unit):
+    """22 values of a band row from the tuning file, each within lo..hi."""
+    if not isinstance(v, list) or len(v) != N_BANDS:
+        fail(f'{name} needs {N_BANDS} values')
+    vals = [finite(f'{name}[{j}]', g) for j, g in enumerate(v)]
+    if any(g < lo or g > hi for g in vals):
+        fail(f'{name} values must lie in {lo:g} to {hi:g} {unit}')
+    return vals
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('tuning', help='tuning file written by the Tuning window (SAVE)')
@@ -139,6 +170,7 @@ def main():
     ids = {articulation_id(s): i for i, s in enumerate(bake['slots'])}
     curves = {aid: dict(block.get('articulations', {}).get(aid, {})) for aid in ids}
     bands = {aid: slot_bands(bake['slots'][i]) for aid, i in ids.items()}
+    shifts = {aid: slot_shift(bake['slots'][i]) for aid, i in ids.items()}
 
     # The file's changes on top of the bake's current values.
     for key, v in (tun.get('cymbal') or {}).items():
@@ -165,12 +197,11 @@ def main():
             elif key in (VEL06_KEY, VEL03_KEY):
                 curves[aid][key] = finite(f'{aid}.{key}', v)
             elif key == BANDS_KEY:
-                if not isinstance(v, list) or len(v) != N_BANDS:
-                    fail(f'{aid}.{key} needs {N_BANDS} values')
-                gains = [finite(f'{aid}.{key}[{j}]', g) for j, g in enumerate(v)]
-                if any(g < BAND_MIN_DB or g > BAND_MAX_DB for g in gains):
-                    fail(f'{aid}.{key} values must lie in {BAND_MIN_DB:g} to +{BAND_MAX_DB:g} dB')
-                bands[aid] = gains
+                bands[aid] = band_values(f'{aid}.{key}', v, BAND_MIN_DB, BAND_MAX_DB, 'dB')
+            elif key == DELAY_KEY:
+                shifts[aid] = (band_values(f'{aid}.{key}', v, DELAY_MIN_MS, DELAY_MAX_MS, 'ms'), shifts[aid][1])
+            elif key == SPEED_KEY:
+                shifts[aid] = (shifts[aid][0], band_values(f'{aid}.{key}', v, SPEED_MIN, SPEED_MAX, 'x'))
             else:
                 fail(f'unknown articulation value {aid}.{key}')
 
@@ -217,6 +248,20 @@ def main():
         else:
             slot.pop(SLOT_BANDS_KEY, None)
 
+    # Onset shifts: stored with the slot's onset data; the engine applies them to that
+    # articulation's band envelopes and onset peak times at each strike.
+    for aid, (delays, speeds) in shifts.items():
+        slot = bake['slots'][ids[aid]]
+        if any(d != 0.0 for d in delays) or any(v != 1.0 for v in speeds):
+            slot[SLOT_SHIFT_KEY] = {
+                'band_edges_hz': BAND_EDGES_HZ,
+                'delay_ms': [round(d, 3) for d in delays],
+                'speed': [round(v, 4) for v in speeds],
+                'set_by': f'tools/apply_tuning.py from {os.path.basename(args.tuning)} ({now})',
+            }
+        else:
+            slot.pop(SLOT_SHIFT_KEY, None)
+
     print(f'{os.path.basename(bake_path)}:')
     for aid, i in ids.items():
         lt = bake['slots'][i].get('level_trim') or {}
@@ -224,6 +269,10 @@ def main():
         if SLOT_BANDS_KEY in bake['slots'][i]:
             gains = bake['slots'][i][SLOT_BANDS_KEY]['gains_db']
             print(f'  {"":14s} band gains {" ".join(f"{g:+g}" for g in gains)} dB')
+        if SLOT_SHIFT_KEY in bake['slots'][i]:
+            sh = bake['slots'][i][SLOT_SHIFT_KEY]
+            print(f'  {"":14s} onset delay {" ".join(f"{d:+g}" for d in sh["delay_ms"])} ms')
+            print(f'  {"":14s} onset speed {" ".join(f"{v:g}" for v in sh["speed"])}')
     print('  tuning block: ' + (json.dumps(new_cymbal) if new_cymbal else 'no cymbal values'))
     if args.dry_run:
         print('  (dry run: nothing written)')

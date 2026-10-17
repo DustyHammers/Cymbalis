@@ -148,6 +148,10 @@ private:
         int frameBlocksLeft = 0;    // control blocks until the in-frame decay restarts
         double envWindow = 1.5;     // its envelope window (edge_band_env_onset_s)
         bool frameRestart = true;   // its in-frame decay restarts every frame (else: none)
+        // Its articulation's onset shift at the strike (docs/TUNING.md): band j's envelope
+        // is read at (t - envDelay[j]) x envSpeed[j] (seconds). Only with envShift.
+        bool envShift = false;
+        std::array<float, kExcitationBands> envDelay {}, envSpeed {};
         // Per mode, padded to nPad_. The arrays the control loop streams are float.
         std::vector<float> Br, Bi;      // amplitude at the segment's reference time
         std::vector<float> D;           // its own decay since then, at the next control point
@@ -226,6 +230,10 @@ private:
     // whether any of them is not 1.
     std::vector<float> excGain_;
     std::vector<uint8_t> excGainOn_;
+    // Each mode's one-third-octave band (excitationBand), and per slot whether its onset
+    // shift (slotCurve_[s].delayMs, .speed) is not the identity.
+    std::vector<uint8_t> modeBand_;
+    std::vector<uint8_t> onsetShiftOn_;
     double remapExp_ = 0.5;    // NPZ velocity remap exponent (0.5: sqrt, line 1049)
     double envWindowS_ = 1.5;  // NPZ band envelope window after an edge strike
     bool frameRestart_ = true; // the in-frame decay restarts every 20 ms
@@ -260,6 +268,7 @@ private:
     bool envBake_ = false;
     int frameBlocks_ = 0;
     std::vector<int> bandStart_, bandEnd_; // mode range of each envelope band
+    std::vector<uint8_t> npzShiftBand_;    // the onset-shift band of each envelope band
     std::vector<double> remapTable_;       // the NPZ velocities normalised to 0..1, ^ remapExp_ (line 1049)
     std::vector<double> bandVal0_, bandVal1_; // per band, scratch for one block
 

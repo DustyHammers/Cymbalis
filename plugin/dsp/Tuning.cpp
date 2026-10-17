@@ -92,6 +92,14 @@ bool hasBandGains(const ArticulationTuning& a) noexcept
     return false;
 }
 
+bool hasOnsetShift(const ArticulationTuning& a) noexcept
+{
+    for (int j = 0; j < kExcitationBands; ++j)
+        if (a.delayMs[size_t(j)] != 0.0 || a.speed[size_t(j)] != 1.0)
+            return true;
+    return false;
+}
+
 void excitationModeGains(const ArticulationTuning& a, const double* freqHz, int numModes, float* out) noexcept
 {
     std::array<float, kExcitationBands> gain {};

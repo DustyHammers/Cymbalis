@@ -65,8 +65,12 @@ Engine::Engine(std::shared_ptr<const BakeData> bake, EngineConfig config)
         if (bake_->hasTuningBlock)
             missing += " the bake's tuning block (docs/TUNING.md)";
         for (const auto& s : bake_->slots)
+        {
             if (hasBandGains(s.articulation))
                 missing += " excitation band gains (slot " + s.name + ")";
+            if (hasOnsetShift(s.articulation))
+                missing += " onset shifts (slot " + s.name + ")";
+        }
         if (!missing.empty())
             throw BakeError("Engine does not implement:" + missing + "; use FastEngine");
     }
