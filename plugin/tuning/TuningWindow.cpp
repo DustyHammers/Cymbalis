@@ -198,6 +198,25 @@ void ValueRow::paint (juce::Graphics& g)
     }
 }
 
+ButtonRow::ButtonRow (const juce::String& n, const juce::String& b) : note ({}, n), button (b)
+{
+    note.setColour (juce::Label::textColourId, ui::palette::secondary);
+    addAndMakeVisible (note);
+    button.onClick = [this] {
+        if (onClick)
+            onClick();
+    };
+    addAndMakeVisible (button);
+}
+
+void ButtonRow::resized()
+{
+    auto r = getLocalBounds().reduced (4, 2);
+    r.removeFromRight (kRowHeight - 4); // in line with the other rows' sliders
+    button.setBounds (r.removeFromRight (220));
+    note.setBounds (r);
+}
+
 ToggleRow::ToggleRow (const juce::String& n) : toggle (n)
 {
     toggle.onClick = [this] {
@@ -424,6 +443,7 @@ void TuningPanel::rebuild()
     bake = processor.presetBake (preset);
     headers.clear();
     rows.clear();
+    buttonRows.clear();
     refreshers.clear();
     restartRow.reset();
     bandEq.reset();
@@ -469,6 +489,20 @@ void TuningPanel::rebuild()
                 });
                 place (*row);
                 rows.push_back (std::move (row));
+            }
+            // A shoulder articulation of SMOKE FLAT RIDE or HAMMERED THIN RIDE: Nova's
+            // shoulder-minus-tip band gains, on request.
+            if (const auto* profile = novaShoulderProfile (*bake, cymbalis::kPresets[(size_t) preset].id, s))
+            {
+                const bool bell = profile == &kNovaShoulderBell;
+                auto row = std::make_unique<ButtonRow> (juce::String ("Band gains: Nova's ") + (bell ? "bell" : "bow")
+                                                            + " shoulder minus tip",
+                                                        "NOVA SHOULDER PROFILE");
+                row->onClick = [this, s, profile] {
+                    change ([&] (Tuning& t) { t.articulations[s].bandDb = *profile; });
+                };
+                place (*row);
+                buttonRows.push_back (std::move (row));
             }
         }
         // Per-band values of the chosen articulation: excitation gains and onset shifts.

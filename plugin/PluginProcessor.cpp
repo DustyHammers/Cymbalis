@@ -53,10 +53,10 @@ CymbalisProcessor::CymbalisProcessor()
     blend1 = apvts.getRawParameterValue (paramBlend1);
     blend2 = apvts.getRawParameterValue (paramBlend2);
     for (size_t i = 0; i < notes.size(); ++i)
-    {
         notes[i].store (cymbalis::kSlots[i].defaultNote);
-        sticks[i].store ((int) cymbalis::kSlots[i].defaultStick);
-    }
+    for (size_t k = 0; k < sticks.size(); ++k)
+        for (size_t i = 0; i < notes.size(); ++i)
+            sticks[k][i].store ((int) cymbalis::kPresets[k].slots[i].defaultStick);
     parsePresets();
 #if CYMBALIS_TUNING
     size_t maxGains = 0;
@@ -427,7 +427,7 @@ void CymbalisProcessor::strikeSlots (Cymbal& c, int note, double velocity, doubl
         if (notes[s].load() != note)
             continue;
         const bool choice = info.slots[s].stick == cymbalis::StickDisplay::choice;
-        const int stick = choice && sticks[s].load() == (int) cymbalis::Stick::shoulder ? 1 : 0;
+        const int stick = choice && sticks[(size_t) c.preset][s].load() == (int) cymbalis::Stick::shoulder ? 1 : 0;
         const int entry = preset.entry[s][(size_t) stick];
         if (entry < 0)
             continue;
@@ -477,10 +477,19 @@ void CymbalisProcessor::setSlotNote (int slot, int note) noexcept
         notes[(size_t) slot].store (juce::jlimit (-1, 127, note));
 }
 
-void CymbalisProcessor::setSlotStick (int slot, cymbalis::Stick stick) noexcept
+void CymbalisProcessor::setSlotStick (int preset, int slot, cymbalis::Stick stick) noexcept
 {
-    if (slot >= 0 && slot < cymbalis::kNumSlots && cymbalis::hasStickChoice (slot) && stick != cymbalis::Stick::none)
-        sticks[(size_t) slot].store ((int) stick);
+    if (preset >= 0 && preset < cymbalis::kNumPresets && slot >= 0 && slot < cymbalis::kNumSlots
+        && cymbalis::hasStickChoice (preset, slot) && stick != cymbalis::Stick::none)
+        sticks[(size_t) preset][(size_t) slot].store ((int) stick);
+}
+
+// Session key of a row's stick in a preset: NOVA RIDE keeps the keys it had before the other
+// presets had a choice (stick_BELL), the others name the preset (stick_smoke_flat_ride_BELL).
+static juce::String stickKey (int preset, int slot)
+{
+    return juce::String ("stick_") + (preset == 0 ? juce::String() : juce::String (cymbalis::kPresets[(size_t) preset].id) + "_")
+           + cymbalis::kSlots[(size_t) slot].label;
 }
 
 void CymbalisProcessor::setEditorSize (int w, int h) noexcept
@@ -490,7 +499,7 @@ void CymbalisProcessor::setEditorSize (int w, int h) noexcept
 }
 
 // The parameters, plus the session settings that are not automatable: MIDI channel,
-// note and stick per slot, preset and editor size (UI_SPEC section 9).
+// note per slot, stick per slot and preset, preset and editor size (UI_SPEC section 9).
 void CymbalisProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
@@ -501,12 +510,11 @@ void CymbalisProcessor::getStateInformation (juce::MemoryBlock& destData)
     session->setAttribute ("preset", cymbalis::kPresets[(size_t) presetIndex()].id);
     session->setAttribute ("midiChannel", channel.load());
     for (size_t i = 0; i < notes.size(); ++i)
-    {
         session->setAttribute (juce::String ("note_") + cymbalis::kSlots[i].label, notes[i].load());
-        if (cymbalis::hasStickChoice ((int) i)) // kept whatever preset plays
-            session->setAttribute (juce::String ("stick_") + cymbalis::kSlots[i].label,
-                                   cymbalis::stickName ((cymbalis::Stick) sticks[i].load()));
-    }
+    for (int k = 0; k < cymbalis::kNumPresets; ++k) // every preset's, whatever preset plays
+        for (int i = 0; i < cymbalis::kNumSlots; ++i)
+            if (cymbalis::hasStickChoice (k, i))
+                session->setAttribute (stickKey (k, i), cymbalis::stickName (slotStick (k, i)));
     session->setAttribute ("editorWidth", editorWidth.load());
     session->setAttribute ("editorHeight", editorHeight.load());
 #if CYMBALIS_TUNING
@@ -528,13 +536,15 @@ void CymbalisProcessor::setStateInformation (const void* data, int sizeInBytes)
         {
             const auto& slot = cymbalis::kSlots[i];
             setSlotNote ((int) i, session->getIntAttribute (juce::String ("note_") + slot.label, slot.defaultNote));
-            if (cymbalis::hasStickChoice ((int) i))
-            {
-                const auto stick = session->getStringAttribute (juce::String ("stick_") + slot.label,
-                                                                cymbalis::stickName (slot.defaultStick));
-                setSlotStick ((int) i, stick == "TIP" ? cymbalis::Stick::tip : cymbalis::Stick::shoulder);
-            }
         }
+        for (int k = 0; k < cymbalis::kNumPresets; ++k)
+            for (int i = 0; i < cymbalis::kNumSlots; ++i)
+                if (cymbalis::hasStickChoice (k, i))
+                {
+                    const auto stick = session->getStringAttribute (
+                        stickKey (k, i), cymbalis::stickName (cymbalis::kPresets[(size_t) k].slots[(size_t) i].defaultStick));
+                    setSlotStick (k, i, stick == "TIP" ? cymbalis::Stick::tip : cymbalis::Stick::shoulder);
+                }
         setEditorSize (session->getIntAttribute ("editorWidth", 0), session->getIntAttribute ("editorHeight", 0));
         const auto id = session->getStringAttribute ("preset", cymbalis::kPresets[0].id);
         int preset = 0;

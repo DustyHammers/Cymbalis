@@ -3,7 +3,8 @@
 // The five articulation rows (docs/UI_SPEC.md sections 7-8) and the three presets
 // (UI_SPEC section 8, docs/PORT_MAP.md "Live-engine decisions"). Each preset maps every
 // row to the bake entries it plays with TIP and with SHOULDER (by entry name in the
-// preset's bake, tools/bake_preset.py), or to none, and says how its stick box shows.
+// preset's bake, tools/bake_preset.py), or to none, says how its stick box shows and, where
+// it offers both sticks, which one a row starts with.
 
 #include <array>
 
@@ -17,7 +18,7 @@ enum class Blend
     bowToEdge  // Blend Position 2: position 0.5 - 0.5 * blend_2
 };
 
-// Stick choice of a row. Saved with the session; not a parameter.
+// Stick choice of a row, per preset. Saved with the session; not a parameter.
 enum class Stick
 {
     none = -1, // no choice: a dash
@@ -29,7 +30,6 @@ enum class Stick
 struct SlotInfo
 {
     const char* label;           // row label in the editor (unless the preset names the row), and its session key
-    Stick defaultStick;          // Nova Ride's default stick (Stick::none: no choice)
     int defaultNote;             // MIDI note, -1 = unassigned
     Blend blend;
     double basePosition;         // 0 edge, 0.5 bow, 1 bell
@@ -38,17 +38,17 @@ struct SlotInfo
 constexpr int kNumSlots = 5;
 
 constexpr std::array<SlotInfo, kNumSlots> kSlots {{
-    { "BELL", Stick::shoulder, 60, Blend::bellToBow, 1.0 },
-    { "BOW", Stick::tip, 62, Blend::bowToEdge, 0.5 },
-    { "EDGE", Stick::none, -1, Blend::none, 0.0 },
-    { "BELL2", Stick::tip, 61, Blend::bellToBow, 1.0 },
-    { "BOW2", Stick::shoulder, 63, Blend::bowToEdge, 0.5 },
+    { "BELL", 60, Blend::bellToBow, 1.0 },
+    { "BOW", 62, Blend::bowToEdge, 0.5 },
+    { "EDGE", -1, Blend::none, 0.0 },
+    { "BELL2", 61, Blend::bellToBow, 1.0 },
+    { "BOW2", 63, Blend::bowToEdge, 0.5 },
 }};
 
 // How a row's stick box shows in a preset.
 enum class StickDisplay
 {
-    choice,   // TIP / SHOULDER popup (Nova Ride's bell and bow rows)
+    choice,   // TIP / SHOULDER popup (every preset's bell and bow rows)
     tip,      // fixed, shows TIP
     shoulder, // fixed, shows SHOULDER
     dash      // fixed, shows a dash
@@ -59,6 +59,7 @@ struct PresetSlot
     const char* tipEntry;      // bake entry played with TIP ("" = the row is silent)
     const char* shoulderEntry; // bake entry played with SHOULDER
     StickDisplay stick;
+    Stick defaultStick;        // the stick a row with a choice starts with (Stick::none: no choice)
     const char* label = nullptr; // the row's label in this preset (nullptr: the row's own, SlotInfo::label)
     float labelSpacing = 0.0f;   // its letter spacing in design units (UI_SPEC section 4)
 };
@@ -75,46 +76,45 @@ struct PresetInfo
 
 constexpr int kNumPresets = 3;
 
+// Every EDGE row is SHOULDER only. The other rows choose TIP or SHOULDER and start with the
+// stick of the articulation they played before the shoulder versions existed.
 constexpr std::array<PresetInfo, kNumPresets> kPresets {{
-    // Nova Ride bake entries: BELL bell_shoulder, BOW bow_tip, EDGE no overlay,
-    // BELL2 bell_tip, BOW2 bow_shoulder.
+    // Nova Ride bake entries: BELL bell_shoulder, BOW bow_tip, EDGE edge (a copy of
+    // bow_shoulder played at the edge), BELL2 bell_tip, BOW2 bow_shoulder.
     { "nova_ride", "NOVA RIDE", "nova_ride.bake.json", "Nova.png", {{
-        { "BELL2", "BELL", StickDisplay::choice },
-        { "BOW", "BOW2", StickDisplay::choice },
-        { "EDGE", "EDGE", StickDisplay::dash },
-        { "BELL2", "BELL", StickDisplay::choice },
-        { "BOW", "BOW2", StickDisplay::choice },
+        { "BELL2", "BELL", StickDisplay::choice, Stick::shoulder },
+        { "BOW", "BOW2", StickDisplay::choice, Stick::tip },
+        { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },
+        { "BELL2", "BELL", StickDisplay::choice, Stick::tip },
+        { "BOW", "BOW2", StickDisplay::choice, Stick::shoulder },
     }} },
-    // 602: no bell. The bell rows play CENTER (a copy of the bow, tuned on its own) and are
+    // 602: no bell. The bell rows play center (a copy of the bow, tuned on its own) and are
     // labelled CENTER and CENTER2, tighter than the other labels so that they end clear of
-    // the stick box.
+    // the stick box. The shoulder entries are copies of the tip ones, tuned on their own.
     { "smoke_flat_ride", "SMOKE FLAT RIDE", "smoke_flat_ride.bake.json", "SmokeFlatRide.png", {{
-        { "CENTER", "CENTER", StickDisplay::dash, "CENTER", 1.5f },
-        { "BOW", "BOW", StickDisplay::dash },
-        { "EDGE", "EDGE", StickDisplay::dash },
-        { "CENTER", "CENTER", StickDisplay::dash, "CENTER2", 0.0f },
-        { "BOW", "BOW", StickDisplay::dash },
+        { "CENTER", "CENTER_SHOULDER", StickDisplay::choice, Stick::tip, "CENTER", 1.5f },
+        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
+        { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },
+        { "CENTER", "CENTER_SHOULDER", StickDisplay::choice, Stick::tip, "CENTER2", 0.0f },
+        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
     }}, "CENTER" },
-    // Bettis: no overlays; one entry per position.
+    // Bettis: no overlays; one entry per position, and the shoulder copies of the bell and bow.
     { "hammered_thin_ride", "HAMMERED THIN RIDE", "hammered_thin_ride.bake.json", "HammeredThinRide.png", {{
-        { "BELL", "BELL", StickDisplay::tip },
-        { "BOW", "BOW", StickDisplay::tip },
-        { "EDGE", "EDGE", StickDisplay::shoulder },
-        { "BELL", "BELL", StickDisplay::tip },
-        { "BOW", "BOW", StickDisplay::tip },
+        { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
+        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
+        { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },
+        { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
+        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
     }} },
 }};
 
 constexpr int kDefaultMidiChannel = 16;
 
-// Rows that offer a TIP / SHOULDER choice in some preset; their choice is saved with the
-// session.
-inline bool hasStickChoice (int slot) noexcept
+// Whether a row offers a TIP / SHOULDER choice in a preset; that choice is saved with the
+// session, per preset.
+inline bool hasStickChoice (int preset, int slot) noexcept
 {
-    for (const auto& preset : kPresets)
-        if (preset.slots[(size_t) slot].stick == StickDisplay::choice)
-            return true;
-    return false;
+    return kPresets[(size_t) preset].slots[(size_t) slot].stick == StickDisplay::choice;
 }
 
 // The label of a row in a preset.

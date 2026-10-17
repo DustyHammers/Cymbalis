@@ -1,4 +1,5 @@
 #include "TuningFields.h"
+#include "ShoulderProfiles.h"
 
 #include <cmath>
 
@@ -136,6 +137,19 @@ const std::vector<CymbalBandField>& cymbalBandFields()
         { { kRingBandsKey, "RING LENGTH PER BAND", "x", kRingBandMin, kRingBandMax, 1.0, 2, true }, Group::cymbal, &CymbalTuning::ringBand },
     };
     return fields;
+}
+
+const std::array<double, kExcitationBands>* novaShoulderProfile (const BakeData& b, const juce::String& presetId,
+                                                                  size_t slot)
+{
+    if (presetId == "nova_ride" || slot >= b.slots.size())
+        return nullptr;
+    const auto& id = b.slots[slot].id;
+    if (id == "bell_shoulder")
+        return &kNovaShoulderBell;
+    if (id == "bow_shoulder" || id == "center_shoulder")
+        return &kNovaShoulderBow;
+    return nullptr;
 }
 
 namespace

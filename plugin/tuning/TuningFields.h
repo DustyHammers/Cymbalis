@@ -109,6 +109,12 @@ struct CymbalBandField
 };
 const std::vector<CymbalBandField>& cymbalBandFields();
 
+// NOVA SHOULDER PROFILE (ShoulderProfiles.h): the band gains for a shoulder articulation
+// of SMOKE FLAT RIDE or HAMMERED THIN RIDE (bell profile for bell_shoulder, bow profile for
+// bow_shoulder and center_shoulder), or nullptr for any other articulation.
+const std::array<double, kExcitationBands>* novaShoulderProfile (const BakeData& bake, const juce::String& presetId,
+                                                                  size_t slot);
+
 constexpr const char* kFormat = "cymbalis-tuning";
 constexpr int kVersion = 1;
 

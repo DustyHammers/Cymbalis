@@ -172,13 +172,13 @@ jobs:
           done
 
       # Real mouse events through the AU and VST3 wrappers: change the MIDI channel, the slot
-      # notes (drag, menu, note list), a stick and the preset in the editor, and check the
-      # plugin's saved state (tools/cymbalis_uitest).
+      # notes (drag, menu, note list), a stick, the preset and a stick of that preset in the
+      # editor, and check the plugin's saved state (tools/cymbalis_uitest).
       - name: Editor mouse test (AU and VST3)
         timeout-minutes: 5
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
-          STEPS="channel drag reset none list stick preset"
+          STEPS="channel drag reset none list stick preset shoulder"
           echo "--- VST3 ---"
           "$UITEST" "$PWD/$VST3" $STEPS
           echo "--- AU ---"

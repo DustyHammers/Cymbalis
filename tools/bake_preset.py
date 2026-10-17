@@ -24,8 +24,10 @@ can prove that it parsed every value exactly.
     written as one row per velocity. Presets without velocity participation tables
     record tau_ref_ms for hertz_vel_scale.
   * copied entries (COPIED_ENTRIES): an entry with another entry's data under its own
-    articulation id ("articulation", "copy_of"), tuned on its own in the plugin; the
-    602's CENTER is a copy of its BOW.
+    articulation id ("articulation", "copy_of"), tuned on its own in the plugin: the
+    shoulder articulations of the 602 and Bettis, the 602's CENTER (a copy of its BOW) and
+    Nova's EDGE (a copy of BOW2, bow_shoulder, at the edge position). A copy named like an
+    existing entry replaces it in place: Nova's EDGE was the base preset at the edge.
 
 Usage:
     python tools/bake_preset.py --overrides-from tests/sequences/edge_3hits_15s.json --out bake.json
@@ -54,9 +56,16 @@ BOW_ONSET_EDGES = [50, 89, 178, 356, 713, 1425, 2851, 5702, 11404, 22050]   # li
 OPTIONAL_SHARED = ('pk_t_edge_by_vel_s', 'pk_t_edge_velocities')
 # Entries that copy another entry's data under their own articulation id, so that the plugin
 # tunes them on their own (docs/TUNING.md): (name, articulation id, source entry, position).
-# SMOKE FLAT RIDE's bell rows play CENTER (docs/UI_SPEC.md section 8).
+# A source can be an earlier copy. A copy named like an entry of the preset replaces that
+# entry where it stands. SMOKE FLAT RIDE's bell rows play CENTER; the rows' SHOULDER sticks
+# play the *_SHOULDER copies; every EDGE row is shoulder only (docs/UI_SPEC.md section 8).
 COPIED_ENTRIES = {
-    '602': [('CENTER', 'center', 'BOW', 1.0)],
+    'nova': [('EDGE', 'edge', 'BOW2', 0.0)],
+    '602': [('CENTER', 'center', 'BOW', 1.0),
+            ('BOW_SHOULDER', 'bow_shoulder', 'BOW', 0.5),
+            ('CENTER_SHOULDER', 'center_shoulder', 'CENTER', 1.0)],
+    'bettis': [('BELL_SHOULDER', 'bell_shoulder', 'BELL', 1.0),
+               ('BOW_SHOULDER', 'bow_shoulder', 'BOW', 0.5)],
 }
 
 
@@ -516,11 +525,18 @@ def bake(overrides, preset='nova', allow_manifest_mismatch=False):
     slot_blocks = [slot_block(eng, name, overlay, pos, preset) for name, overlay, pos, eng in engines]
     for blk, (name, overlay, pos, eng) in zip(slot_blocks, engines):
         blk['contact_force_python'] = enc_opt(python_contact_force(eng, strike_event, pos))
+    source_engine = [eng for _, _, _, eng in engines]  # the engine whose data each block holds
     for name, articulation, src_name, pos in COPIED_ENTRIES.get(preset, []):
-        k = [blk['name'] for blk in slot_blocks].index(src_name)
+        names = [blk['name'] for blk in slot_blocks]
+        k = names.index(src_name)
         blk = copied_entry(slot_blocks[k], name, articulation, pos)
-        blk['contact_force_python'] = enc_opt(python_contact_force(engines[k][3], strike_event, pos))
-        slot_blocks.append(blk)
+        blk['contact_force_python'] = enc_opt(python_contact_force(source_engine[k], strike_event, pos))
+        if name in names:  # replaces that entry where it stands
+            slot_blocks[names.index(name)] = blk
+            source_engine[names.index(name)] = source_engine[k]
+        else:
+            slot_blocks.append(blk)
+            source_engine.append(source_engine[k])
 
     out = {
         'format': BAKE_FORMAT,
