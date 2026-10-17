@@ -173,6 +173,16 @@ void CymbalisProcessor::startHitMeter (int row, int entry, double velocity, int 
     hitComplete.store (false);
 }
 
+bool CymbalisProcessor::onsetPeaks (int preset, int entry, std::array<float, cymbalis::kExcitationBands>& out) const noexcept
+{
+    if (preset < 0 || preset >= cymbalis::kNumPresets || entry < 0 || entry >= cymbalis::kMaxArticulations
+        || ! peakSet[(size_t) preset][(size_t) entry].load())
+        return false;
+    for (size_t j = 0; j < out.size(); ++j)
+        out[j] = peakMs[(size_t) preset][(size_t) entry][j].load (std::memory_order_relaxed);
+    return true;
+}
+
 CymbalisProcessor::Meters CymbalisProcessor::readMeters() noexcept
 {
     Meters m;

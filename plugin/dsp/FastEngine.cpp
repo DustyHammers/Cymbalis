@@ -230,8 +230,19 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
     for (size_t i = 0; i < n; ++i)
         modeBand_[i] = static_cast<uint8_t>(excitationBand(b.freqHz[i]));
     onsetShiftOn_.assign(b.slots.size(), 0);
+    shiftLayers_.assign(b.slots.size(), 0);
+    attackLayers_.assign(b.slots.size(), 0);
     for (size_t s = 0; s < b.slots.size(); ++s)
+    {
         onsetShiftOn_[s] = hasOnsetShift(b.slots[s].articulation) ? 1 : 0;
+        shiftLayers_[s] = hasShiftLayers(b.slots[s].articulation) ? 1 : 0;
+        attackLayers_[s] = hasAttackLayers(b.slots[s].articulation) ? 1 : 0;
+    }
+#if CYMBALIS_TUNING
+    onsetPeakMs_.assign(b.slots.size(), {});
+    for (auto& a : onsetPeakMs_)
+        a.fill(-1.0f);
+#endif
     // Each slot's attack band gains, and each mode's distance from 1 kHz in log frequency.
     for (size_t i = 0; i < n; ++i)
         bandHasModes_[modeBand_[i]] = true;
@@ -316,6 +327,7 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
         }
         bandVal0_.assign(size_t(z.numBands), 0.0);
         bandVal1_.assign(size_t(z.numBands), 0.0);
+        envPeakS_.assign(size_t(z.numBands), 0.0);
         // The onset-shift band of each envelope band: that of its middle mode (602 and Bettis:
         // the same one-third octaves, to about 0.1 %; Swish: 20 bands of its own, 100 Hz-10 kHz).
         npzShiftBand_.assign(size_t(z.numBands), 0);
@@ -1905,11 +1917,18 @@ void FastEngine::startEnvelope(Component& c, double velocity) noexcept
     for (int band = 0; band < nb; ++band)
     {
         double m = 0.0;
+        int kPeak = 0;
         for (int k = 0; k < nf; ++k)
         {
             const size_t at = size_t(k) * size_t(nb) + size_t(band);
-            m = std::max(m, r0[at] + (r1[at] - r0[at]) * c.envVt);
+            const double x = r0[at] + (r1[at] - r0[at]) * c.envVt;
+            if (x > m)
+            {
+                m = x;
+                kPeak = k;
+            }
         }
+        envPeakS_[size_t(band)] = kPeak * z.frameDurS;
         m *= c.envScale * (z.rmsCorrection.empty() ? 1.0 : z.rmsCorrection[size_t(band)]);
         std::fill(c.emax.begin() + bandStart_[size_t(band)], c.emax.begin() + bandEnd_[size_t(band)],
                   static_cast<float>(m));
@@ -2569,6 +2588,8 @@ void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecayS
             excitationModeGains(t.articulations[s], bake_->freqHz.data(), n_, row);
         excGainOn_[s] = hasBandGains(t.articulations[s]) ? 1 : 0;
         onsetShiftOn_[s] = hasOnsetShift(t.articulations[s]) ? 1 : 0;
+        shiftLayers_[s] = hasShiftLayers(t.articulations[s]) ? 1 : 0;
+        attackLayers_[s] = hasAttackLayers(t.articulations[s]) ? 1 : 0;
         computeAttack(s);
     }
     // Per-band ring lengths: the new coefficients wait for the next control point
@@ -2859,12 +2880,22 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     // applies from the next strike.
     const ArticulationTuning& art = slotCurve_[size_t(slotIndex)];
     const bool shift = onsetShiftOn_[size_t(slotIndex)] != 0;
+    // Its velocity layers: with SOFT and HARD layers that differ, each band's delay and speed
+    // at this strike's velocity; else the articulation's own values.
+    const double* dly = art.delayMs.data();
+    const double* spd = art.speed.data();
+    if (shift && shiftLayers_[size_t(slotIndex)] != 0)
+    {
+        layeredShift(art, onsetLayerT(velocity), strikeDelay_.data(), strikeSpeed_.data());
+        dly = strikeDelay_.data();
+        spd = strikeSpeed_.data();
+    }
     comp.envShift = comp.envOn && shift;
     if (comp.envShift)
         for (size_t j = 0; j < size_t(kExcitationBands); ++j)
         {
-            comp.envDelay[j] = static_cast<float>(art.delayMs[j] * 1e-3);
-            comp.envSpeed[j] = static_cast<float>(art.speed[j]);
+            comp.envDelay[j] = static_cast<float>(dly[j] * 1e-3);
+            comp.envSpeed[j] = static_cast<float>(spd[j]);
         }
     if (p.bandEnvOnset)
     {
@@ -2914,7 +2945,7 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
                 if (shift)
                 {
                     const size_t j = modeBand_[i];
-                    pt = pt / art.speed[j] + art.delayMs[j] * 1e-3;
+                    pt = pt / spd[j] + dly[j] * 1e-3;
                     pt = pt > 0.001 ? pt : 0.0;
                 }
                 comp.pt[i] = pt;
@@ -2932,17 +2963,38 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     {
         const size_t slot = size_t(slotIndex);
         const double ef = clamp01(1.0 - rawPos / 0.5);
-        comp.onsetOn = attackOn_[slot] != 0 && (ef < 0.9 || s.position <= 0.25);
+        // Its velocity layers: with SOFT and HARD layers that differ, each band's gain at this
+        // strike's velocity (as computeAttack); else the slot's.
+        const double* gm1 = attackGm1_.data() + slot * size_t(kExcitationBands);
+        double gm1Max = attackGm1Max_[slot];
+        bool on = attackOn_[slot] != 0;
+        if (attackLayers_[slot] != 0)
+        {
+            layeredAttack(art, onsetLayerT(velocity), strikeAttackDb_.data());
+            gm1Max = 0.0;
+            for (size_t j = 0; j < size_t(kExcitationBands); ++j)
+            {
+                const double g = std::pow(10.0, strikeAttackDb_[j] / 20.0);
+                strikeGm1_[j] = std::fabs(g - 1.0) > 1e-3 ? g - 1.0 : 0.0;
+                if (bandHasModes_[j])
+                    gm1Max = std::max(gm1Max, std::fabs(strikeGm1_[j]));
+            }
+            gm1 = strikeGm1_.data();
+            on = gm1Max > 0.0;
+        }
+        comp.onsetOn = on && (ef < 0.9 || s.position <= 0.25);
         if (comp.onsetOn)
         {
             comp.onsetTau = attackTauS_[slot];
-            const double* gm1 = attackGm1_.data() + slot * size_t(kExcitationBands);
             for (size_t i = 0; i < n; ++i)
                 comp.gm1[i] = static_cast<float>(gm1[modeBand_[i]]);
-            comp.gm1Max = attackGm1Max_[slot];
+            comp.gm1Max = gm1Max;
         }
     }
     comp.settled = !comp.rampOn && !comp.onsetOn && !comp.envOn;
+#if CYMBALIS_TUNING
+    onsetPeaks(comp, slotIndex);
+#endif
 
     // render() lines 652-688: the LF and MF accumulators. This strike's contribution is
     // added after its scale is taken, as in Python: until the next strike the scales follow
@@ -3036,6 +3088,41 @@ void FastEngine::startStick(int slot, double velocity, double position, double l
     v->on = true;
     ++stickActive_;
 }
+
+#if CYMBALIS_TUNING
+// When each band of a strike peaks (onsetPeaksMs), from its onset state just after the strike:
+// per mode, with a band envelope when its envelope band peaks, read at (t - delay) x speed
+// with the onset shift; with an onset ramp its peak time; else 0. Per band the mean over its
+// modes weighted by |coupling|^2 (Br, Bi hold the coupling until the contact ends).
+void FastEngine::onsetPeaks(const Component& c, int slot) noexcept
+{
+    std::array<double, kExcitationBands> sum {}, w {};
+    for (int i = 0; i < n_; ++i)
+    {
+        const size_t k = size_t(i);
+        const double e = double(c.Br[k]) * c.Br[k] + double(c.Bi[k]) * c.Bi[k];
+        if (! (e > 0.0))
+            continue;
+        double t = 0.0;
+        if (c.envOn)
+        {
+            const size_t band = size_t(bake_->edgeNpz.bandIndex[k]);
+            t = envPeakS_[band];
+            if (c.envShift)
+            {
+                const size_t j = npzShiftBand_[band];
+                t = std::max(0.0, static_cast<double>(c.envDelay[j]) + t / static_cast<double>(c.envSpeed[j]));
+            }
+        }
+        else if (c.rampOn)
+            t = c.pt[k];
+        sum[modeBand_[k]] += e * t;
+        w[modeBand_[k]] += e;
+    }
+    for (size_t j = 0; j < size_t(kExcitationBands); ++j)
+        onsetPeakMs_[size_t(slot)][j] = w[j] > 0.0 ? static_cast<float>(1000.0 * sum[j] / w[j]) : -1.0f;
+}
+#endif
 
 // The running stick clicks into both channels. A voice stops once its burst is over and its
 // filter state has rung down below 1e-9 (in units of the noise), or a second after the burst.

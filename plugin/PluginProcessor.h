@@ -110,6 +110,9 @@ public:
     };
     Meters readMeters() noexcept;
     void resetClip() noexcept { meterClip.store (false); }
+    // When each band of the last strike of a bake entry peaked (ms after the strike, -1: no
+    // energy there; FastEngine::onsetPeaksMs). False until the entry has been struck.
+    bool onsetPeaks (int preset, int entry, std::array<float, cymbalis::kExcitationBands>& out) const noexcept;
 #endif
 
     static constexpr const char* paramVelocitySensitivity = "velocity_sensitivity";
@@ -231,6 +234,11 @@ private:
     std::atomic<int> hitRow { -1 }, hitEntry { -1 };
     std::atomic<float> hitVelocity { 0.0f }, hitPeakOut { 0.0f }, hitRmsOut { 0.0f };
     std::atomic<bool> hitComplete { false };
+    // The last strike's band peaks per preset and entry (written by the audio thread; a reader
+    // may see a mix of two strikes' values for a moment).
+    std::array<std::array<std::array<std::atomic<float>, cymbalis::kExcitationBands>, cymbalis::kMaxArticulations>,
+               cymbalis::kNumPresets> peakMs {};
+    std::array<std::array<std::atomic<bool>, cymbalis::kMaxArticulations>, cymbalis::kNumPresets> peakSet {};
     int hitStart = 0;      // sample of the current block where the last hit began
     long hitLeft = 0;      // samples of its 500 ms still to measure
     long hitCount = 0;     // samples measured

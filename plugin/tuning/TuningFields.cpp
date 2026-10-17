@@ -132,9 +132,12 @@ const std::vector<BandField>& bandFields()
 {
     static const std::vector<BandField> fields {
         { { kBandGainsKey, "GAIN", "dB", kBandGainMinDb, kBandGainMaxDb, 0.0, 1, false }, &ArticulationTuning::bandDb },
-        { { kAttackGainsKey, "ATTACK GAIN", "dB", kAttackGainMinDb, kAttackGainMaxDb, 0.0, 1, false }, &ArticulationTuning::attackDb },
-        { { kOnsetDelayKey, "ONSET DELAY", "ms", kOnsetDelayMinMs, kOnsetDelayMaxMs, 0.0, 1, false }, &ArticulationTuning::delayMs },
-        { { kOnsetSpeedKey, "ONSET SPEED", "x", kOnsetSpeedMin, kOnsetSpeedMax, 1.0, 2, true }, &ArticulationTuning::speed },
+        { { kAttackGainsKey, "ATTACK GAIN", "dB", kAttackGainMinDb, kAttackGainMaxDb, 0.0, 1, false }, &ArticulationTuning::attackDb,
+          &ArticulationTuning::attackDbSoft, kAttackGainsSoftKey },
+        { { kOnsetDelayKey, "ONSET DELAY", "ms", kOnsetDelayMinMs, kOnsetDelayMaxMs, 0.0, 1, false }, &ArticulationTuning::delayMs,
+          &ArticulationTuning::delayMsSoft, kOnsetDelaySoftKey },
+        { { kOnsetSpeedKey, "ONSET SPEED", "x", kOnsetSpeedMin, kOnsetSpeedMax, 1.0, 2, true }, &ArticulationTuning::speed,
+          &ArticulationTuning::speedSoft, kOnsetSpeedSoftKey },
     };
     return fields;
 }
@@ -242,16 +245,27 @@ juce::var articulationObject (const BakeData& b, const Tuning& t, bool onlyChang
                 any = true;
             }
         }
-        // The per-band values (gains, onset delays, onset speeds): all 22 when any differs.
+        // The per-band values (gains, attack gains, onset delays, onset speeds): all 22 when any
+        // differs, both layers of a layered value when either differs.
         for (const auto& f : bandFields())
-            if (! onlyChanged || t.articulations[s].*(f.member) != b.tuning.articulations[s].*(f.member))
-            {
+        {
+            const auto& x = t.articulations[s];
+            const auto& baked = b.tuning.articulations[s];
+            const bool changed = x.*(f.member) != baked.*(f.member)
+                                 || (f.softMember != nullptr && x.*(f.softMember) != baked.*(f.softMember));
+            if (onlyChanged && ! changed)
+                continue;
+            auto write = [&] (const char* key, const std::array<double, kExcitationBands>& values) {
                 juce::Array<juce::var> bands;
-                for (double g : t.articulations[s].*(f.member))
+                for (double g : values)
                     bands.add (g);
-                a->setProperty (f.spec.key, bands);
-                any = true;
-            }
+                a->setProperty (key, bands);
+            };
+            write (f.spec.key, x.*(f.member));
+            if (f.softMember != nullptr)
+                write (f.softKey, x.*(f.softMember));
+            any = true;
+        }
         if (any)
         {
             a->setProperty ("entry", juce::String (b.slots[s].name));
@@ -366,6 +380,17 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
             if (slot < 0)
                 return "This preset has no articulation \"" + p.name.toString() + "\".";
             if (auto* v = p.value.getDynamicObject())
+            {
+                // A layered value without its SOFT layer (a file from before the layers) is the
+                // same at every velocity: both layers take it.
+                for (const auto& f : bandFields())
+                    if (f.softMember != nullptr && v->hasProperty (f.spec.key) && ! v->hasProperty (f.softKey))
+                    {
+                        const auto error = readBands (v->getProperty (f.spec.key), f.spec, p.name.toString() + "." + f.spec.key,
+                                                      t.articulations[(size_t) slot].*(f.softMember));
+                        if (error.isNotEmpty())
+                            return error;
+                    }
                 for (const auto& q : v->getProperties())
                 {
                     if (q.name.toString() == "entry")
@@ -373,10 +398,12 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
                     bool known = false;
                     for (const auto& f : bandFields())
                     {
-                        if (q.name.toString() != f.spec.key)
+                        const bool hard = q.name.toString() == f.spec.key;
+                        const bool soft = f.softKey != nullptr && q.name.toString() == f.softKey;
+                        if (! hard && ! soft)
                             continue;
-                        const auto error = readBands (q.value, f.spec, p.name.toString() + "." + f.spec.key,
-                                                      t.articulations[(size_t) slot].*(f.member));
+                        const auto error = readBands (q.value, f.spec, p.name.toString() + "." + q.name.toString(),
+                                                      t.articulations[(size_t) slot].*(hard ? f.member : f.softMember));
                         if (error.isNotEmpty())
                             return error;
                         known = true;
@@ -392,6 +419,7 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
                     if (! known)
                         return "Unknown value \"" + q.name.toString() + "\" for " + p.name.toString() + ".";
                 }
+            }
         }
     if (! (t.cymbal.ringLength > 0.0) || ! (t.cymbal.edgeRemapExponent > 0.0) || ! (t.cymbal.wanderRateHz > 0.0)
         || ! (t.cymbal.tauRefMs > 0.0 || ! applies (Needs::noVelocityTables, b)))
@@ -418,7 +446,8 @@ bool isModified (const BakeData& b, const Tuning& t)
             if (! juce::exactlyEqual (t.articulations[s].*(f.member), b.tuning.articulations[s].*(f.member)))
                 return true;
         for (const auto& f : bandFields())
-            if (t.articulations[s].*(f.member) != b.tuning.articulations[s].*(f.member))
+            if (t.articulations[s].*(f.member) != b.tuning.articulations[s].*(f.member)
+                || (f.softMember != nullptr && t.articulations[s].*(f.softMember) != b.tuning.articulations[s].*(f.softMember)))
                 return true;
     }
     return false;

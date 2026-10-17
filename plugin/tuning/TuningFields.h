@@ -96,11 +96,15 @@ struct BandSpec
     int decimals;
     bool logarithmic;     // the slider is logarithmic (speed, ring length)
 };
-// Per articulation.
+// Per articulation. A layered value (onset delay, onset speed, attack gain) has a SOFT layer
+// (velocity 0.3) besides `member`, its HARD layer (velocity 1.0); a tuning file holds both,
+// the SOFT one under softKey (a file without it uses the HARD values for both).
 struct BandField
 {
     BandSpec spec;
     std::array<double, kExcitationBands> ArticulationTuning::*member;
+    std::array<double, kExcitationBands> ArticulationTuning::*softMember = nullptr;
+    const char* softKey = nullptr;
 };
 const std::vector<BandField>& bandFields();
 // Per cymbal.

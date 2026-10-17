@@ -56,6 +56,15 @@ struct ArticulationTuning
     // else taken from its onset gains: each band the octave band that contains it.
     std::array<double, kExcitationBands> attackDb {};
     double attackMs = 80.0;
+    // Velocity layers of the onset shift and the attack gains: delayMs, speed and attackDb
+    // above are the HARD layer (velocity 1.0), these the SOFT layer (velocity 0.3). A strike
+    // takes each band between the two in log velocity (onsetLayerT): delay and attack gain
+    // linearly, speed geometrically; at 0.3 and below the SOFT value. Equal layers (the
+    // default): the same value at every velocity. Stored in the bake with the slot
+    // (slots[].onset_shift, slots[].attack_band_gains).
+    std::array<double, kExcitationBands> delayMsSoft {};
+    std::array<double, kExcitationBands> speedSoft = kUnitBands;
+    std::array<double, kExcitationBands> attackDbSoft {};
     // Brightness vs velocity: the spectral tilt of a velocity-0.3 strike relative to a
     // velocity-1.0 one, in dB per octave, pivoting at 1 kHz; 0 at velocity 1.0 and linear in
     // log velocity (brightnessTiltDb). Positive: soft strikes are brighter.
@@ -146,6 +155,11 @@ constexpr const char* kBandGainsKey = "band_gains_db";
 constexpr double kBandGainMinDb = -24.0, kBandGainMaxDb = 12.0;
 constexpr const char* kOnsetDelayKey = "onset_delay_ms";
 constexpr const char* kOnsetSpeedKey = "onset_speed";
+// The SOFT layers (the keys above are the HARD layers).
+constexpr const char* kOnsetDelaySoftKey = "onset_delay_ms_soft";
+constexpr const char* kOnsetSpeedSoftKey = "onset_speed_soft";
+constexpr const char* kAttackGainsSoftKey = "attack_band_gains_db_soft";
+constexpr double kSoftLayerVelocity = 0.3, kHardLayerVelocity = 1.0;
 constexpr double kOnsetDelayMinMs = -50.0, kOnsetDelayMaxMs = 200.0;
 constexpr double kOnsetSpeedMin = 0.25, kOnsetSpeedMax = 4.0;
 constexpr const char* kAttackGainsKey = "attack_band_gains_db";
@@ -176,8 +190,17 @@ double velocityCurveDb(const ArticulationTuning& a, double v) noexcept;
 
 // Whether any band gain of the articulation is not 0 dB.
 bool hasBandGains(const ArticulationTuning& a) noexcept;
-// Whether any band of the articulation has an onset delay or a speed other than 1.
+// Whether any band of the articulation has an onset delay or a speed other than 1, in either layer.
 bool hasOnsetShift(const ArticulationTuning& a) noexcept;
+// Whether the SOFT and HARD layers differ: of the onset shift (delay or speed), of the attack gains.
+bool hasShiftLayers(const ArticulationTuning& a) noexcept;
+bool hasAttackLayers(const ArticulationTuning& a) noexcept;
+// The weight of the SOFT layer for a strike at velocity v: 0 at 1.0, 1 at 0.3 and below,
+// linear in log velocity in between (as the velocity curve).
+double onsetLayerT(double v) noexcept;
+// A strike's onset delays (ms), speeds and attack gains (dB) per band at SOFT weight t.
+void layeredShift(const ArticulationTuning& a, double t, double* delayMs, double* speed) noexcept;
+void layeredAttack(const ArticulationTuning& a, double t, double* attackDb) noexcept;
 // Brightness vs velocity: the tilt (dB per octave around 1 kHz) of a strike at velocity v:
 // 0 at 1.0, brightnessDbOct at 0.3, linear in log velocity, within +/-24 dB per octave.
 double brightnessTiltDb(const ArticulationTuning& a, double v) noexcept;

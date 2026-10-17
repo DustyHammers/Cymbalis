@@ -559,17 +559,24 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
                 rep.push_back("band gains   slot " + slot.name + ": excitation gain per one-third-octave band");
             }
             // Optional (plugin bake, docs/TUNING.md): this articulation's onset shift per
-            // one-third-octave band (delay and speed), written by tools/apply_tuning.py.
+            // one-third-octave band (delay and speed), written by tools/apply_tuning.py: the
+            // HARD layer (delay_ms, speed) and the SOFT layer (delay_ms_soft, speed_soft; the
+            // HARD values where the bake has none).
             if (const auto* shift = s.find("onset_shift"); shift != nullptr && ! shift->isNull())
             {
                 const auto& edges = shift->at("band_edges_hz").array();
+                const auto* softD = shift->find("delay_ms_soft");
+                const auto* softV = shift->find("speed_soft");
                 const auto& delays = shift->at("delay_ms").array();
                 const auto& speeds = shift->at("speed").array();
+                const auto& delaysSoft = softD != nullptr && ! softD->isNull() ? softD->array() : delays;
+                const auto& speedsSoft = softV != nullptr && ! softV->isNull() ? softV->array() : speeds;
                 if (edges.size() != size_t(kExcitationBands + 1) || delays.size() != size_t(kExcitationBands) ||
-                    speeds.size() != size_t(kExcitationBands))
+                    speeds.size() != size_t(kExcitationBands) || delaysSoft.size() != size_t(kExcitationBands) ||
+                    speedsSoft.size() != size_t(kExcitationBands))
                     throw BakeError("slot " + slot.name + ": onset_shift needs " + std::to_string(kExcitationBands + 1) +
                                     " band edges, " + std::to_string(kExcitationBands) + " delays and " +
-                                    std::to_string(kExcitationBands) + " speeds");
+                                    std::to_string(kExcitationBands) + " speeds per layer");
                 for (int j = 0; j <= kExcitationBands; ++j)
                     if (std::fabs(edges[size_t(j)].number() - excitationBandEdge(j)) > 0.5)
                         throw BakeError("slot " + slot.name + ": onset_shift band edges differ from the engine's "
@@ -577,14 +584,19 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
                 for (int j = 0; j < kExcitationBands; ++j)
                 {
                     const double d = delays[size_t(j)].number(), v = speeds[size_t(j)].number();
-                    if (! std::isfinite(d) || std::fabs(d) > 1000.0)
+                    const double ds = delaysSoft[size_t(j)].number(), vs = speedsSoft[size_t(j)].number();
+                    if (! std::isfinite(d) || std::fabs(d) > 1000.0 || ! std::isfinite(ds) || std::fabs(ds) > 1000.0)
                         throw BakeError("slot " + slot.name + ": onset delays must be finite, within 1000 ms");
-                    if (! std::isfinite(v) || v < 1.0 / 16.0 || v > 16.0)
+                    if (! std::isfinite(v) || v < 1.0 / 16.0 || v > 16.0 || ! std::isfinite(vs) || vs < 1.0 / 16.0 ||
+                        vs > 16.0)
                         throw BakeError("slot " + slot.name + ": onset speeds must lie in 1/16 to 16");
                     slot.articulation.delayMs[size_t(j)] = d;
                     slot.articulation.speed[size_t(j)] = v;
+                    slot.articulation.delayMsSoft[size_t(j)] = ds;
+                    slot.articulation.speedSoft[size_t(j)] = vs;
                 }
-                rep.push_back("onset shift  slot " + slot.name + ": onset delay and speed per one-third-octave band");
+                rep.push_back("onset shift  slot " + slot.name + ": onset delay and speed per one-third-octave band" +
+                              (hasShiftLayers(slot.articulation) ? ", SOFT and HARD layers" : ""));
             }
             if (s.at("bow_vp").isNull())
             {
@@ -632,26 +644,31 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
                 attackFromOnsetGains(slot.onsetGains.data(), static_cast<int>(slot.onsetGains.size()),
                                      b.bowOnsetBandEdges.data(), slot.articulation.attackDb);
             }
+            slot.articulation.attackDbSoft = slot.articulation.attackDb; // one layer for every velocity
             // Optional (plugin bake, docs/TUNING.md): the attack band gains and time set by
             // tools/apply_tuning.py, instead of those from the onset gains.
             if (const auto* attack = s.find("attack_band_gains"); attack != nullptr && ! attack->isNull())
             {
                 const auto& edges = attack->at("band_edges_hz").array();
                 const auto& gains = attack->at("gains_db").array();
-                if (edges.size() != size_t(kExcitationBands + 1) || gains.size() != size_t(kExcitationBands))
+                const auto* soft = attack->find("gains_db_soft"); // the SOFT layer (else the HARD one)
+                const auto& gainsSoft = soft != nullptr && ! soft->isNull() ? soft->array() : gains;
+                if (edges.size() != size_t(kExcitationBands + 1) || gains.size() != size_t(kExcitationBands) ||
+                    gainsSoft.size() != size_t(kExcitationBands))
                     throw BakeError("slot " + slot.name + ": attack_band_gains needs " +
                                     std::to_string(kExcitationBands + 1) + " band edges and " +
-                                    std::to_string(kExcitationBands) + " gains");
+                                    std::to_string(kExcitationBands) + " gains per layer");
                 for (int j = 0; j <= kExcitationBands; ++j)
                     if (std::fabs(edges[size_t(j)].number() - excitationBandEdge(j)) > 0.5)
                         throw BakeError("slot " + slot.name + ": attack_band_gains band edges differ from the "
                                         "engine's one-third-octave bands");
                 for (int j = 0; j < kExcitationBands; ++j)
                 {
-                    const double g = gains[size_t(j)].number();
-                    if (! std::isfinite(g) || std::fabs(g) > 60.0)
+                    const double g = gains[size_t(j)].number(), gs = gainsSoft[size_t(j)].number();
+                    if (! std::isfinite(g) || std::fabs(g) > 60.0 || ! std::isfinite(gs) || std::fabs(gs) > 60.0)
                         throw BakeError("slot " + slot.name + ": attack band gains must be finite, within 60 dB");
                     slot.articulation.attackDb[size_t(j)] = g;
+                    slot.articulation.attackDbSoft[size_t(j)] = gs;
                 }
                 const double ms = attack->at("time_ms").number();
                 if (! std::isfinite(ms) || ms < 1.0 || ms > 10000.0)
@@ -839,6 +856,9 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
             u.articulations[s].delayMs = b.slots[s].articulation.delayMs;
             u.articulations[s].speed = b.slots[s].articulation.speed;
             u.articulations[s].attackDb = b.slots[s].articulation.attackDb;
+            u.articulations[s].delayMsSoft = b.slots[s].articulation.delayMsSoft;
+            u.articulations[s].speedSoft = b.slots[s].articulation.speedSoft;
+            u.articulations[s].attackDbSoft = b.slots[s].articulation.attackDbSoft;
             u.articulations[s].attackMs = b.slots[s].articulation.attackMs;
             u.articulations[s].stickGain = b.slots[s].articulation.stickGain;
             u.articulations[s].stickLoHz = b.slots[s].articulation.stickLoHz;

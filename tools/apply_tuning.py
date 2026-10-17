@@ -19,10 +19,14 @@ tuning block it already has). Then:
   * each articulation's excitation band gains go into its slot's excitation data,
     slots[].excitation_band_gains_db (band edges and 22 gains in dB); all 0 dB removes it;
   * each articulation's onset shift goes into its slot's onset data, slots[].onset_shift
-    (band edges, 22 delays in ms and 22 speeds); delay 0 and speed 1 everywhere removes it;
+    (band edges, 22 delays in ms and 22 speeds for the HARD layer, delay_ms_soft and
+    speed_soft for the SOFT layer); delay 0 and speed 1 everywhere in both layers removes it;
   * each articulation's attack band gains and attack time go into its slot's attack data,
-    slots[].attack_band_gains (band edges, 22 gains in dB, time in ms); values equal to what
-    the slot's onset gains give (bow_onset_band_gains in 22 bands, onset_tau_s) remove it;
+    slots[].attack_band_gains (band edges, 22 gains in dB for the HARD layer, gains_db_soft
+    for the SOFT layer, time in ms); values equal to what the slot's onset gains give
+    (bow_onset_band_gains in 22 bands, onset_tau_s) in both layers remove it;
+  * a file from before the velocity layers (a layered value without its _soft key) gives
+    both layers the same values;
   * each articulation's stick click (stick_gain, stick_bp_lo, stick_bp_hi, stick_len_ms,
     stick_decay_ms) goes into the tuning block where it differs from the slot's own value
     (its stick_* parameters, Python's defaults where it has none);
@@ -100,6 +104,8 @@ BAND_MIN_DB, BAND_MAX_DB = -24.0, 12.0
 BAND_EDGES_HZ = [round(11404.0 * 2.0 ** ((j - 21) / 3.0), 3) for j in range(N_BANDS + 1)]
 # Onset shift per band (docs/TUNING.md): delay in ms and speed, in the same bands.
 DELAY_KEY, SPEED_KEY, SLOT_SHIFT_KEY = 'onset_delay_ms', 'onset_speed', 'onset_shift'
+# Their SOFT layers (velocity 0.3); the keys above are the HARD layers (velocity 1.0).
+DELAY_SOFT_KEY, SPEED_SOFT_KEY, ATTACK_SOFT_KEY = 'onset_delay_ms_soft', 'onset_speed_soft', 'attack_band_gains_db_soft'
 DELAY_MIN_MS, DELAY_MAX_MS = -50.0, 200.0
 SPEED_MIN, SPEED_MAX = 0.25, 4.0
 # Attack band gains per band (dB) and attack time (docs/TUNING.md).
@@ -176,18 +182,22 @@ def slot_bands(slot):
 
 
 def slot_shift(slot):
-    """The slot's current onset shift: (22 delays in ms, 22 speeds); 0 and 1 without the entry."""
+    """The slot's current onset shift: [HARD delays (ms), HARD speeds, SOFT delays, SOFT speeds],
+    22 each; 0 and 1 without the entry, the SOFT layer the HARD one where the entry has none."""
     entry = slot.get(SLOT_SHIFT_KEY)
     if not entry:
-        return [0.0] * N_BANDS, [1.0] * N_BANDS
+        return [[0.0] * N_BANDS, [1.0] * N_BANDS, [0.0] * N_BANDS, [1.0] * N_BANDS]
     edges, delays, speeds = entry.get('band_edges_hz'), entry.get('delay_ms'), entry.get('speed')
-    if not all(isinstance(x, list) for x in (edges, delays, speeds)) \
-            or len(edges) != N_BANDS + 1 or len(delays) != N_BANDS or len(speeds) != N_BANDS:
-        fail(f'slot {slot["name"]}: {SLOT_SHIFT_KEY} needs {N_BANDS + 1} band edges, {N_BANDS} delays and {N_BANDS} speeds')
+    delays_soft, speeds_soft = entry.get('delay_ms_soft', delays), entry.get('speed_soft', speeds)
+    if not all(isinstance(x, list) for x in (edges, delays, speeds, delays_soft, speeds_soft)) \
+            or len(edges) != N_BANDS + 1 or any(len(x) != N_BANDS for x in (delays, speeds, delays_soft, speeds_soft)):
+        fail(f'slot {slot["name"]}: {SLOT_SHIFT_KEY} needs {N_BANDS + 1} band edges, {N_BANDS} delays and {N_BANDS} speeds per layer')
     if any(abs(finite('band edge', e) - want) > 0.5 for e, want in zip(edges, BAND_EDGES_HZ)):
         fail(f'slot {slot["name"]}: {SLOT_SHIFT_KEY} band edges differ from the engine\'s bands')
-    return ([finite(f'slot {slot["name"]} onset delay', d) for d in delays],
-            [finite(f'slot {slot["name"]} onset speed', v) for v in speeds])
+    return [[finite(f'slot {slot["name"]} onset delay', d) for d in delays],
+            [finite(f'slot {slot["name"]} onset speed', v) for v in speeds],
+            [finite(f'slot {slot["name"]} onset delay', d) for d in delays_soft],
+            [finite(f'slot {slot["name"]} onset speed', v) for v in speeds_soft]]
 
 
 def onset_attack(bake, slot):
@@ -209,17 +219,21 @@ def onset_attack(bake, slot):
 
 
 def slot_attack(bake, slot):
-    """The slot's current attack gains and time: its attack data, else from its onset gains."""
+    """The slot's current attack gains and time: [HARD gains (dB), time (ms), SOFT gains], from
+    its attack data, else from its onset gains (one layer for both)."""
     entry = slot.get(SLOT_ATTACK_KEY)
     if not entry:
-        return onset_attack(bake, slot)
+        gains, ms = onset_attack(bake, slot)
+        return [gains, ms, list(gains)]
     edges, gains = entry.get('band_edges_hz'), entry.get('gains_db')
-    if not isinstance(edges, list) or not isinstance(gains, list) \
-            or len(edges) != N_BANDS + 1 or len(gains) != N_BANDS:
-        fail(f'slot {slot["name"]}: {SLOT_ATTACK_KEY} needs {N_BANDS + 1} band edges and {N_BANDS} gains')
+    gains_soft = entry.get('gains_db_soft', gains)
+    if not isinstance(edges, list) or not isinstance(gains, list) or not isinstance(gains_soft, list) \
+            or len(edges) != N_BANDS + 1 or len(gains) != N_BANDS or len(gains_soft) != N_BANDS:
+        fail(f'slot {slot["name"]}: {SLOT_ATTACK_KEY} needs {N_BANDS + 1} band edges and {N_BANDS} gains per layer')
     if any(abs(finite('band edge', e) - want) > 0.5 for e, want in zip(edges, BAND_EDGES_HZ)):
         fail(f'slot {slot["name"]}: {SLOT_ATTACK_KEY} band edges differ from the engine\'s bands')
-    return [finite(f'slot {slot["name"]} attack gain', g) for g in gains], finite('attack time', entry.get('time_ms'))
+    return [[finite(f'slot {slot["name"]} attack gain', g) for g in gains], finite('attack time', entry.get('time_ms')),
+            [finite(f'slot {slot["name"]} attack gain', g) for g in gains_soft]]
 
 
 def band_values(name, v, lo, hi, unit):
@@ -308,6 +322,11 @@ def main():
     for aid, vals in (tun.get('articulations') or {}).items():
         if aid not in ids:
             fail(f'the bake has no articulation {aid!r} (it has {sorted(ids)})')
+        # A layered value without its SOFT layer (a file from before the layers): both layers.
+        vals = dict(vals)
+        for hard, soft in ((DELAY_KEY, DELAY_SOFT_KEY), (SPEED_KEY, SPEED_SOFT_KEY), (ATTACK_KEY, ATTACK_SOFT_KEY)):
+            if hard in vals and soft not in vals:
+                vals[soft] = vals[hard]
         for key, v in vals.items():
             if key == 'entry':
                 continue
@@ -320,19 +339,19 @@ def main():
                 curves[aid][key] = finite(f'{aid}.{key}', v)
                 if not lo <= curves[aid][key] <= hi:
                     fail(f'{aid}.{key} must lie in {lo:g} to {hi:g}')
-            elif key == ATTACK_KEY:
-                attacks[aid] = (band_values(f'{aid}.{key}', v, ATTACK_MIN_DB, ATTACK_MAX_DB, 'dB'), attacks[aid][1])
+            elif key in (ATTACK_KEY, ATTACK_SOFT_KEY):
+                attacks[aid][0 if key == ATTACK_KEY else 2] = band_values(f'{aid}.{key}', v, ATTACK_MIN_DB, ATTACK_MAX_DB, 'dB')
             elif key == ATTACK_TIME_KEY:
                 ms = finite(f'{aid}.{key}', v)
                 if not ATTACK_MIN_MS <= ms <= ATTACK_MAX_MS:
                     fail(f'{aid}.{key} must lie in {ATTACK_MIN_MS:g} to {ATTACK_MAX_MS:g} ms')
-                attacks[aid] = (attacks[aid][0], ms)
+                attacks[aid][1] = ms
             elif key == BANDS_KEY:
                 bands[aid] = band_values(f'{aid}.{key}', v, BAND_MIN_DB, BAND_MAX_DB, 'dB')
-            elif key == DELAY_KEY:
-                shifts[aid] = (band_values(f'{aid}.{key}', v, DELAY_MIN_MS, DELAY_MAX_MS, 'ms'), shifts[aid][1])
-            elif key == SPEED_KEY:
-                shifts[aid] = (shifts[aid][0], band_values(f'{aid}.{key}', v, SPEED_MIN, SPEED_MAX, 'x'))
+            elif key in (DELAY_KEY, DELAY_SOFT_KEY):
+                shifts[aid][0 if key == DELAY_KEY else 2] = band_values(f'{aid}.{key}', v, DELAY_MIN_MS, DELAY_MAX_MS, 'ms')
+            elif key in (SPEED_KEY, SPEED_SOFT_KEY):
+                shifts[aid][1 if key == SPEED_KEY else 3] = band_values(f'{aid}.{key}', v, SPEED_MIN, SPEED_MAX, 'x')
             else:
                 fail(f'unknown articulation value {aid}.{key}')
 
@@ -386,13 +405,15 @@ def main():
 
     # Onset shifts: stored with the slot's onset data; the engine applies them to that
     # articulation's band envelopes and onset peak times at each strike.
-    for aid, (delays, speeds) in shifts.items():
+    for aid, (delays, speeds, delays_soft, speeds_soft) in shifts.items():
         slot = bake['slots'][ids[aid]]
-        if any(d != 0.0 for d in delays) or any(v != 1.0 for v in speeds):
+        if any(d != 0.0 for d in delays + delays_soft) or any(v != 1.0 for v in speeds + speeds_soft):
             slot[SLOT_SHIFT_KEY] = {
                 'band_edges_hz': BAND_EDGES_HZ,
                 'delay_ms': [round(d, 3) for d in delays],
                 'speed': [round(v, 4) for v in speeds],
+                'delay_ms_soft': [round(d, 3) for d in delays_soft],
+                'speed_soft': [round(v, 4) for v in speeds_soft],
                 'set_by': f'tools/apply_tuning.py from {os.path.basename(args.tuning)} ({now})',
             }
         else:
@@ -400,12 +421,13 @@ def main():
 
     # Attack band gains: stored with the slot; the loader uses them instead of the ones its
     # onset gains give.
-    for aid, (gains, ms) in attacks.items():
+    for aid, (gains, ms, gains_soft) in attacks.items():
         slot = bake['slots'][ids[aid]]
-        if (gains, ms) != onset_attack(bake, slot):
+        if (gains, ms) != onset_attack(bake, slot) or gains_soft != gains:
             slot[SLOT_ATTACK_KEY] = {
                 'band_edges_hz': BAND_EDGES_HZ,
                 'gains_db': [round(g, 3) for g in gains],
+                'gains_db_soft': [round(g, 3) for g in gains_soft],
                 'time_ms': round(ms, 3),
                 'set_by': f'tools/apply_tuning.py from {os.path.basename(args.tuning)} ({now})',
             }
@@ -422,10 +444,15 @@ def main():
         if SLOT_ATTACK_KEY in bake['slots'][i]:
             at = bake['slots'][i][SLOT_ATTACK_KEY]
             print(f'  {"":14s} attack {" ".join(f"{g:+g}" for g in at["gains_db"])} dB, {at["time_ms"]:g} ms')
+            if at['gains_db_soft'] != at['gains_db']:
+                print(f'  {"":14s} attack soft {" ".join(f"{g:+g}" for g in at["gains_db_soft"])} dB')
         if SLOT_SHIFT_KEY in bake['slots'][i]:
             sh = bake['slots'][i][SLOT_SHIFT_KEY]
             print(f'  {"":14s} onset delay {" ".join(f"{d:+g}" for d in sh["delay_ms"])} ms')
             print(f'  {"":14s} onset speed {" ".join(f"{v:g}" for v in sh["speed"])}')
+            if sh['delay_ms_soft'] != sh['delay_ms'] or sh['speed_soft'] != sh['speed']:
+                print(f'  {"":14s} onset delay soft {" ".join(f"{d:+g}" for d in sh["delay_ms_soft"])} ms')
+                print(f'  {"":14s} onset speed soft {" ".join(f"{v:g}" for v in sh["speed_soft"])}')
     print('  tuning block: ' + (json.dumps(new_cymbal) if new_cymbal else 'no cymbal values'))
     if args.dry_run:
         print('  (dry run: nothing written)')

@@ -135,9 +135,44 @@ void attackFromOnsetGains(const double* gains, int numGains, const double* edges
 bool hasOnsetShift(const ArticulationTuning& a) noexcept
 {
     for (int j = 0; j < kExcitationBands; ++j)
-        if (a.delayMs[size_t(j)] != 0.0 || a.speed[size_t(j)] != 1.0)
+        if (a.delayMs[size_t(j)] != 0.0 || a.speed[size_t(j)] != 1.0 || a.delayMsSoft[size_t(j)] != 0.0 ||
+            a.speedSoft[size_t(j)] != 1.0)
             return true;
     return false;
+}
+
+bool hasShiftLayers(const ArticulationTuning& a) noexcept
+{
+    return a.delayMs != a.delayMsSoft || a.speed != a.speedSoft;
+}
+
+bool hasAttackLayers(const ArticulationTuning& a) noexcept
+{
+    return a.attackDb != a.attackDbSoft;
+}
+
+double onsetLayerT(double v) noexcept
+{
+    constexpr double x3 = -1.2039728043259361; // ln 0.3
+    const double x = std::log(std::min(std::max(v, 1e-4), 1.0));
+    return std::min(std::max(x / x3, 0.0), 1.0);
+}
+
+void layeredShift(const ArticulationTuning& a, double t, double* delayMs, double* speed) noexcept
+{
+    for (size_t j = 0; j < size_t(kExcitationBands); ++j)
+    {
+        delayMs[j] = a.delayMs[j] + t * (a.delayMsSoft[j] - a.delayMs[j]);
+        speed[j] = a.speed[j] == a.speedSoft[j]
+                       ? a.speed[j]
+                       : std::exp(std::log(a.speed[j]) + t * (std::log(a.speedSoft[j]) - std::log(a.speed[j])));
+    }
+}
+
+void layeredAttack(const ArticulationTuning& a, double t, double* attackDb) noexcept
+{
+    for (size_t j = 0; j < size_t(kExcitationBands); ++j)
+        attackDb[j] = a.attackDb[j] + t * (a.attackDbSoft[j] - a.attackDb[j]);
 }
 
 void excitationModeGains(const ArticulationTuning& a, const double* freqHz, int numModes, float* out) noexcept

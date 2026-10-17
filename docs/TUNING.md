@@ -124,9 +124,9 @@ Attack time: bow 80 ms, bell 300 ms.
 | Offset at velocity 0.6 | `vel_0.6_db` | −24 to +24 dB | yes | Velocity curve, see below. Default 0 |
 | Offset at velocity 0.3 | `vel_0.3_db` | −24 to +24 dB | yes | Velocity curve. Default 0 |
 | Excitation band gains | `band_gains_db` | −24 to +12 dB per band | yes | 22 values, one per one-third-octave band, see below. Default 0 |
-| Onset delay | `onset_delay_ms` | −50 to +200 ms per band | yes | 22 values, see "Onset shift". Default 0 |
-| Onset speed | `onset_speed` | ×0.25 to ×4 per band | yes | 22 values; above 1 is faster. Default 1 |
-| Attack band gains | `attack_band_gains_db` | −12 to +12 dB per band | yes | 22 values, see "Attack band gains". Default: the articulation's onset gains (0 dB without) |
+| Onset delay | `onset_delay_ms`, `onset_delay_ms_soft` | −50 to +200 ms per band | yes | 22 values per layer (HARD, SOFT), see "Onset shift" and "Velocity layers". Default 0 |
+| Onset speed | `onset_speed`, `onset_speed_soft` | ×0.25 to ×4 per band | yes | 22 values per layer; above 1 is faster. Default 1 |
+| Attack band gains | `attack_band_gains_db`, `attack_band_gains_db_soft` | −12 to +12 dB per band | yes | 22 values per layer, see "Attack band gains". Default: the articulation's onset gains (0 dB without), in both layers |
 | Attack time | `attack_time_ms` | 10–1000 ms | yes | How fast the attack gains fade back to 0 dB. Default: the articulation's onset time (80 ms without onset gains) |
 | Brightness vs velocity | `brightness_db_per_oct` | −6 to +6 dB per octave | yes | Tilt of a velocity-0.3 strike relative to velocity 1.0, see below. Default 0 |
 | STICK CLICK gain | `stick_gain` | 0–24 | yes | Level of the stick click, see below. Default: the articulation's `stick_gain` (6.0 for SWISH `bow_tip`, 0 everywhere else: no click) |
@@ -164,6 +164,26 @@ How they act depends on the onset the strike has. The articulation struck decide
 
 The attack band gains (Nova's onset gains among them) are not shifted: they start at the strike. A shifted bow or bell onset costs some CPU while its ramp runs; with every band of every articulation shifted, NOVA RIDE at 96 kHz uses about 26 % of a core instead of 21 %.
 
+#### Velocity layers
+
+The onset delay, the onset speed and the attack gain each have two layers per articulation: **SOFT**, the value at velocity 0.3, and **HARD**, the value at velocity 1.0. At a strike, each band takes the value between the two in log velocity, as the velocity curve does: HARD at 1.0, SOFT at 0.3, and SOFT below 0.3. With weight t = ln(v) / ln(0.3) (0 at 1.0, 1 at 0.3):
+
+- delay and attack gain: HARD + t × (SOFT − HARD);
+- speed: geometric, HARD^(1 − t) × SOFT^t, so ×2 and ×0.5 meet at ×1 halfway.
+
+They act on top of the onset the strike already has, as above. A band envelope keeps its own blend between the captures of its velocity, and the shift is applied to it. Bow, bell and center strikes act on their per-mode onset peak times. The attack time is a single value.
+
+- **Defaults.** Both layers start equal, at the articulation's values: no delay, ×1, and the attack gains of the bake (Nova's from its onset gains, 0 dB elsewhere). With equal layers a band has the same value at every velocity, and every preset plays exactly as before.
+- **Cost.** With equal layers the strike uses the articulation's values directly. With different layers it computes 22 values per strike from them (and 22 attack gains); nothing allocates.
+
+In the window, a bar above the attack gain row chooses the layer that the **ATTACK GAIN**, **ONSET DELAY** and **ONSET SPEED** rows show and edit:
+
+- **SOFT (0.3)** / **HARD (1.0)**: the layer shown. It starts on HARD.
+- **LINK** (on by default): an edit, a band's reset or FLAT sets both layers to the value. Off: only the layer shown changes.
+- **COPY SOFT -> HARD**: the SOFT layer's attack gains, onset delays and onset speeds become the HARD layer's.
+
+Under the rows, **PEAK** shows when each band of the last strike of the chosen articulation peaked, in ms after the strike. Per mode this is the time its band envelope peaks (after the onset shift) or the end of its onset ramp, and 0 for a mode with neither. The band shows the mean over its modes, weighted by their energy at the strike. A dash means the band had no energy, or the articulation has not been struck since the plugin loaded.
+
 #### Attack band gains
 
 Each articulation has a gain per band at the strike, **ATTACK GAIN** (dB), that fades back to 0 dB with the **ATTACK TIME**: the gain at time t after the strike is 1 + (g − 1) · exp(−t / time), g the band's gain at the strike. It applies to that articulation's strikes only, from the next strike, and changes the onset only; the decay and levels after it are unchanged. It is how Nova's onset band gains (`bow_onset_band_gains`, `bow_onset_tau_ms`) always worked, now for every articulation of every preset.
@@ -175,7 +195,7 @@ Each articulation has a gain per band at the strike, **ATTACK GAIN** (dB), that 
 In the window, the **BANDS** section below the articulations works like a graphic EQ:
 
 - The **Articulation** box picks the articulation whose bands are shown.
-- It has four rows of sliders: **GAIN** (dB), **ATTACK GAIN** (dB, with the **ATTACK TIME** under it), **ONSET DELAY** (ms) and **ONSET SPEED** (×, on a logarithmic scale with ×1 in the middle).
+- It has four rows of sliders: **GAIN** (dB), **ATTACK GAIN** (dB, with the **ATTACK TIME** under it), **ONSET DELAY** (ms) and **ONSET SPEED** (×, on a logarithmic scale with ×1 in the middle). The velocity layer bar sits above the attack gain row, and the **PEAK** readout under the onset speed row ("Velocity layers" above).
 - Each row has one vertical slider per band. The label is the band's centre frequency; hold the pointer over the label to see the band's edges.
 - Type a number into the box under a slider to enter it exactly.
 - The arrow under each band resets it to the baked value.
@@ -320,7 +340,7 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
 }
 ```
 
-- `cymbal` and `articulations` hold only the values that differ from the bake; loading a file applies these on top of the bake. A per-band cymbal value (`ring_length_bands`) is written as all 22 bands, lowest first, when any differs. `rehit_damp_weights` is written with every articulation's weight, by articulation id, when any differs. An articulation's `band_gains_db`, `attack_band_gains_db`, `onset_delay_ms` and `onset_speed` are each written as all 22 bands, lowest first, when any of them differs.
+- `cymbal` and `articulations` hold only the values that differ from the bake; loading a file applies these on top of the bake. A per-band cymbal value (`ring_length_bands`) is written as all 22 bands, lowest first, when any differs. `rehit_damp_weights` is written with every articulation's weight, by articulation id, when any differs. An articulation's `band_gains_db`, `attack_band_gains_db`, `onset_delay_ms` and `onset_speed` are each written as all 22 bands, lowest first, when any of them differs. The last three are the HARD layers; their SOFT layers, `attack_band_gains_db_soft`, `onset_delay_ms_soft` and `onset_speed_soft`, are written with them when either layer differs. A file without the `_soft` keys (from before the layers) gives both layers its values.
 - `effective` is a full copy of every value for reference; nothing reads it.
 - `entry` names the bake entry (slot) of an articulation.
 - `preset` is the preset id (`nova_ride`, `smoke_flat_ride`, `hammered_thin_ride`, `swish`); `bake_format_version` is the bake's `format_version`.
@@ -338,8 +358,8 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
    - It applies the file's changes on top of the bake's current values: the bake's own values and any `tuning` block it already has.
    - Each articulation's **level** goes into `slots[].level_trim.gain_db` (with a `set_by` note).
    - Each articulation's **band gains** go into its excitation data, `slots[].excitation_band_gains_db`: `{"band_edges_hz": [23 edges], "gains_db": [22 gains], "set_by"}`. An articulation whose bands are all 0 dB has no entry; applying FLAT removes it.
-   - Each articulation's **onset shift** goes into its onset data, `slots[].onset_shift`: `{"band_edges_hz": [23 edges], "delay_ms": [22], "speed": [22], "set_by"}`. An articulation with delay 0 and speed 1 in every band has no entry.
-   - Each articulation's **attack band gains and time** go into its attack data, `slots[].attack_band_gains`: `{"band_edges_hz": [23 edges], "gains_db": [22], "time_ms", "set_by"}`. An articulation whose values are those its onset gains give (0 dB and 80 ms without onset gains) has no entry; the loader then takes them from the onset gains.
+   - Each articulation's **onset shift** goes into its onset data, `slots[].onset_shift`: `{"band_edges_hz": [23 edges], "delay_ms": [22], "speed": [22], "delay_ms_soft": [22], "speed_soft": [22], "set_by"}`, both velocity layers. An articulation with delay 0 and speed 1 in every band of both layers has no entry.
+   - Each articulation's **attack band gains and time** go into its attack data, `slots[].attack_band_gains`: `{"band_edges_hz": [23 edges], "gains_db": [22], "gains_db_soft": [22], "time_ms", "set_by"}`. An articulation whose values are those its onset gains give, in both layers (0 dB and 80 ms without onset gains), has no entry; the loader then takes them from the onset gains. A bake entry without the `_soft` arrays (from before the layers) uses its values for both layers.
    - Each articulation's **brightness vs velocity** goes into the tuning block with its velocity curve, and so does its **stick click** where it differs from the slot's own values (its `stick_*` parameters, Python's defaults where it has none).
    - **Every other value that differs from the bake's own** (the cymbal values and the velocity curves) goes into the bake's top-level `tuning` block: `{"format": "cymbalis-tuning", "version": 1, "applied_utc", "source", "cymbal": {...}, "articulations": {id: {"vel_0.6_db", "vel_0.3_db"}}}`. A per-band cymbal value is stored there as its 22 numbers.
    - A value equal to the bake's own drops out of the block, so applying the same file twice gives the same bake. Nothing else in the bake changes.
