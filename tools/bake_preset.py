@@ -356,10 +356,10 @@ def slot_block(eng, name, overlay, position, preset):
 
 def copied_entry(src, name, articulation, position):
     """Entry `name`: a copy of the slot block `src` with its own articulation id and position.
-    The source's level trim and band gains are not copied (a re-bake has none)."""
+    The source's level trim, band gains and onset shift are not copied (a re-bake has none)."""
     blk = {'name': name, 'articulation': articulation, 'copy_of': src['name']}
     for key, val in src.items():
-        if key not in blk and key not in ('level_trim', 'excitation_band_gains_db'):
+        if key not in blk and key not in ('level_trim', 'excitation_band_gains_db', 'onset_shift'):
             blk[key] = copy.deepcopy(val)
     blk['position'] = float(position)
     return blk

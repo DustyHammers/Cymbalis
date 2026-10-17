@@ -550,6 +550,34 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
                 }
                 rep.push_back("band gains   slot " + slot.name + ": excitation gain per one-third-octave band");
             }
+            // Optional (plugin bake, docs/TUNING.md): this articulation's onset shift per
+            // one-third-octave band (delay and speed), written by tools/apply_tuning.py.
+            if (const auto* shift = s.find("onset_shift"); shift != nullptr && ! shift->isNull())
+            {
+                const auto& edges = shift->at("band_edges_hz").array();
+                const auto& delays = shift->at("delay_ms").array();
+                const auto& speeds = shift->at("speed").array();
+                if (edges.size() != size_t(kExcitationBands + 1) || delays.size() != size_t(kExcitationBands) ||
+                    speeds.size() != size_t(kExcitationBands))
+                    throw BakeError("slot " + slot.name + ": onset_shift needs " + std::to_string(kExcitationBands + 1) +
+                                    " band edges, " + std::to_string(kExcitationBands) + " delays and " +
+                                    std::to_string(kExcitationBands) + " speeds");
+                for (int j = 0; j <= kExcitationBands; ++j)
+                    if (std::fabs(edges[size_t(j)].number() - excitationBandEdge(j)) > 0.5)
+                        throw BakeError("slot " + slot.name + ": onset_shift band edges differ from the engine's "
+                                        "one-third-octave bands");
+                for (int j = 0; j < kExcitationBands; ++j)
+                {
+                    const double d = delays[size_t(j)].number(), v = speeds[size_t(j)].number();
+                    if (! std::isfinite(d) || std::fabs(d) > 1000.0)
+                        throw BakeError("slot " + slot.name + ": onset delays must be finite, within 1000 ms");
+                    if (! std::isfinite(v) || v < 1.0 / 16.0 || v > 16.0)
+                        throw BakeError("slot " + slot.name + ": onset speeds must lie in 1/16 to 16");
+                    slot.articulation.delayMs[size_t(j)] = d;
+                    slot.articulation.speed[size_t(j)] = v;
+                }
+                rep.push_back("onset shift  slot " + slot.name + ": onset delay and speed per one-third-octave band");
+            }
             if (s.at("bow_vp").isNull())
             {
                 if (s.at("effective").at("vel_participation").boolean())
@@ -734,6 +762,8 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
         {
             u.articulations[s].levelDb = 20.0 * std::log10(b.slots[s].levelTrim);
             u.articulations[s].bandDb = b.slots[s].articulation.bandDb;
+            u.articulations[s].delayMs = b.slots[s].articulation.delayMs;
+            u.articulations[s].speed = b.slots[s].articulation.speed;
         }
         b.pythonT60S = b.t60S;
         b.pythonLfoRateHz = b.lfoRateHz;

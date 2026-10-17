@@ -197,16 +197,11 @@ void ToggleRow::paint (juce::Graphics& g)
 }
 
 // =====================================================================================
-BandEq::BandEq (const ui::Assets& a) : small (a, 11.5f)
+BandRow::BandRow (const BandField& f, TuningLookAndFeel& small) : field (f)
 {
-    title.setText ("Articulation", juce::dontSendNotification);
+    title.setText (juce::String (field.title) + "  (" + field.unit + ")", juce::dontSendNotification);
     addAndMakeVisible (title);
-    selector.onChange = [this] {
-        if (! updating && onSelect)
-            onSelect();
-    };
-    addAndMakeVisible (selector);
-    flat.setTooltip ("All bands of this articulation to 0 dB");
+    flat.setTooltip ("Every band of this articulation to " + juce::String (field.flat, field.decimals) + " " + field.unit);
     flat.onClick = [this] {
         if (onFlat)
             onFlat();
@@ -218,8 +213,10 @@ BandEq::BandEq (const ui::Assets& a) : small (a, 11.5f)
         c->slider.setSliderStyle (juce::Slider::LinearVertical);
         c->slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 40, 18);
         c->slider.setTextBoxIsEditable (true);
-        c->slider.setRange (kBandGainMinDb, kBandGainMaxDb, 0.0);
-        c->slider.setNumDecimalPlacesToDisplay (1);
+        c->slider.setRange (field.lo, field.hi, 0.0);
+        if (field.logarithmic)
+            c->slider.setSkewFactorFromMidPoint (field.flat);
+        c->slider.setNumDecimalPlacesToDisplay (field.decimals);
         c->slider.setLookAndFeel (&small);
         c->slider.onValueChange = [this, j] {
             if (! updating && onBandChange)
@@ -227,8 +224,8 @@ BandEq::BandEq (const ui::Assets& a) : small (a, 11.5f)
             repaint();
         };
         addAndMakeVisible (c->slider);
-        const double f = excitationBandCentre (j);
-        c->label.setText (f < 1000.0 ? juce::String (juce::roundToInt (f)) : juce::String (f / 1000.0, 1) + "k",
+        const double fc = excitationBandCentre (j);
+        c->label.setText (fc < 1000.0 ? juce::String (juce::roundToInt (fc)) : juce::String (fc / 1000.0, 1) + "k",
                           juce::dontSendNotification);
         c->label.setJustificationType (juce::Justification::centred);
         c->label.setColour (juce::Label::textColourId, ui::palette::secondary);
@@ -246,7 +243,7 @@ BandEq::BandEq (const ui::Assets& a) : small (a, 11.5f)
     }
 }
 
-BandEq::~BandEq()
+BandRow::~BandRow()
 {
     for (auto& c : columns)
     {
@@ -255,15 +252,7 @@ BandEq::~BandEq()
     }
 }
 
-void BandEq::setArticulations (const juce::StringArray& names)
-{
-    const juce::ScopedValueSetter<bool> s (updating, true);
-    selector.clear (juce::dontSendNotification);
-    selector.addItemList (names, 1);
-    selector.setSelectedItemIndex (0, juce::dontSendNotification);
-}
-
-void BandEq::setValues (const std::array<double, kExcitationBands>& values, const std::array<double, kExcitationBands>& b)
+void BandRow::setValues (const std::array<double, kExcitationBands>& values, const std::array<double, kExcitationBands>& b)
 {
     baked = b;
     const juce::ScopedValueSetter<bool> s (updating, true);
@@ -272,22 +261,24 @@ void BandEq::setValues (const std::array<double, kExcitationBands>& values, cons
         auto& sl = columns[(size_t) j]->slider;
         const double v = values[(size_t) j], bv = b[(size_t) j];
         if (v < sl.getMinimum() || v > sl.getMaximum() || bv < sl.getMinimum() || bv > sl.getMaximum())
+        {
             sl.setRange (std::min ({ sl.getMinimum(), v, bv }), std::max ({ sl.getMaximum(), v, bv }), 0.0);
+            if (field.logarithmic)
+                sl.setSkewFactorFromMidPoint (field.flat);
+        }
         sl.setValue (v, juce::dontSendNotification);
         columns[(size_t) j]->reset->setEnabled (! juce::exactlyEqual (v, bv));
     }
     repaint();
 }
 
-void BandEq::resized()
+void BandRow::resized()
 {
     auto r = getLocalBounds().reduced (8, 4);
     auto top = r.removeFromTop (kRowHeight);
-    title.setBounds (top.removeFromLeft (110));
     flat.setBounds (top.removeFromRight (70));
-    top.removeFromRight (8);
-    selector.setBounds (top.removeFromLeft (260));
-    r.removeFromTop (6);
+    title.setBounds (top);
+    r.removeFromTop (4);
     const int w = r.getWidth() / kExcitationBands;
     for (int j = 0; j < kExcitationBands; ++j)
     {
@@ -299,7 +290,7 @@ void BandEq::resized()
     }
 }
 
-void BandEq::paint (juce::Graphics& g)
+void BandRow::paint (juce::Graphics& g)
 {
     // A changed band is marked with a bronze bar at its left, like a changed row.
     g.setColour (ui::palette::bronze);
@@ -309,6 +300,40 @@ void BandEq::paint (juce::Graphics& g)
         if (! juce::exactlyEqual (c.slider.getValue(), baked[(size_t) j]))
             g.fillRect (c.slider.getX() - 3, c.slider.getY() + 4, 3, c.slider.getHeight() - 8);
     }
+}
+
+BandEq::BandEq (const ui::Assets& a) : small (a, 11.5f)
+{
+    title.setText ("Articulation", juce::dontSendNotification);
+    addAndMakeVisible (title);
+    selector.onChange = [this] {
+        if (! updating && onSelect)
+            onSelect();
+    };
+    addAndMakeVisible (selector);
+    for (const auto& f : bandFields())
+    {
+        rows.push_back (std::make_unique<BandRow> (f, small));
+        addAndMakeVisible (*rows.back());
+    }
+}
+
+void BandEq::setArticulations (const juce::StringArray& names)
+{
+    const juce::ScopedValueSetter<bool> s (updating, true);
+    selector.clear (juce::dontSendNotification);
+    selector.addItemList (names, 1);
+    selector.setSelectedItemIndex (0, juce::dontSendNotification);
+}
+
+void BandEq::resized()
+{
+    auto r = getLocalBounds();
+    auto top = r.removeFromTop (kSelectorHeight).reduced (8, 6);
+    title.setBounds (top.removeFromLeft (110));
+    selector.setBounds (top.removeFromLeft (260));
+    for (auto& row : rows)
+        row->setBounds (r.removeFromTop (BandRow::height));
 }
 
 // =====================================================================================
@@ -393,8 +418,8 @@ void TuningPanel::rebuild()
                 rows.push_back (std::move (row));
             }
         }
-        // Excitation band gains of the chosen articulation.
-        addHeader ("EXCITATION BANDS (dB per one-third octave)");
+        // Per-band values of the chosen articulation: excitation gains and onset shifts.
+        addHeader ("BANDS (one-third octave): EXCITATION GAIN AND ONSET SHIFT");
         bandEq = std::make_unique<BandEq> (assets);
         juce::StringArray names;
         for (const auto& slot : bake->slots)
@@ -402,20 +427,25 @@ void TuningPanel::rebuild()
         bandEq->setArticulations (names);
         auto bandArt = [this] { return (size_t) juce::jmax (0, bandEq->selected()); };
         bandEq->onSelect = [this] { showValues(); };
-        bandEq->onBandChange = [this, bandArt] (int band, double db) {
-            const size_t s = bandArt();
-            change ([&] (Tuning& t) { t.articulations[s].bandDb[(size_t) band] = db; });
-        };
-        bandEq->onFlat = [this, bandArt] {
-            const size_t s = bandArt();
-            change ([&] (Tuning& t) { t.articulations[s].bandDb.fill (0.0); });
-        };
-        refreshers.push_back ([this, bandArt] {
-            const size_t s = bandArt();
-            bandEq->setValues (processor.tuning (preset).articulations[s].bandDb, bake->tuning.articulations[s].bandDb);
-        });
-        bandEq->setBounds (0, y, 10, BandEq::height);
-        y += BandEq::height;
+        for (size_t fi = 0; fi < bandFields().size(); ++fi)
+        {
+            const auto& f = bandFields()[fi];
+            auto& row = bandEq->row (fi);
+            row.onBandChange = [this, bandArt, &f] (int band, double v) {
+                const size_t s = bandArt();
+                change ([&] (Tuning& t) { (t.articulations[s].*(f.member))[(size_t) band] = v; });
+            };
+            row.onFlat = [this, bandArt, &f] {
+                const size_t s = bandArt();
+                change ([&] (Tuning& t) { (t.articulations[s].*(f.member)).fill (f.flat); });
+            };
+            refreshers.push_back ([this, bandArt, &row, &f] {
+                const size_t s = bandArt();
+                row.setValues (processor.tuning (preset).articulations[s].*(f.member), bake->tuning.articulations[s].*(f.member));
+            });
+        }
+        bandEq->setBounds (0, y, 10, BandEq::height());
+        y += BandEq::height();
         list.addAndMakeVisible (*bandEq);
         // Per cymbal, by group.
         for (auto group : { Group::cymbal, Group::wander, Group::mf, Group::lf, Group::edgeEnvelope })

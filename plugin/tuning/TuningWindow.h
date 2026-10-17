@@ -70,26 +70,24 @@ private:
     bool updating = false;
 };
 
-// The excitation band gains of one articulation: a selector, FLAT, and one vertical slider
-// per one-third-octave band (a graphic EQ) with numeric entry, a reset-to-baked button and
-// the band's centre frequency. A changed band is marked like any changed value.
-class BandEq final : public juce::Component
+// One per-band value of an articulation (a BandField: excitation gain, onset delay or onset
+// speed) as a row of vertical sliders, one per one-third-octave band, like a graphic EQ:
+// numeric entry under each slider, the band's centre frequency, a reset-to-baked button,
+// and FLAT for the whole row. A changed band is marked like any changed value.
+class BandRow final : public juce::Component
 {
 public:
-    explicit BandEq (const ui::Assets& assets);
-    ~BandEq() override;
+    BandRow (const BandField& field, TuningLookAndFeel& small);
+    ~BandRow() override;
 
-    void setArticulations (const juce::StringArray& names);
-    int selected() const { return selector.getSelectedItemIndex(); }
     void setValues (const std::array<double, kExcitationBands>& values, const std::array<double, kExcitationBands>& baked);
 
-    std::function<void (int band, double db)> onBandChange;
+    std::function<void (int band, double value)> onBandChange;
     std::function<void()> onFlat;
-    std::function<void()> onSelect;
 
     void resized() override;
     void paint (juce::Graphics& g) override;
-    static constexpr int height = 290;
+    static constexpr int height = 236;
 
 private:
     struct Column
@@ -98,12 +96,35 @@ private:
         juce::Label label;
         std::unique_ptr<juce::Button> reset;
     };
-    TuningLookAndFeel small; // the band sliders' numbers and labels, in a smaller size
+    const BandField& field;
     juce::Label title;
-    juce::ComboBox selector;
     juce::TextButton flat { "FLAT" };
     std::array<std::unique_ptr<Column>, kExcitationBands> columns;
     std::array<double, kExcitationBands> baked {};
+    bool updating = false;
+};
+
+// The per-band values of the chosen articulation: a selector and one BandRow per BandField.
+class BandEq final : public juce::Component
+{
+public:
+    explicit BandEq (const ui::Assets& assets);
+
+    void setArticulations (const juce::StringArray& names);
+    int selected() const { return selector.getSelectedItemIndex(); }
+    BandRow& row (size_t field) { return *rows[field]; }
+
+    std::function<void()> onSelect;
+
+    void resized() override;
+    static int height() { return kSelectorHeight + (int) bandFields().size() * BandRow::height; }
+
+private:
+    static constexpr int kSelectorHeight = 40;
+    TuningLookAndFeel small; // the band sliders' numbers and labels, in a smaller size
+    juce::Label title;
+    juce::ComboBox selector;
+    std::vector<std::unique_ptr<BandRow>> rows;
     bool updating = false;
 };
 

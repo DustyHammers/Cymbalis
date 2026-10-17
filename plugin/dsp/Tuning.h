@@ -26,6 +26,14 @@ double excitationBandEdge(int j);    // j = 0 .. kExcitationBands
 double excitationBandCentre(int band); // geometric centre
 int excitationBand(double freqHz) noexcept; // below the first edge 0, above the last 21
 
+// A speed of 1 in every band: no onset shift.
+constexpr std::array<double, kExcitationBands> kUnitSpeeds = [] {
+    std::array<double, kExcitationBands> a {};
+    for (auto& x : a)
+        x = 1.0;
+    return a;
+}();
+
 // Per articulation (one bake entry).
 struct ArticulationTuning
 {
@@ -36,6 +44,12 @@ struct ArticulationTuning
     // into the modes of the band, in every coupling path. Stored in the bake with the slot
     // (slots[].excitation_band_gains_db).
     std::array<double, kExcitationBands> bandDb {};
+    // Onset shift of each band: its onset starts delayMs later (negative: earlier) and runs
+    // speed times as fast. A band envelope is read at (t - delay) x speed; an onset ramp
+    // peaks at peak time / speed + delay. Stored in the bake with the slot
+    // (slots[].onset_shift).
+    std::array<double, kExcitationBands> delayMs {};
+    std::array<double, kExcitationBands> speed = kUnitSpeeds;
 };
 
 // Per cymbal. The defaults are the values of a bake without a tuning block.
@@ -77,6 +91,10 @@ constexpr const char* kVel06Key = "vel_0.6_db";
 constexpr const char* kVel03Key = "vel_0.3_db";
 constexpr const char* kBandGainsKey = "band_gains_db";
 constexpr double kBandGainMinDb = -24.0, kBandGainMaxDb = 12.0;
+constexpr const char* kOnsetDelayKey = "onset_delay_ms";
+constexpr const char* kOnsetSpeedKey = "onset_speed";
+constexpr double kOnsetDelayMinMs = -50.0, kOnsetDelayMaxMs = 200.0;
+constexpr double kOnsetSpeedMin = 0.25, kOnsetSpeedMax = 4.0;
 
 // The articulation id of a bake entry without an "articulation" key: its overlay, or its
 // name in lower case (the loader's SlotData::id).
@@ -88,6 +106,8 @@ double velocityCurveDb(const ArticulationTuning& a, double v) noexcept;
 
 // Whether any band gain of the articulation is not 0 dB.
 bool hasBandGains(const ArticulationTuning& a) noexcept;
+// Whether any band of the articulation has an onset delay or a speed other than 1.
+bool hasOnsetShift(const ArticulationTuning& a) noexcept;
 // Each mode's excitation gain (linear) from the articulation's band gains: out[k] for the
 // mode at freqHz[k], k < numModes. Does not allocate.
 void excitationModeGains(const ArticulationTuning& a, const double* freqHz, int numModes, float* out) noexcept;
