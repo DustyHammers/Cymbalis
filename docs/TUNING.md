@@ -51,7 +51,9 @@ The values travel to the audio thread without locks or allocation.
 
 ### Per articulation
 
-One set per bake entry: NOVA RIDE `bell_tip`, `bell_shoulder`, `bow_tip`, `bow_shoulder`, `edge`; SMOKE FLAT RIDE `bow`, `edge`; HAMMERED THIN RIDE `bell`, `bow`, `edge`. The articulation id is the entry's overlay, or its name in lower case.
+One set per bake entry: NOVA RIDE `bell_tip`, `bell_shoulder`, `bow_tip`, `bow_shoulder`, `edge`; SMOKE FLAT RIDE `bow`, `edge`, `center`; HAMMERED THIN RIDE `bell`, `bow`, `edge`. The articulation id is the entry's `articulation` key if it has one, else its overlay, else its name in lower case. Two entries of a bake may not share an id.
+
+**center** (SMOKE FLAT RIDE) is a full articulation with its own values: level, velocity curve and band gains. Its bake entry, `CENTER`, is a copy of the 602's `BOW` data (`"articulation": "center"`, `"copy_of": "BOW"`, made by `tools/bake_preset.py`). Its level trim starts at BOW's (−1.76 dB), so untuned it sounds like the bow. The CENTER and CENTER2 rows play it (`docs/UI_SPEC.md` section 8). Changing `center` leaves `bow` alone, and the reverse.
 
 | Value | Key | Range | Per strike | Effect |
 |---|---|---|---|---|

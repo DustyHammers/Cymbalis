@@ -502,6 +502,19 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
             SlotData slot;
             slot.name = s.at("name").string();
             slot.overlay = s.at("overlay").isNull() ? std::string() : s.at("overlay").string();
+            // Optional (plugin bake): an explicit articulation id, for an entry that copies
+            // another's data ("copy_of"), such as the 602's CENTER (a copy of BOW).
+            const json::Value* idKey = s.find("articulation");
+            slot.id = idKey != nullptr && ! idKey->isNull() ? idKey->string() : articulationId(slot.name, slot.overlay);
+            if (slot.id.empty())
+                throw BakeError("slot " + slot.name + ": empty articulation id");
+            for (const auto& other : b.slots)
+                if (other.id == slot.id)
+                    throw BakeError("slots " + other.name + " and " + slot.name + " have the same articulation id '" +
+                                    slot.id + "'");
+            if (const json::Value* copyOf = s.find("copy_of"); copyOf != nullptr && ! copyOf->isNull())
+                rep.push_back("copy         slot " + slot.name + " (" + slot.id + "): a copy of " + copyOf->string() +
+                              "'s data");
             slot.position = s.at("position").number();
             slot.calibScalar = s.at("calib_scalar").number();
             // Optional (plugin bake): the level trim of this slot in dB, measured with

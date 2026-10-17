@@ -378,7 +378,7 @@ void TuningPanel::rebuild()
         for (size_t s = 0; s < bake->slots.size(); ++s)
         {
             const auto& slot = bake->slots[s];
-            addHeader ("ARTICULATION  " + juce::String (articulationId (slot.name, slot.overlay)).toUpperCase() + "  ("
+            addHeader ("ARTICULATION  " + juce::String (slot.id).toUpperCase() + "  ("
                        + juce::String (slot.name) + ")");
             for (const auto& f : articulationFields())
             {
@@ -398,7 +398,7 @@ void TuningPanel::rebuild()
         bandEq = std::make_unique<BandEq> (assets);
         juce::StringArray names;
         for (const auto& slot : bake->slots)
-            names.add (juce::String (articulationId (slot.name, slot.overlay)).toUpperCase() + "  (" + juce::String (slot.name) + ")");
+            names.add (juce::String (slot.id).toUpperCase() + "  (" + juce::String (slot.name) + ")");
         bandEq->setArticulations (names);
         auto bandArt = [this] { return (size_t) juce::jmax (0, bandEq->selected()); };
         bandEq->onSelect = [this] { showValues(); };
@@ -520,7 +520,7 @@ void TuningPanel::paint (juce::Graphics& g)
     if (meters.hitRow >= 0 && bake != nullptr && meters.hitEntry >= 0 && meters.hitEntry < (int) bake->slots.size())
     {
         const auto& slot = bake->slots[(size_t) meters.hitEntry];
-        hit << kSlots[(size_t) meters.hitRow].label << " - " << juce::String (articulationId (slot.name, slot.overlay))
+        hit << rowLabel (preset, meters.hitRow) << " - " << juce::String (slot.id)
             << "   velocity " << juce::String (meters.hitVelocity, 3);
         g.drawText (hit, m.removeFromTop (m.getHeight() / 2), juce::Justification::centredLeft);
         g.drawText ("peak " + juce::String (meters.hitPeak, 3) + " (" + dbfs (meters.hitPeak) + ")   RMS of the first 500 ms "

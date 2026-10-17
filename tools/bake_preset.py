@@ -23,6 +23,9 @@ can prove that it parsed every value exactly.
     envelopes and their switches ("edge_npz"); a velocity-bracketed edge pk_t is
     written as one row per velocity. Presets without velocity participation tables
     record tau_ref_ms for hertz_vel_scale.
+  * copied entries (COPIED_ENTRIES): an entry with another entry's data under its own
+    articulation id ("articulation", "copy_of"), tuned on its own in the plugin; the
+    602's CENTER is a copy of its BOW.
 
 Usage:
     python tools/bake_preset.py --overrides-from tests/sequences/edge_3hits_15s.json --out bake.json
@@ -30,6 +33,7 @@ Usage:
     python tools/bake_preset.py --preset 602 --overrides '{"nl_amount": 0.0}' --out bake.json
 """
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -48,6 +52,12 @@ AMP_SKIP_THRESHOLD = 1e-9          # multi_strike_engine_v19.py line 859: `if A 
 BOW_ONSET_EDGES = [50, 89, 178, 356, 713, 1425, 2851, 5702, 11404, 22050]   # lines 431-432
 # Shared arrays written only when a preset has them (absent from older bakes).
 OPTIONAL_SHARED = ('pk_t_edge_by_vel_s', 'pk_t_edge_velocities')
+# Entries that copy another entry's data under their own articulation id, so that the plugin
+# tunes them on their own (docs/TUNING.md): (name, articulation id, source entry, position).
+# SMOKE FLAT RIDE's bell rows play CENTER (docs/UI_SPEC.md section 8).
+COPIED_ENTRIES = {
+    '602': [('CENTER', 'center', 'BOW', 1.0)],
+}
 
 
 class BakeError(SystemExit):
@@ -344,6 +354,17 @@ def slot_block(eng, name, overlay, position, preset):
     }
 
 
+def copied_entry(src, name, articulation, position):
+    """Entry `name`: a copy of the slot block `src` with its own articulation id and position.
+    The source's level trim and band gains are not copied (a re-bake has none)."""
+    blk = {'name': name, 'articulation': articulation, 'copy_of': src['name']}
+    for key, val in src.items():
+        if key not in blk and key not in ('level_trim', 'excitation_band_gains_db'):
+            blk[key] = copy.deepcopy(val)
+    blk['position'] = float(position)
+    return blk
+
+
 # ---------------------------------------------------------------------------
 # RNG streams
 # ---------------------------------------------------------------------------
@@ -495,6 +516,11 @@ def bake(overrides, preset='nova', allow_manifest_mismatch=False):
     slot_blocks = [slot_block(eng, name, overlay, pos, preset) for name, overlay, pos, eng in engines]
     for blk, (name, overlay, pos, eng) in zip(slot_blocks, engines):
         blk['contact_force_python'] = enc_opt(python_contact_force(eng, strike_event, pos))
+    for name, articulation, src_name, pos in COPIED_ENTRIES.get(preset, []):
+        k = [blk['name'] for blk in slot_blocks].index(src_name)
+        blk = copied_entry(slot_blocks[k], name, articulation, pos)
+        blk['contact_force_python'] = enc_opt(python_contact_force(engines[k][3], strike_event, pos))
+        slot_blocks.append(blk)
 
     out = {
         'format': BAKE_FORMAT,

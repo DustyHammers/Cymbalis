@@ -897,7 +897,8 @@ void Content::paintLabels (juce::Graphics& g)
             drawInkText (g, f, spec.label, spec.labelInk, spec.colour);
     }
 
-    small ("BELL", 1249.0f, 720.0f, 3.33f);
+    // BLEND POSITION 1 runs from the preset's bell rows (BELL; CENTER on SMOKE FLAT RIDE) to BOW.
+    small (kPresets[(size_t) processor.presetIndex()].blend1Left, 1249.0f, 720.0f, 3.33f);
     small ("BOW", 1409.0f, 720.0f, 2.88f);
     small ("BOW", 1249.0f, 958.0f, 2.88f);
     small ("EDGE", 1409.0f, 958.0f, 2.83f);
@@ -905,9 +906,15 @@ void Content::paintLabels (juce::Graphics& g)
 
 void Content::paintRows (juce::Graphics& g)
 {
+    // The preset's row labels (SlotTable.h), drawn like the row's own.
+    const auto& preset = kPresets[(size_t) processor.presetIndex()];
     for (size_t s = 0; s < kSlots.size(); ++s)
-        drawInkText (g, assets.font (kRowSize, kRowLabelSpacing[s]), kSlots[s].label, { 1201.0f, kRowLabelY[s] },
-                     palette::secondary);
+    {
+        const auto& ps = preset.slots[s];
+        const float spacing = ps.label != nullptr ? ps.labelSpacing : kRowLabelSpacing[s];
+        drawInkText (g, assets.font (kRowSize, spacing), rowLabel (processor.presetIndex(), (int) s),
+                     { 1201.0f, kRowLabelY[s] }, palette::secondary);
+    }
 }
 
 void Content::paintError (juce::Graphics& g)
