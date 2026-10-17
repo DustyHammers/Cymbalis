@@ -10,4 +10,11 @@ void click (juce::Component& target, juce::Point<float> p);
 
 // Presses at `from`, moves to `to` in steps and releases there.
 void drag (juce::Component& target, juce::Point<float> from, juce::Point<float> to);
+
+// The Cymbalis Tuning window (a window of this process whose title contains "Tuning"),
+// seen from the window that holds `editor`: "visible-front" when it is visible, on screen in
+// front of the editor's window (window server order), attached to it as a child window and
+// on the active Space; "hidden" when it exists but is not visible; "none" when there is
+// none; otherwise what failed.
+juce::String tuningWindowState (juce::Component& editor);
 } // namespace cymbalis::uitest

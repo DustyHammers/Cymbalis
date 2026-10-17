@@ -9,6 +9,7 @@ Every push to `main` runs **Actions → Build macOS (VST3 + AU)**. It builds two
 - The Intel slice capped at SSE4.1, and the build fails if any AVX instructions appear
 - Validation with pluginval (VST3) and auval (AU, native and under Rosetta), for both plugins
 - An editor mouse test in an AU and a VST3 host (`tools/cymbalis_uitest`, Cymbalis): real mouse events change the MIDI channel, notes, a stick and the preset, checked in the plugin's saved state
+- A Tuning window test in an AU and a VST3 host (Cymbalis Tuning): a real click on TUNING must show the Tuning window, visible and in front of the editor and attached to its window; a second click must hide it
 - Ad-hoc code signing
 
 The run's **Artifacts** section has one artifact, `Cymbalis-macOS-<shortsha>`, with four zips and nothing else:

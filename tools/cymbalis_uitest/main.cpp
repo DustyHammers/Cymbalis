@@ -2,7 +2,8 @@
 //
 //   CymbalisUiTest PLUGIN STEPS...
 //
-// PLUGIN is a path to Cymbalis.vst3, or "AU" for the installed Audio Unit. The tool hosts
+// PLUGIN is a path to Cymbalis.vst3 (or Cymbalis Tuning.vst3), "AU" for the installed
+// Cymbalis Audio Unit, or "AU:CymT" for the one with that plugin code. The tool hosts
 // the plugin with JUCE's VST3 or AU hosting code, opens its editor in a window and posts
 // real mouse events (NSEvents) to that window, so they travel through the window server
 // path and the plugin wrapper exactly as a host's would. After each step it reads the
@@ -15,6 +16,11 @@
 //   list      click the BELL2 note box, then the note row below C#3   -> note_BELL2 62
 //   stick     click the BELL stick box, then TIP                      -> stick_BELL TIP
 //   preset    click the CYMBAL box, then HAMMERED THIN RIDE            -> preset hammered_thin_ride
+//
+// Cymbalis Tuning only (docs/TUNING.md); these read the windows, not the saved state:
+//
+//   tuning       click TUNING        -> the Tuning window is visible and in front of the editor
+//   tuningclose  click TUNING again  -> the Tuning window is hidden
 //
 // Exit code 0 when every step passed.
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -83,6 +89,7 @@ struct Step
     juce::String name;
     std::vector<std::function<void()>> actions; // one per tick
     juce::String key, expected;
+    std::function<juce::String()> probe; // when set, the value checked instead of a state key
 };
 } // namespace
 
@@ -134,12 +141,13 @@ private:
         juce::OwnedArray<juce::PluginDescription> found;
         for (auto* f : formats.getFormats())
         {
-            if (what == "AU")
+            if (what == "AU" || what.startsWith ("AU:"))
             {
                 if (f->getName() != "AudioUnit")
                     continue;
+                const auto code = what == "AU" ? juce::String ("Cymb") : what.fromFirstOccurrenceOf ("AU:", false, false);
                 for (auto& id : f->searchPathsForPlugins ({}, false, false))
-                    if (id.contains ("Cymb"))
+                    if (id.contains ("," + code + ","))
                         f->findAllTypesForFile (found, id);
             }
             else if (f->fileMightContainThisPluginType (what))
@@ -186,7 +194,7 @@ private:
 
     void addStep (const juce::String& name)
     {
-        Step s { name, {}, {}, {} };
+        Step s { name, {}, {}, {}, {} };
         auto wait = [] {};
         if (name == "channel")
         {
@@ -224,6 +232,14 @@ private:
             s.actions = { click (1314.0f, 152.0f), wait, click (1314.0f, 165.0f + 3.0f + 8.0f + 17.0f), wait };
             s.key = "stick_BELL";
             s.expected = "TIP";
+        }
+        else if (name == "tuning" || name == "tuningclose")
+        {
+            // The TUNING button (PluginEditor.cpp kTuningButton: 1404, 30, 110 x 36), top right.
+            s.actions = { click (1459.0f, 48.0f), wait, wait };
+            s.key = "Tuning window";
+            s.expected = name == "tuning" ? "visible-front" : "hidden";
+            s.probe = [this] { return cymbalis::uitest::tuningWindowState (*editor); };
         }
         else if (name == "preset")
         {
@@ -265,7 +281,7 @@ private:
         juce::MemoryBlock state;
         plugin->getStateInformation (state);
         const auto session = findSession (state);
-        const auto value = attribute (session, step.key);
+        const auto value = step.probe ? step.probe() : attribute (session, step.key);
         const bool ok = value == step.expected;
         passed += ok ? 1 : 0;
         std::printf ("%s: %s %s = %s (expected %s)\n", ok ? "PASS" : "FAIL", step.name.toRawUTF8(), step.key.toRawUTF8(),

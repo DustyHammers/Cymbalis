@@ -109,11 +109,32 @@ private:
     juce::Rectangle<int> clipBox;
 };
 
+// The Tuning window. It is attached to the window that holds `owner` (the editor): on
+// macOS a child window of it, so it stays in front of the editor and the host, on the same
+// Space, and moves with it; elsewhere it is kept on top. It goes when the editor goes.
 class TuningWindow final : public juce::DocumentWindow
 {
 public:
-    TuningWindow (CymbalisProcessor& p, const ui::Assets& assets);
-    void closeButtonPressed() override { setVisible (false); }
+    TuningWindow (CymbalisProcessor& p, const ui::Assets& assets, juce::Component& owner);
+    ~TuningWindow() override;
+
+    // Visible, in front, attached to the editor's window, and clear of `keepClear` (the
+    // TUNING button, in screen coordinates) so that the button stays clickable.
+    void show (juce::Rectangle<int> keepClear);
+    void hide();
+    bool isShowing() const { return isVisible(); }
+    void closeButtonPressed() override { hide(); }
+
+private:
+    void placeClearOf (juce::Rectangle<int> keepClear);
+
+    juce::Component& owner;
+    bool placed = false;
 };
+
+// Platform part (TuningWindowMac.mm on macOS): attach `window` above the native window
+// that holds `owner`, or detach it.
+void attachAbove (juce::Component& window, juce::Component& owner);
+void detach (juce::Component& window);
 
 } // namespace cymbalis::tuning

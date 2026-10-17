@@ -122,6 +122,9 @@ if(CYMBALIS_TUNING)
         plugin/tuning/TuningProcessor.cpp
         plugin/tuning/TuningWindow.cpp
     )
+    if(APPLE)
+        target_sources(${CYMBALIS_TARGET} PRIVATE plugin/tuning/TuningWindowMac.mm)
+    endif()
     target_include_directories(${CYMBALIS_TARGET} PRIVATE plugin/tuning)
 endif()
 
