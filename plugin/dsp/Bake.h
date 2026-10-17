@@ -88,7 +88,9 @@ struct EdgeNpz
     bool normalize = true;          // edge_velw_normalize
     double levelVelGainPower = 0.7; // exponent of the velocity level (line 1058)
     std::vector<double> rmsCorrection; // per band; empty = none (edge_rms_correction)
-    bool envelopeActive = false;    // an edge band envelope file is set too (line 691)
+    // An edge band envelope file is set too (line 691), or the bake switches the envelope on
+    // itself (edge_npz.envelope_set_by; Swish). The tuning can switch it (EDGE ONSET ENVELOPE).
+    bool envelopeActive = false;
     double onsetS = 1.5;            // edge_band_env_onset_s
     double frameDecayPeriodS = 0.02; // the in-frame decay restarts every 20 ms (line 889)
     // Plugin tuning (docs/TUNING.md): the exponent of the velw velocity remap (line 1049:
@@ -105,6 +107,7 @@ struct SlotData
     // The articulation id (docs/TUNING.md): the entry's "articulation" key, else its overlay,
     // else its name in lower case. Unique within a bake.
     std::string id;
+    std::string copyOf;        // the entry this one copies ("copy_of"), empty for the preset's own entries
     double position = 0.0;     // 0 edge, 0.5 bow, 1 bell
     double calibScalar = 1.0;  // the slot engine's _calib_scalar
     // Plugin tuning of this articulation (docs/TUNING.md): its velocity curve (level offsets
@@ -131,6 +134,11 @@ struct SlotData
     bool attackTuned = false;
     std::vector<double> onsetGains; // per band (9 bands)
     double onsetTauS = 0.08;
+
+    // Stick click (_add_transient lines 1194-1211): the weight of its bow, bell and edge
+    // fractions (stick_bow_weight, stick_bell_weight, stick_edge_weight). Its gain, band,
+    // length and decay are tuning values (articulation).
+    double stickBowWeight = 1.0, stickBellWeight = 1.0, stickEdgeWeight = 1.0;
 
     // Stage 3: contact force matrix for this slot's position, numModes x contactLen,
     // row-major. Each row is DC-normalised. Empty when contact is off.

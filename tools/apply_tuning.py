@@ -23,6 +23,9 @@ tuning block it already has). Then:
   * each articulation's attack band gains and attack time go into its slot's attack data,
     slots[].attack_band_gains (band edges, 22 gains in dB, time in ms); values equal to what
     the slot's onset gains give (bow_onset_band_gains in 22 bands, onset_tau_s) remove it;
+  * each articulation's stick click (stick_gain, stick_bp_lo, stick_bp_hi, stick_len_ms,
+    stick_decay_ms) goes into the tuning block where it differs from the slot's own value
+    (its stick_* parameters, Python's defaults where it has none);
   * every other value that differs from the bake's own value goes into the bake's
     "tuning" block, which the plugin's bake loader applies; per-band cymbal values
     (ring_length_bands) as 22 values. The plugin's own mechanisms (energy cascade
@@ -82,6 +85,7 @@ PLUGIN_KEYS = {
 WEIGHTS_KEY = 'rehit_damp_weights'
 WEIGHT_MIN, WEIGHT_MAX = 0.0, 2.0
 RESTART_KEY = 'edge_frame_decay_restart'
+ENVELOPE_KEY = 'edge_band_envelope'   # EDGE ONSET ENVELOPE: the bake's edge_npz.envelope_active
 # Per-band cymbal values (22 values, lowest band first): name -> (range, unit, neutral value).
 CYMBAL_BAND_KEYS = {
     'ring_length_bands': ((0.25, 4.0), 'x', 1.0),
@@ -103,6 +107,15 @@ ATTACK_KEY, ATTACK_TIME_KEY, SLOT_ATTACK_KEY = 'attack_band_gains_db', 'attack_t
 ATTACK_MIN_DB, ATTACK_MAX_DB = -12.0, 12.0
 ATTACK_MIN_MS, ATTACK_MAX_MS = 10.0, 1000.0
 POSITIVE = ('ring_length', 'edge_velocity_remap_exponent', 'wander_rate_hz')
+# Stick click per articulation (plugin/dsp/Tuning.h): key -> (Python's default, range). The
+# gain is the slot's effective stick_gain; the rest Python reads with p.get and these defaults.
+STICK_KEYS = {
+    'stick_gain': (0.0, (0.0, 24.0)),
+    'stick_bp_lo': (2500.0, (100.0, 16000.0)),
+    'stick_bp_hi': (9000.0, (200.0, 20000.0)),
+    'stick_len_ms': (8.0, (1.0, 50.0)),
+    'stick_decay_ms': (3.0, (0.5, 50.0)),
+}
 
 
 def fail(msg):
@@ -127,10 +140,18 @@ def own_values(bake):
     npz = bake.get('edge_npz')
     own['edge_band_env_onset_s'] = float(npz['onset_s']) if npz else 1.5
     own[RESTART_KEY] = True
+    own[ENVELOPE_KEY] = bool(npz['envelope_active']) if npz else False
     for key, (neutral, _) in PLUGIN_KEYS.items():
         own[key] = neutral
     for key, (_, _, neutral) in CYMBAL_BAND_KEYS.items():
         own[key] = [neutral] * N_BANDS
+    return own
+
+
+def own_stick(slot):
+    """The slot's own stick click values (plugin/dsp/Bake.cpp)."""
+    own = {k: float(slot['params'].get(k, default)) for k, (default, _) in STICK_KEYS.items()}
+    own['stick_gain'] = float(slot['effective']['stick_gain'])
     return own
 
 
@@ -252,9 +273,11 @@ def main():
 
     # The file's changes on top of the bake's current values.
     for key, v in (tun.get('cymbal') or {}).items():
-        if key == RESTART_KEY:
+        if key in (RESTART_KEY, ENVELOPE_KEY):
             if not isinstance(v, bool):
-                fail(f'{RESTART_KEY} must be true or false')
+                fail(f'{key} must be true or false')
+            if key == ENVELOPE_KEY and not bake.get('edge_npz'):
+                fail(f'{ENVELOPE_KEY}: the bake has no NPZ edge data')
             current[key] = v
         elif key == WEIGHTS_KEY:
             if not isinstance(v, dict):
@@ -292,6 +315,11 @@ def main():
                 levels[aid] = finite(f'{aid}.{key}', v)
             elif key in (VEL06_KEY, VEL03_KEY, BRIGHT_KEY):
                 curves[aid][key] = finite(f'{aid}.{key}', v)
+            elif key in STICK_KEYS:
+                lo, hi = STICK_KEYS[key][1]
+                curves[aid][key] = finite(f'{aid}.{key}', v)
+                if not lo <= curves[aid][key] <= hi:
+                    fail(f'{aid}.{key} must lie in {lo:g} to {hi:g}')
             elif key == ATTACK_KEY:
                 attacks[aid] = (band_values(f'{aid}.{key}', v, ATTACK_MIN_DB, ATTACK_MAX_DB, 'dB'), attacks[aid][1])
             elif key == ATTACK_TIME_KEY:
@@ -309,11 +337,15 @@ def main():
                 fail(f'unknown articulation value {aid}.{key}')
 
     # The new tuning block: what differs from the bake's own values.
-    new_cymbal = {k: current[k] for k in CYMBAL_KEYS + [RESTART_KEY] + list(CYMBAL_BAND_KEYS) + [WEIGHTS_KEY]
+    new_cymbal = {k: current[k] for k in CYMBAL_KEYS + [RESTART_KEY, ENVELOPE_KEY] + list(CYMBAL_BAND_KEYS) + [WEIGHTS_KEY]
                   if k in current and current[k] != own.get(k)}
     new_arts = {}
     for aid, vals in curves.items():
-        kept = {k: v for k, v in vals.items() if v != 0.0}
+        stick = own_stick(bake['slots'][ids[aid]])
+        lo = vals.get('stick_bp_lo', stick['stick_bp_lo'])
+        if not lo < vals.get('stick_bp_hi', stick['stick_bp_hi']):
+            fail(f'{aid}: stick_bp_lo must be below stick_bp_hi')
+        kept = {k: v for k, v in vals.items() if v != stick.get(k, 0.0)}
         if kept:
             new_arts[aid] = kept
     now = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')

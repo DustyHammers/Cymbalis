@@ -196,7 +196,6 @@ std::vector<std::string> unsupportedMechanisms(const json::Value& e)
     if (eff(e, "nl_amount") > 1e-6) out.push_back("NL redistribution (nl_amount > 0; off in the plugin)");
     if (eff(e, "hf_bloom_modes") > 0) out.push_back("HF bloom bank");
     if (eff(e, "sparkle_clusters") > 0 && eff(e, "sparkle_depth") > 0.0) out.push_back("sparkle");
-    if (eff(e, "stick_gain") > 0.0) out.push_back("stick click transient");
     if (eff(e, "atk_noise") > 0.0) out.push_back("attack noise burst");
     // An edge band envelope without NPZ data does nothing in Python (_eb_active is never
     // set, lines 574 and 610), so only the NPZ case needs the edge_npz block.
@@ -400,7 +399,7 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
         for (const auto& s : slotArr)
             for (const auto& kv : e0.object())
             {
-                if (kv.first == "bow_onset_gains_active") continue; // overlay-specific
+                if (kv.first == "bow_onset_gains_active" || kv.first == "stick_gain") continue; // overlay-specific
                 const json::Value* other = s.at("effective").find(kv.first);
                 if (other == nullptr || !json::equal(kv.second, *other))
                     throw BakeError("engine-wide parameter '" + kv.first + "' differs between slots " +
@@ -479,8 +478,13 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
             if (z == nullptr || z->isNull())
                 throw BakeError("the preset uses NPZ edge data but the bake has no edge_npz block");
             readEdgeNpz(*z, n, b.edgeNpz, rep);
-            if (b.edgeNpz.envelopeActive != e0.at("edge_band_env").boolean())
+            // Python builds the envelope only with an edge band envelope file (line 691); a
+            // plugin bake can switch it on itself, and says why (Swish).
+            const json::Value* setBy = z->find("envelope_set_by");
+            if (b.edgeNpz.envelopeActive != e0.at("edge_band_env").boolean() && (setBy == nullptr || setBy->isNull()))
                 throw BakeError("edge_npz.envelope_active does not match edge_band_env");
+            if (setBy != nullptr && ! setBy->isNull())
+                rep.push_back("edge env     envelope_active set by the bake: " + setBy->string());
         }
         else if (e0.at("edge_band_env").boolean())
             rep.push_back("edge env     edge band envelope without NPZ data: no effect, as in Python");
@@ -515,8 +519,10 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
                     throw BakeError("slots " + other.name + " and " + slot.name + " have the same articulation id '" +
                                     slot.id + "'");
             if (const json::Value* copyOf = s.find("copy_of"); copyOf != nullptr && ! copyOf->isNull())
-                rep.push_back("copy         slot " + slot.name + " (" + slot.id + "): a copy of " + copyOf->string() +
-                              "'s data");
+            {
+                slot.copyOf = copyOf->string();
+                rep.push_back("copy         slot " + slot.name + " (" + slot.id + "): a copy of " + slot.copyOf + "'s data");
+            }
             slot.position = s.at("position").number();
             slot.calibScalar = s.at("calib_scalar").number();
             // Optional (plugin bake): the level trim of this slot in dB, measured with
@@ -656,6 +662,31 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
             }
             slot.velGainPower = e.at("vel_gain_power").number();
             slot.edgeLevelBoost = e.at("edge_level_boost").number();
+            // Stick click (_add_transient lines 1194-1211): its gain is the articulation's
+            // stick_gain; the rest Python reads with p.get and these defaults.
+            {
+                const json::Value& prm = s.at("params");
+                auto get = [&](const char* key, double dflt) {
+                    const json::Value* v = prm.find(key);
+                    const double x = v != nullptr && ! v->isNull() ? v->number() : dflt;
+                    if (! std::isfinite(x))
+                        throw BakeError("slot " + slot.name + ": " + key + " is not finite");
+                    return x;
+                };
+                ArticulationTuning& a = slot.articulation;
+                a.stickGain = eff(e, "stick_gain");
+                a.stickLoHz = get("stick_bp_lo", 2500.0);
+                a.stickHiHz = get("stick_bp_hi", 9000.0);
+                a.stickLenMs = get("stick_len_ms", 8.0);
+                a.stickDecayMs = get("stick_decay_ms", 3.0);
+                slot.stickBowWeight = get("stick_bow_weight", 1.0);
+                slot.stickBellWeight = get("stick_bell_weight", 1.0);
+                slot.stickEdgeWeight = get("stick_edge_weight", 1.0);
+                if (a.stickGain > 0.0)
+                    rep.push_back("stick click  slot " + slot.name + fmt(": gain %.3g, ", a.stickGain) +
+                                  fmt("%.0f-", a.stickLoHz) + fmt("%.0f Hz, ", a.stickHiHz) +
+                                  fmt("%.3g ms, ", a.stickLenMs) + fmt("decay %.3g ms", a.stickDecayMs));
+            }
 
             const auto missing = unsupportedMechanisms(e);
             if (!missing.empty())
@@ -799,6 +830,7 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
         c.lfWBell = ep.lfWBell;
         c.lfWanderRateBoost = ep.lfWanderRateBoost;
         c.edgeEnvWindowS = b.edgeNpz.onsetS;
+        c.edgeEnvelope = b.edgeNpz.present && b.edgeNpz.envelopeActive;
         u.numArticulations = static_cast<int>(b.slots.size());
         for (size_t s = 0; s < b.slots.size(); ++s)
         {
@@ -808,6 +840,11 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
             u.articulations[s].speed = b.slots[s].articulation.speed;
             u.articulations[s].attackDb = b.slots[s].articulation.attackDb;
             u.articulations[s].attackMs = b.slots[s].articulation.attackMs;
+            u.articulations[s].stickGain = b.slots[s].articulation.stickGain;
+            u.articulations[s].stickLoHz = b.slots[s].articulation.stickLoHz;
+            u.articulations[s].stickHiHz = b.slots[s].articulation.stickHiHz;
+            u.articulations[s].stickLenMs = b.slots[s].articulation.stickLenMs;
+            u.articulations[s].stickDecayMs = b.slots[s].articulation.stickDecayMs;
         }
         b.pythonT60S = b.t60S;
         b.pythonLfoRateHz = b.lfoRateHz;

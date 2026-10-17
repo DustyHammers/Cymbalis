@@ -60,6 +60,14 @@ struct ArticulationTuning
     // velocity-1.0 one, in dB per octave, pivoting at 1 kHz; 0 at velocity 1.0 and linear in
     // log velocity (brightnessTiltDb). Positive: soft strikes are brighter.
     double brightnessDbOct = 0.0;
+    // Stick click (multi_strike_engine_v19.py _add_transient, lines 1194-1211): a band-passed
+    // noise burst at the strike, gain x position weight x velocity^1.7, from the engine's
+    // random stream. Gain 0: none. The bake's values are the articulation's stick_*
+    // parameters (Python's defaults where it has none).
+    double stickGain = 0.0;
+    double stickLoHz = 2500.0, stickHiHz = 9000.0; // band-pass edges (Butterworth, order 2)
+    double stickLenMs = 8.0;                       // length of the noise burst
+    double stickDecayMs = 3.0;                     // its exponential decay
 };
 
 constexpr int kMaxArticulations = 8;
@@ -82,6 +90,9 @@ struct CymbalTuning
     double lfWBow = 0.5, lfWEdge = 1.0, lfWBell = 0.1, lfWanderRateBoost = 0.0;
     double edgeEnvWindowS = 1.5;     // NPZ band envelope window after an edge strike
     bool frameDecayRestart = true;   // in-frame decay restarting every 20 ms (false: none)
+    // EDGE ONSET ENVELOPE: whether an edge strike's level follows the NPZ band envelope for
+    // the window (presets with NPZ edge data; the bake's edge_npz.envelope_active).
+    bool edgeEnvelope = false;
     // Energy cascade (FastEngine): while a band rings above the threshold, energy moves from
     // it into the bands above it. Amount 0: off. Bands are indices 0 .. 21 (as the band gains).
     double cascadeAmount = 0.0;        // 0 .. 1
@@ -123,6 +134,7 @@ struct CymbalKey
 };
 const std::vector<CymbalKey>& cymbalKeys();
 constexpr const char* kFrameDecayRestartKey = "edge_frame_decay_restart";
+constexpr const char* kEdgeEnvelopeKey = "edge_band_envelope";
 constexpr const char* kRingBandsKey = "ring_length_bands";
 constexpr const char* kRehitWeightsKey = "rehit_damp_weights"; // {articulation id: weight}
 constexpr double kRehitWeightMax = 2.0;
@@ -142,6 +154,17 @@ constexpr double kAttackGainMinDb = -12.0, kAttackGainMaxDb = 12.0;
 constexpr double kAttackTimeMinMs = 10.0, kAttackTimeMaxMs = 1000.0;
 constexpr const char* kBrightnessKey = "brightness_db_per_oct";
 constexpr double kBrightnessMin = -6.0, kBrightnessMax = 6.0;
+// Stick click (Python's parameter names).
+constexpr const char* kStickGainKey = "stick_gain";
+constexpr const char* kStickLoKey = "stick_bp_lo";
+constexpr const char* kStickHiKey = "stick_bp_hi";
+constexpr const char* kStickLenKey = "stick_len_ms";
+constexpr const char* kStickDecayKey = "stick_decay_ms";
+constexpr double kStickGainMax = 24.0;
+constexpr double kStickLoMinHz = 100.0, kStickLoMaxHz = 16000.0;
+constexpr double kStickHiMinHz = 200.0, kStickHiMaxHz = 20000.0;
+constexpr double kStickLenMinMs = 1.0, kStickLenMaxMs = 50.0;
+constexpr double kStickDecayMinMs = 0.5, kStickDecayMaxMs = 50.0;
 
 // The articulation id of a bake entry without an "articulation" key: its overlay, or its
 // name in lower case (the loader's SlotData::id).

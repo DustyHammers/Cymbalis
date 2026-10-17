@@ -240,6 +240,8 @@ void applyTuning(BakeData& b, const Tuning& t)
     b.edgeNpz.remapExponent = c.edgeRemapExponent;
     b.edgeNpz.onsetS = c.edgeEnvWindowS;
     b.edgeNpz.frameDecayRestart = c.frameDecayRestart;
+    if (b.edgeNpz.present)
+        b.edgeNpz.envelopeActive = c.edgeEnvelope;
 
     for (size_t s = 0; s < b.slots.size() && s < size_t(kMaxArticulations); ++s)
     {
@@ -266,6 +268,11 @@ Tuning parseTuningBlock(const json::Value& block, const BakeData& b, const Tunin
             if (kv.first == kFrameDecayRestartKey)
             {
                 t.cymbal.frameDecayRestart = kv.second.boolean();
+                continue;
+            }
+            if (kv.first == kEdgeEnvelopeKey)
+            {
+                t.cymbal.edgeEnvelope = kv.second.boolean();
                 continue;
             }
             if (kv.first == kRingBandsKey)
@@ -330,6 +337,11 @@ Tuning parseTuningBlock(const json::Value& block, const BakeData& b, const Tunin
                 if (v.first == kVel06Key) t.articulations[size_t(slot)].vel06Db = x;
                 else if (v.first == kVel03Key) t.articulations[size_t(slot)].vel03Db = x;
                 else if (v.first == kBrightnessKey) t.articulations[size_t(slot)].brightnessDbOct = x;
+                else if (v.first == kStickGainKey) t.articulations[size_t(slot)].stickGain = x;
+                else if (v.first == kStickLoKey) t.articulations[size_t(slot)].stickLoHz = x;
+                else if (v.first == kStickHiKey) t.articulations[size_t(slot)].stickHiHz = x;
+                else if (v.first == kStickLenKey) t.articulations[size_t(slot)].stickLenMs = x;
+                else if (v.first == kStickDecayKey) t.articulations[size_t(slot)].stickDecayMs = x;
                 else
                     throw std::runtime_error("tuning: unknown articulation value \"" + v.first + "\" (the level is "
                                              "slots[].level_trim.gain_db)");

@@ -28,7 +28,7 @@ bool applies (Needs needs, const BakeData& b)
     {
         case Needs::always: return true;
         case Needs::npzEdge: return b.edgeNpz.present && b.edgeNpz.useVelw;
-        case Needs::envelope: return b.edgeNpz.present && b.edgeNpz.envelopeActive;
+        case Needs::envelope: return b.edgeNpz.present; // the tuning can switch the envelope on
         case Needs::noVelocityTables:
             for (const auto& s : b.slots)
                 if (! s.hasBowVp)
@@ -119,6 +119,11 @@ const std::vector<ArticulationField>& articulationFields()
         { kBrightnessKey, "Brightness vs velocity (tilt at 0.3, pivot 1 kHz)", "dB/oct", kBrightnessMin, kBrightnessMax, 2,
           &A::brightnessDbOct },
         { kAttackTimeKey, "ATTACK TIME", "ms", kAttackTimeMinMs, kAttackTimeMaxMs, 0, &A::attackMs, true },
+        { kStickGainKey, "STICK CLICK gain (0 = none)", "", 0.0, kStickGainMax, 2, &A::stickGain },
+        { kStickLoKey, "STICK CLICK band low", "Hz", kStickLoMinHz, kStickLoMaxHz, 0, &A::stickLoHz },
+        { kStickHiKey, "STICK CLICK band high", "Hz", kStickHiMinHz, kStickHiMaxHz, 0, &A::stickHiHz },
+        { kStickLenKey, "STICK CLICK length", "ms", kStickLenMinMs, kStickLenMaxMs, 1, &A::stickLenMs },
+        { kStickDecayKey, "STICK CLICK decay", "ms", kStickDecayMinMs, kStickDecayMaxMs, 1, &A::stickDecayMs },
     };
     return fields;
 }
@@ -144,7 +149,7 @@ const std::vector<CymbalBandField>& cymbalBandFields()
 
 const NovaShoulderProfile* novaShoulderProfile (const BakeData& b, const juce::String& presetId, size_t slot)
 {
-    if (presetId == "nova_ride" || slot >= b.slots.size())
+    if (presetId == "nova_ride" || slot >= b.slots.size() || b.slots[slot].copyOf.empty())
         return nullptr;
     const auto& id = b.slots[slot].id;
     if (id == "bell_shoulder")
@@ -199,6 +204,8 @@ juce::var cymbalObject (const BakeData& b, const Tuning& t, bool onlyChanged)
     if (applies (Needs::envelope, b)
         && (! onlyChanged || t.cymbal.frameDecayRestart != b.tuning.cymbal.frameDecayRestart))
         o->setProperty (kFrameDecayRestartKey, t.cymbal.frameDecayRestart);
+    if (applies (Needs::envelope, b) && (! onlyChanged || t.cymbal.edgeEnvelope != b.tuning.cymbal.edgeEnvelope))
+        o->setProperty (kEdgeEnvelopeKey, t.cymbal.edgeEnvelope);
     // The per-band values: all 22 when any differs.
     for (const auto& f : cymbalBandFields())
         if (! onlyChanged || t.cymbal.*(f.member) != b.tuning.cymbal.*(f.member))
@@ -302,6 +309,13 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
                 t.cymbal.frameDecayRestart = (bool) p.value;
                 continue;
             }
+            if (key == kEdgeEnvelopeKey)
+            {
+                if (! applies (Needs::envelope, b))
+                    return juce::String (kEdgeEnvelopeKey) + ": this preset has no NPZ edge envelope.";
+                t.cymbal.edgeEnvelope = (bool) p.value;
+                continue;
+            }
             if (key == kRehitWeightsKey)
             {
                 auto* w = p.value.getDynamicObject();
@@ -391,7 +405,7 @@ bool isModified (const BakeData& b, const Tuning& t)
     for (const auto& f : cymbalFields())
         if (! juce::exactlyEqual (t.cymbal.*(f.member), b.tuning.cymbal.*(f.member)))
             return true;
-    if (t.cymbal.frameDecayRestart != b.tuning.cymbal.frameDecayRestart)
+    if (t.cymbal.frameDecayRestart != b.tuning.cymbal.frameDecayRestart || t.cymbal.edgeEnvelope != b.tuning.cymbal.edgeEnvelope)
         return true;
     if (! sameRehitWeights (b, t.cymbal, b.tuning.cymbal))
         return true;

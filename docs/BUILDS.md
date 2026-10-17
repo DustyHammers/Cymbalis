@@ -25,23 +25,25 @@ The plugin is an instrument. Note-ons on MIDI channel 16 (selectable in the edit
 
 ## The compiled-in presets
 
-The plugin plays three presets, baked from the Python engine's data with NL off. Choose one in the CYMBAL box:
+The plugin plays four presets, baked from the Python engine's data with NL off. Choose one in the CYMBAL box:
 
 | Preset | Bake | Source |
 |---|---|---|
 | NOVA RIDE | `resources/presets/nova_ride.bake.json` | `presets/nova/` |
 | SMOKE FLAT RIDE | `resources/presets/smoke_flat_ride.bake.json` | `presets/602/` |
 | HAMMERED THIN RIDE | `resources/presets/hammered_thin_ride.bake.json` | `presets/bettis/` |
+| SWISH | `resources/presets/swish.bake.json` | `presets/swish/` |
 
-After a change to a preset's data, regenerate its bake (`--preset nova`, `602` or `bettis`):
+After a change to a preset's data, regenerate its bake (`--preset nova`, `602`, `bettis` or `swish`):
 
 ```
 python tools/bake_preset.py --preset nova --overrides '{"nl_amount": 0.0}' --out resources/presets/nova_ride.bake.json
 python tools/bake_preset.py --preset 602 --overrides '{"nl_amount": 0.0}' --out resources/presets/smoke_flat_ride.bake.json
 python tools/bake_preset.py --preset bettis --overrides '{"nl_amount": 0.0}' --out resources/presets/hammered_thin_ride.bake.json
+python tools/bake_preset.py --preset swish --overrides '{"nl_amount": 0.0}' --out resources/presets/swish.bake.json
 ```
 
-Each bake also holds its slots' level trims, in `slots[].level_trim.gain_db`. The plugin uses only that number; edit it to adjust a slot's level by ear. Re-baking drops the trims. Nova Ride's trims give a velocity-0.9 hit at each slot's base position the same 1-second RMS as one on BOW (tip). The 602 and Bettis trims work at velocity 1.0 over the first 500 ms. BOW, and the 602's CENTER (a copy of its BOW), are matched to Nova's BOW (tip). The shoulder copies of the 602 and Bettis, and Nova's EDGE (a copy of BOW2), start with their sources' trims. EDGE and BELL go to the level their SPEAR captures have relative to BOW, capped where one hit would peak above 0.9 before the Volume knob (`docs/PORT_MAP.md`, "602 and Bettis", decision 5). To measure trims again with the plugin's engine and store them:
+Each bake also holds its slots' level trims, in `slots[].level_trim.gain_db`. The plugin uses only that number; edit it to adjust a slot's level by ear. Re-baking drops the trims. Nova Ride's trims give a velocity-0.9 hit at each slot's base position the same 1-second RMS as one on BOW (tip). The 602, Bettis and Swish trims work at velocity 1.0 over the first 500 ms. BOW, the 602's CENTER (a copy of its BOW) and Swish's BOW_SHOULDER are matched to Nova's BOW (tip); Swish's BELL_SHOULDER takes BELL's SPEAR target. The shoulder copies of the 602 and Bettis, and Nova's EDGE (a copy of BOW2), start with their sources' trims. EDGE and BELL go to the level their SPEAR captures have relative to BOW, capped where one hit would peak above 0.9 before the Volume knob (`docs/PORT_MAP.md`, "602 and Bettis", decision 5). To measure trims again with the plugin's engine and store them:
 
 ```
 cmake --build build --target cymbalis_trims
@@ -51,6 +53,8 @@ build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/smoke_flat_ri
 python tools/set_level_trims.py resources/presets/smoke_flat_ride.bake.json trims.json
 build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/hammered_thin_ride.bake.json --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target BELL=2.7 --spear-target EDGE=14.2 --peak-limit 0.9 --json trims.json
 python tools/set_level_trims.py resources/presets/hammered_thin_ride.bake.json trims.json
+build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/swish.bake.json --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target BELL=5.3 --spear-target BELL_SHOULDER=5.3 --spear-target EDGE=4.7 --peak-limit 0.9 --json trims.json
+python tools/set_level_trims.py resources/presets/swish.bake.json trims.json
 ```
 
 ## Installing a CI build

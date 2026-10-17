@@ -33,8 +33,8 @@ enum class Needs
 {
     always,
     npzEdge,          // presets with NPZ edge data (602, Bettis)
-    noVelocityTables, // presets whose bow has no velocity participation table (602, Bettis)
-    envelope          // presets with an NPZ band envelope (602, Bettis)
+    noVelocityTables, // presets whose bow has no velocity participation table (602, Bettis, Swish)
+    envelope          // presets with an NPZ band envelope, on or switched off (602, Bettis, Swish)
 };
 
 bool applies (Needs needs, const BakeData& bake);
@@ -113,8 +113,9 @@ struct CymbalBandField
 const std::vector<CymbalBandField>& cymbalBandFields();
 
 // NOVA SHOULDER PROFILE (ShoulderProfiles.h): the band gains, attack gains and attack time
-// for a shoulder articulation of SMOKE FLAT RIDE or HAMMERED THIN RIDE (bell profile for
-// bell_shoulder, bow profile for bow_shoulder and center_shoulder), or nullptr for any other.
+// for a shoulder articulation that is a copy of its tip (SMOKE FLAT RIDE, HAMMERED THIN RIDE,
+// SWISH's bell_shoulder): the bell profile for bell_shoulder, the bow profile for
+// bow_shoulder and center_shoulder; nullptr for any other.
 const NovaShoulderProfile* novaShoulderProfile (const BakeData& bake, const juce::String& presetId, size_t slot);
 
 constexpr const char* kFormat = "cymbalis-tuning";

@@ -72,6 +72,8 @@ Engine::Engine(std::shared_ptr<const BakeData> bake, EngineConfig config)
                 missing += " onset shifts (slot " + s.name + ")";
             if (s.attackTuned)
                 missing += " attack band gains (slot " + s.name + ")";
+            if (s.articulation.stickGain > 0.0)
+                missing += " stick click (slot " + s.name + ")";
         }
         if (!missing.empty())
             throw BakeError("Engine does not implement:" + missing + "; use FastEngine");

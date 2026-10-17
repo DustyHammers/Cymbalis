@@ -5,8 +5,9 @@
     python tools/shoulder_profile.py --check    # fail if the header is not what this computes
 
 The Tuning window's NOVA SHOULDER PROFILE button (docs/TUNING.md) fills a shoulder
-articulation of SMOKE FLAT RIDE or HAMMERED THIN RIDE with these band gains, attack gains and
-attack time: the bow profile for bow and center, the bell profile for bell. They are computed
+articulation copied from its tip (SMOKE FLAT RIDE, HAMMERED THIN RIDE, SWISH's bell_shoulder)
+with these band gains, attack gains and attack time: the bow profile for bow and center, the
+bell profile for bell. They are computed
 once, here, from the Nova bake (resources/presets/nova_ride.bake.json), as the engine plays it.
 
 Band gains:

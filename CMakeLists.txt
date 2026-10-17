@@ -93,10 +93,12 @@ set(CYMBALIS_RESOURCES
     resources/presets/nova_ride.bake.json
     resources/presets/smoke_flat_ride.bake.json
     resources/presets/hammered_thin_ride.bake.json
+    resources/presets/swish.bake.json
     resources/ui/CYMBALIS_Background_logo.png
     resources/ui/Nova.png
     resources/ui/SmokeFlatRide.png
     resources/ui/HammeredThinRide.png
+    resources/ui/Swish.png
     resources/ui/knob.png
     resources/ui/Carlito-Regular.ttf
 )

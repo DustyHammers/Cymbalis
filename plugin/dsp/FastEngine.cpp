@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
+#include <complex>
 #include <cstring>
 
 namespace cymbalis
@@ -100,6 +101,33 @@ void butterworthHighPass2(double fc, double sr, double& b0, double& b1, double& 
     b2 = norm;
     a1 = 2.0 * (k * k - 1.0) * norm;
     a2 = (1.0 - std::sqrt(2.0) * k + k * k) * norm;
+}
+
+// Bilinear-transform Butterworth band-pass, order 2, as scipy butter(2, [lo, hi] / (SR/2),
+// 'band') (dsp_filters._bp): the analog prototype's poles moved to the band (lp2bp_zpk) and
+// mapped with the bilinear transform at prewarped edges (bilinear_zpk). Its four poles are
+// two conjugate pairs and its zeros +1, +1, -1, -1, so it is two sections
+// b0 (1 - z^-2) / (1 + a1 z^-1 + a2 z^-2), the whole gain in the first. Does not allocate.
+void butterworthBandPass2(double lo, double hi, double sr, double b0[2], double a1[2], double a2[2]) noexcept
+{
+    using C = std::complex<double>;
+    const double pi = 3.14159265358979323846;
+    const double w1 = 4.0 * std::tan(pi * lo / sr), w2 = 4.0 * std::tan(pi * hi / sr);
+    const double bw = w2 - w1, wo2 = w1 * w2;
+    const C pl = C(-std::sqrt(0.5), std::sqrt(0.5)) * (bw / 2.0); // prototype pole x bw / 2
+    const C r = std::sqrt(pl * pl - wo2);
+    const C P[2] = {pl + r, pl - r}; // the other two are their conjugates
+    double den = 1.0;
+    for (const C& q : P)
+        den *= std::norm(4.0 - q);
+    const double k = bw * bw * 16.0 / den;
+    for (int s = 0; s < 2; ++s)
+    {
+        const C z = (4.0 + P[s]) / (4.0 - P[s]);
+        a1[s] = -2.0 * z.real();
+        a2[s] = std::norm(z);
+        b0[s] = s == 0 ? k : 1.0;
+    }
 }
 
 // (r + i im)^m by squaring.
@@ -268,7 +296,8 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
         remapTable_.resize(z.velocities.size());
         computeRemapTable();
     }
-    envBake_ = z.present && z.envelopeActive;
+    envBake_ = z.present;
+    envOn_ = z.present && z.envelopeActive;
     if (envBake_)
     {
         // An envelope strike's level follows its band envelope, not the T60 decay, so the
@@ -287,8 +316,8 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
         }
         bandVal0_.assign(size_t(z.numBands), 0.0);
         bandVal1_.assign(size_t(z.numBands), 0.0);
-        // The onset-shift band of each envelope band: that of its middle mode (the NPZ bands
-        // are the same one-third octaves, to about 0.1 %).
+        // The onset-shift band of each envelope band: that of its middle mode (602 and Bettis:
+        // the same one-third octaves, to about 0.1 %; Swish: 20 bands of its own, 100 Hz-10 kHz).
         npzShiftBand_.assign(size_t(z.numBands), 0);
         for (int band = 0; band < z.numBands; ++band)
         {
@@ -361,14 +390,14 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
     rng_ = b.renderStream; // the strike-phase sequence starts from this preset's seed
 }
 
-// About 2.8 ms between control points at every supported rate. With a band envelope, a
-// whole number of blocks per 20 ms frame of the in-frame decay (line 889), so its restarts
-// fall on control points: 7 x 126 at 44.1 kHz, 8 x 120 at 48 kHz, 7 x 252 at 88.2 kHz, 8 x 240
-// at 96 kHz.
+// About 2.8 ms between control points at every supported rate. With NPZ edge data (a band
+// envelope, or one the tuning can switch on), a whole number of blocks per 20 ms frame of the
+// in-frame decay (line 889), so its restarts fall on control points: 7 x 126 at 44.1 kHz,
+// 8 x 120 at 48 kHz, 7 x 252 at 88.2 kHz, 8 x 240 at 96 kHz.
 int FastEngine::controlBlockFor(const BakeData& b, double sampleRate, int* frameBlocks) noexcept
 {
     int K = sampleRate > 50000.0 ? 256 : 128;
-    if (b.edgeNpz.present && b.edgeNpz.envelopeActive)
+    if (b.edgeNpz.present)
     {
         const double frame = b.edgeNpz.frameDecayPeriodS * sampleRate;
         const int blocks = std::max(1, static_cast<int>(std::lround(frame / K)));
@@ -380,11 +409,12 @@ int FastEngine::controlBlockFor(const BakeData& b, double sampleRate, int* frame
 }
 
 // The shared oscillator's decay: T60 / the smallest wash_damp a strike with a velocity in
-// 0..1 can have, so every strike's own decay relative to it is >= 0 (it only falls). With a
-// band envelope it has none: every strike carries its whole decay.
+// 0..1 can have, so every strike's own decay relative to it is >= 0 (it only falls). With
+// NPZ edge data (a band envelope, or one the tuning can switch on) it has none: every strike
+// carries its whole decay.
 double FastEngine::oscillatorWash(const BakeData& b, const EngineParams& p) noexcept
 {
-    if (b.edgeNpz.present && b.edgeNpz.envelopeActive)
+    if (b.edgeNpz.present)
         return 0.0;
     return std::max(kWashDampFloor, 1.0 + p.velLenTilt * ((p.velLenTilt >= 0.0 ? 0.0 : 1.0) - p.velLenTiltRef));
 }
@@ -533,6 +563,15 @@ void FastEngine::prepare(double sampleRate)
 
     butterworthHighPass2(kHpCutoffHz, sr_, hpB0_, hpB1_, hpB2_, hpA1_, hpA2_);
     outGainCoef_ = 1.0 - std::exp(-1.0 / (kOutputGainSmoothS * sr_));
+    // Stick click: room for the longest burst the tuning allows, per voice.
+    stickMaxLen_ = static_cast<int>(kStickLenMaxMs * 0.001 * sr_) + 1;
+    stickNoise_.assign(size_t(kStickVoices) * size_t(stickMaxLen_), 0.0f);
+    for (size_t v = 0; v < stick_.size(); ++v)
+    {
+        stick_[v] = StickVoice {};
+        stick_[v].noise = stickNoise_.data() + v * size_t(stickMaxLen_);
+    }
+    stickActive_ = 0;
 
     // Silence: no ringing, no running contact, no components, a fresh (silent) segment.
     std::fill(zr_.begin(), zr_.end(), 0.0);
@@ -583,6 +622,10 @@ void FastEngine::process(float* left, float* right, int numSamples) noexcept
             pos = numSamples;
         }
     }
+
+    // Stick clicks, into both channels (lines 1210-1211), before the high-pass as in render().
+    if (stickActive_ > 0)
+        renderStick(left, right, numSamples);
 
     // Right-channel high-pass (render() line 703), direct form II transposed, in double.
     double z0 = hpZ0_, z1 = hpZ1_;
@@ -2580,6 +2623,7 @@ void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecayS
     }
     envWindowS_ = c.edgeEnvWindowS;
     frameRestart_ = c.frameDecayRestart;
+    envOn_ = envBake_ && c.edgeEnvelope; // from the next strike
     params_.edgeWanderDepth = c.edgeWanderDepth;
     params_.edgeWanderRate = c.edgeWanderRate;
 
@@ -2640,7 +2684,7 @@ void FastEngine::continueFrom(const FastEngine& previous) noexcept
 
 bool FastEngine::isSilent() const noexcept
 {
-    if (nAct_ != 0 || activeContacts_ != 0)
+    if (nAct_ != 0 || activeContacts_ != 0 || stickActive_ != 0)
         return false;
     for (const auto& c : components_)
         if (c.used)
@@ -2806,7 +2850,7 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     comp.gm1Max = 0.0;
     // Lines 690-694 and 869-894: with an NPZ band envelope an edge strike's level follows
     // the envelope for its onset window, and the onset ramp does not apply (line 896).
-    comp.envOn = envBake_ && edgeFrac > 0.1;
+    comp.envOn = envOn_ && edgeFrac > 0.1;
     comp.envWindow = envWindowS_;
     comp.frameRestart = frameRestart_;
     if (comp.envOn)
@@ -2914,10 +2958,121 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     if (wanderOn_)
         tauRate_ = params_.wanderRateHz * wanderRate(strikeTime);
 
+    // render() line 620: the stick click follows the strike (its noise after the strike's
+    // phases in the random sequence), at the strike's level.
+    startStick(slotIndex, velocity, rawPos, calib);
+
     freeStarted_ = false;
     freePos_ = 0;
     if (activeContacts_ == 0)
         startFreePhase();
+}
+
+// The stick click of a strike (_add_transient lines 1194-1211): a noise burst of the
+// articulation's length, standard normal values from the strike-phase random sequence
+// (Box-Muller, two uniforms per pair) times exp(-k / decay), through the band-pass, times
+// stick_gain x the position weight x velocity^1.7 and the strike's level (calibration, trim,
+// velocity curve; Python scales the whole output by the calibration). Python runs at the bake's
+// rate; the noise is scaled by sqrt(rate / bake rate) so the filtered burst keeps its level
+// at every rate. With all voices busy the oldest is replaced. Does not allocate.
+void FastEngine::startStick(int slot, double velocity, double position, double level) noexcept
+{
+    const ArticulationTuning& a = slotCurve_[size_t(slot)];
+    if (! (a.stickGain > 0.0) || stickMaxLen_ <= 0)
+        return;
+    const SlotData& s = bake_->slots[size_t(slot)];
+    const double bowFrac = clamp01(1.0 - std::fabs(position - 0.5) / 0.5);
+    const double bellFrac = clamp01((position - 0.5) / 0.5);
+    const double edgeFrac = clamp01(1.0 - position / 0.5);
+    const double w = bowFrac * s.stickBowWeight + bellFrac * s.stickBellWeight + edgeFrac * s.stickEdgeWeight;
+    if (! (w > 1e-6))
+        return;
+    const double lenMs = std::min(std::max(a.stickLenMs, kStickLenMinMs), kStickLenMaxMs);
+    const int len = std::min(static_cast<int>(lenMs * 0.001 * sr_), stickMaxLen_);
+    if (len <= 0)
+        return;
+    StickVoice* v = nullptr;
+    for (auto& x : stick_)
+        if (! x.on)
+        {
+            v = &x;
+            break;
+        }
+    if (v == nullptr)
+    {
+        v = &stick_[0];
+        for (auto& x : stick_)
+            if (x.order < v->order)
+                v = &x;
+        --stickActive_;
+    }
+    const double decay = std::max(a.stickDecayMs, kStickDecayMinMs) * 0.001 * sr_;
+    const double step = std::exp(-1.0 / decay);
+    const double scale = std::sqrt(sr_ / bake_->sampleRate);
+    double env = scale;
+    for (int k = 0; k < len; k += 2)
+    {
+        const double u1 = 1.0 - rng_.nextDouble(); // (0, 1]
+        const double u2 = rng_.nextDouble();
+        const double r = std::sqrt(-2.0 * std::log(u1));
+        const double th = bake_->twoPi * u2;
+        v->noise[k] = static_cast<float>(r * std::cos(th) * env);
+        env *= step;
+        if (k + 1 < len)
+        {
+            v->noise[k + 1] = static_cast<float>(r * std::sin(th) * env);
+            env *= step;
+        }
+    }
+    const double nyq = 0.5 * sr_;
+    const double lo = std::min(std::max(a.stickLoHz, 20.0), 0.9 * nyq);
+    const double hi = std::min(std::max(a.stickHiHz, lo * 1.01), 0.95 * nyq);
+    butterworthBandPass2(lo, hi, sr_, v->b0, v->a1, v->a2);
+    v->s1[0] = v->s1[1] = v->s2[0] = v->s2[1] = 0.0;
+    v->k = 0;
+    v->len = len;
+    v->g = a.stickGain * w * std::pow(std::max(velocity, 0.0), 1.7) * level;
+    v->order = ++stickOrder_;
+    v->on = true;
+    ++stickActive_;
+}
+
+// The running stick clicks into both channels. A voice stops once its burst is over and its
+// filter state has rung down below 1e-9 (in units of the noise), or a second after the burst.
+void FastEngine::renderStick(float* left, float* right, int n) noexcept
+{
+    for (auto& v : stick_)
+    {
+        if (! v.on)
+            continue;
+        const double b00 = v.b0[0], b01 = v.b0[1], a10 = v.a1[0], a11 = v.a1[1], a20 = v.a2[0], a21 = v.a2[1];
+        double s10 = v.s1[0], s20 = v.s2[0], s11 = v.s1[1], s21 = v.s2[1];
+        int k = v.k;
+        for (int j = 0; j < n; ++j, ++k)
+        {
+            const double x = k < v.len ? static_cast<double>(v.noise[k]) : 0.0;
+            const double y0 = b00 * x + s10;
+            s10 = s20 - a10 * y0;
+            s20 = -b00 * x - a20 * y0;
+            const double y1 = b01 * y0 + s11;
+            s11 = s21 - a11 * y1;
+            s21 = -b01 * y0 - a21 * y1;
+            const float out = static_cast<float>(v.g * y1);
+            left[j] += out;
+            right[j] += out;
+        }
+        v.k = k;
+        v.s1[0] = s10;
+        v.s2[0] = s20;
+        v.s1[1] = s11;
+        v.s2[1] = s21;
+        const double rest = std::fabs(s10) + std::fabs(s20) + std::fabs(s11) + std::fabs(s21);
+        if (k >= v.len && (rest < 1e-9 || static_cast<double>(k - v.len) > sr_))
+        {
+            v.on = false;
+            --stickActive_;
+        }
+    }
 }
 
 // Per-band ring lengths changed (setTuning), at a control point of the free phase: every

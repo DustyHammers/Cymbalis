@@ -58,7 +58,7 @@ The values travel to the audio thread without locks or allocation.
 
 ### Per articulation
 
-One set per bake entry: NOVA RIDE `bell_shoulder`, `bow_tip`, `edge`, `bell_tip`, `bow_shoulder`; SMOKE FLAT RIDE `bow`, `edge`, `center`, `bow_shoulder`, `center_shoulder`; HAMMERED THIN RIDE `bell`, `bow`, `edge`, `bell_shoulder`, `bow_shoulder`. The articulation id is the entry's `articulation` key if it has one, else its overlay, else its name in lower case. Two entries of a bake may not share an id. Which rows and sticks play each articulation: `docs/UI_SPEC.md` section 8.
+One set per bake entry: NOVA RIDE `bell_shoulder`, `bow_tip`, `edge`, `bell_tip`, `bow_shoulder`; SMOKE FLAT RIDE `bow`, `edge`, `center`, `bow_shoulder`, `center_shoulder`; HAMMERED THIN RIDE `bell`, `bow`, `edge`, `bell_shoulder`, `bow_shoulder`; SWISH `bell`, `bow_tip`, `bow_shoulder`, `edge`, `bell_shoulder`. The articulation id is the entry's `articulation` key if it has one, else its overlay, else its name in lower case. Two entries of a bake may not share an id. Which rows and sticks play each articulation: `docs/UI_SPEC.md` section 8.
 
 **Copies.** Some articulations are copies of another entry's data under their own id (`"articulation"`, `"copy_of"`, made by `tools/bake_preset.py`). Each is a full articulation with every per-articulation value of its own: level, velocity curve, band gains, onset shift and the re-hit damping weight. Each starts as an exact copy of its source, its level trim included, so untuned it plays exactly as its source. Changing a copy leaves its source alone, and the reverse.
 
@@ -69,13 +69,14 @@ One set per bake entry: NOVA RIDE `bell_shoulder`, `bow_tip`, `edge`, `bell_tip`
 | SMOKE FLAT RIDE | `center_shoulder` | `center` | CENTER and CENTER2, SHOULDER |
 | HAMMERED THIN RIDE | `bell_shoulder` | `bell` | BELL and BELL2, SHOULDER |
 | HAMMERED THIN RIDE | `bow_shoulder` | `bow` | BOW and BOW2, SHOULDER |
+| SWISH | `bell_shoulder` | `bell` | BELL and BELL2, SHOULDER |
 | NOVA RIDE | `edge` | `bow_shoulder` (at the edge position, 0.0) | EDGE |
 
 Nova Ride's `edge` replaced the base preset played at the edge (Nova has no edge captures). It is the one articulation that does not play as it did before: the EDGE row now sounds like the bow shoulder struck at the edge. A tuning file with `edge` values from before applies them to the new `edge`.
 
 #### NOVA SHOULDER PROFILE
 
-Each new shoulder articulation of SMOKE FLAT RIDE and HAMMERED THIN RIDE (`bow_shoulder`, `center_shoulder`, `bell_shoulder`) has a **NOVA SHOULDER PROFILE** button below its values. It sets that articulation's band gains, attack gains and attack time to Nova Ride's shoulder-minus-tip difference: the bow profile for `bow_shoulder` and `center_shoulder`, the bell profile for `bell_shoulder`. It is a starting point to tune from. The button only fills those values, which then work as any others (reset, FLAT, save).
+Each shoulder articulation that is a copy of its tip has a **NOVA SHOULDER PROFILE** button below its values: SMOKE FLAT RIDE's and HAMMERED THIN RIDE's (`bow_shoulder`, `center_shoulder`, `bell_shoulder`) and SWISH's `bell_shoulder`. SWISH's `bow_shoulder` is its own capture (an overlay), so it has none. It sets that articulation's band gains, attack gains and attack time to Nova Ride's shoulder-minus-tip difference: the bow profile for `bow_shoulder` and `center_shoulder`, the bell profile for `bell_shoulder`. It is a starting point to tune from. The button only fills those values, which then work as any others (reset, FLAT, save).
 
 The two profiles are data, computed once by `tools/shoulder_profile.py` from the Nova bake and stored in `plugin/tuning/ShoulderProfiles.h` (`--check` verifies the header). The band gains:
 
@@ -128,8 +129,14 @@ Attack time: bow 80 ms, bell 300 ms.
 | Attack band gains | `attack_band_gains_db` | −12 to +12 dB per band | yes | 22 values, see "Attack band gains". Default: the articulation's onset gains (0 dB without) |
 | Attack time | `attack_time_ms` | 10–1000 ms | yes | How fast the attack gains fade back to 0 dB. Default: the articulation's onset time (80 ms without onset gains) |
 | Brightness vs velocity | `brightness_db_per_oct` | −6 to +6 dB per octave | yes | Tilt of a velocity-0.3 strike relative to velocity 1.0, see below. Default 0 |
+| STICK CLICK gain | `stick_gain` | 0–24 | yes | Level of the stick click, see below. Default: the articulation's `stick_gain` (6.0 for SWISH `bow_tip`, 0 everywhere else: no click) |
+| STICK CLICK band low, band high | `stick_bp_lo`, `stick_bp_hi` | 100–16000 Hz, 200–20000 Hz | yes | Edges of the click's band-pass. Default: the preset's values (2000 and 6000 Hz for NOVA RIDE and SWISH; Python's defaults 2500 and 9000 Hz for the 602 and Bettis) |
+| STICK CLICK length | `stick_len_ms` | 1–50 ms | yes | Length of the noise burst. Default: the preset's (NOVA RIDE 20, SWISH 8; Python's default 8) |
+| STICK CLICK decay | `stick_decay_ms` | 0.5–50 ms | yes | Exponential decay of the burst. Default: the preset's (3; Python's default 3) |
 
 The **velocity curve** is a level offset on top of the current level law. It is interpolated in log velocity through three points: 0 dB at velocity 1.0, the 0.6 offset at 0.6, and the 0.3 offset at 0.3. Below 0.3 it continues with the 0.6-to-0.3 slope (clamped to ±60 dB). It changes the level only. The spectral velocity behaviour stays as it is: velocity tables, the Hertz tilt and the NPZ captures. The velocity is the engine's: the MIDI velocity after the Velocity Sensitivity knob.
+
+The **stick click** is the sound of the stick itself: a burst of noise at the strike, band-passed (order-2 Butterworth between the band edges) and decaying exponentially over the burst. Its level is the gain × the position weight × velocity^1.7, at the articulation's level (Python's `_add_transient`, `docs/PORT_MAP.md`, "Swish"). The position weight comes from the preset (`stick_bow_weight`, `stick_bell_weight`, `stick_edge_weight` over the strike's bow, bell and edge fractions; SWISH and NOVA RIDE click only towards the bow). The noise comes from the engine's random sequence. At gain 0 there is no click; every articulation but SWISH's `bow_tip` starts there.
 
 **Brightness vs velocity** is how much brighter (positive) or darker (negative) a soft strike of the articulation is than a full one. The value is the spectral tilt, in dB per octave, at velocity 0.3 relative to velocity 1.0. It is interpolated in log velocity like the velocity curve: 0 at 1.0, the value at 0.3, and the same slope below 0.3 (within ±24 dB per octave). The tilt pivots at 1 kHz: at the strike, each mode's excitation is scaled by tilt × log2(f / 1 kHz) dB, so the level at 1 kHz is unchanged. It acts on the coupling, like the band gains, whatever path gives it. At 0 it is skipped.
 
@@ -180,8 +187,8 @@ In the window, the **BANDS** section below the articulations works like a graphi
 | Group | Value | Key | Range | Presets | Notes |
 |---|---|---|---|---|---|
 | Cymbal | Output gain | `output_gain_db` | −24 to +12 dB | all | Whole preset, for headroom; before the Volume knob |
-| | Edge capture curve | `edge_velocity_remap_exponent` | 0.25–2.0 | 602, Bettis | Exponent of the NPZ velocity remap (0.5 = sqrt). Each capture still maps to itself; this shapes how the velocities between captures are reached |
-| | Bow brightness vs velocity | `tau_ref_ms` | 0.05–8 ms | 602, Bettis (no velocity tables) | `hertz_vel_scale` contact time at velocity 1 |
+| | Edge capture curve | `edge_velocity_remap_exponent` | 0.25–2.0 | 602, Bettis, Swish | Exponent of the NPZ velocity remap (0.5 = sqrt). Each capture still maps to itself; this shapes how the velocities between captures are reached |
+| | Bow brightness vs velocity | `tau_ref_ms` | 0.05–8 ms | 602, Bettis, Swish (no velocity tables) | `hertz_vel_scale` contact time at velocity 1 |
 | | Ring length | `ring_length` | 0.5–2.0 × | all | Multiplier of the baked T60 of every mode (t60_scale). Rebuilds the engine |
 | | Ring length per band | `ring_length_bands` | ×0.25–×4 per band | all | 22 values, see below. Default ×1 |
 | Wander | Wander depth | `wander_depth` | 0–4 | all | |
@@ -198,8 +205,9 @@ In the window, the **BANDS** section below the articulations works like a graphi
 | | Cutoff | `lf_cutoff_hz` | 100–8000 Hz | all | Modes below it get the LF scale (sigmoid, 200 Hz wide) |
 | | Bow, edge, bell weights | `lf_bow_weight`, `lf_edge_weight`, `lf_bell_weight` | 0–2 | all | |
 | | Wander-rate boost | `lf_wander_rate_boost` | 0–2 | all | The LF accumulator speeds up the wander |
-| Edge envelope | Window | `edge_band_env_onset_s` | 0.1–30 s | 602, Bettis | How long an edge strike follows the NPZ band envelope; per strike |
-| | 20 ms frame-decay restart | `edge_frame_decay_restart` | on/off | 602, Bettis | On (the bake): the in-frame decay restarts every 20 ms (`docs/PORT_MAP.md`, "The in-frame decay is a 50 Hz sawtooth"). Off: no in-frame decay; the level follows the band envelope alone. Per strike |
+| Edge envelope | EDGE ONSET ENVELOPE | `edge_band_envelope` | on/off | 602, Bettis, Swish | On (the bake; for Swish the bake switches it on, `docs/PORT_MAP.md`, "Swish"): an edge strike's level follows the NPZ band envelope for the window. Off: the strike rings from the start, with the onset ramp of its pk_t data, as Python plays Swish. Per strike |
+| | Window | `edge_band_env_onset_s` | 0.1–30 s | 602, Bettis, Swish | How long an edge strike follows the NPZ band envelope; per strike |
+| | 20 ms frame-decay restart | `edge_frame_decay_restart` | on/off | 602, Bettis, Swish | On (the bake): the in-frame decay restarts every 20 ms (`docs/PORT_MAP.md`, "The in-frame decay is a 50 Hz sawtooth"). Off: no in-frame decay; the level follows the band envelope alone. Per strike |
 | Energy cascade | Amount | `cascade_amount` | 0–1 | all | 0 (default) switches it off. See "Energy cascade" below |
 | | Threshold | `cascade_threshold_db` | −40 to 0 dB | all | Per band, relative to that band's energy after a velocity-1.0 BOW strike. Default −12 dB |
 | | Speed (attack) | `cascade_speed_ms` | 5–1000 ms | all | How fast the transfer starts, and its time constant at amount 1. Default 100 ms |
@@ -315,7 +323,7 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
 - `cymbal` and `articulations` hold only the values that differ from the bake; loading a file applies these on top of the bake. A per-band cymbal value (`ring_length_bands`) is written as all 22 bands, lowest first, when any differs. `rehit_damp_weights` is written with every articulation's weight, by articulation id, when any differs. An articulation's `band_gains_db`, `attack_band_gains_db`, `onset_delay_ms` and `onset_speed` are each written as all 22 bands, lowest first, when any of them differs.
 - `effective` is a full copy of every value for reference; nothing reads it.
 - `entry` names the bake entry (slot) of an articulation.
-- `preset` is the preset id (`nova_ride`, `smoke_flat_ride`, `hammered_thin_ride`); `bake_format_version` is the bake's `format_version`.
+- `preset` is the preset id (`nova_ride`, `smoke_flat_ride`, `hammered_thin_ride`, `swish`); `bake_format_version` is the bake's `format_version`.
 
 ## The round trip
 
@@ -332,7 +340,7 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
    - Each articulation's **band gains** go into its excitation data, `slots[].excitation_band_gains_db`: `{"band_edges_hz": [23 edges], "gains_db": [22 gains], "set_by"}`. An articulation whose bands are all 0 dB has no entry; applying FLAT removes it.
    - Each articulation's **onset shift** goes into its onset data, `slots[].onset_shift`: `{"band_edges_hz": [23 edges], "delay_ms": [22], "speed": [22], "set_by"}`. An articulation with delay 0 and speed 1 in every band has no entry.
    - Each articulation's **attack band gains and time** go into its attack data, `slots[].attack_band_gains`: `{"band_edges_hz": [23 edges], "gains_db": [22], "time_ms", "set_by"}`. An articulation whose values are those its onset gains give (0 dB and 80 ms without onset gains) has no entry; the loader then takes them from the onset gains.
-   - Each articulation's **brightness vs velocity** goes into the tuning block with its velocity curve.
+   - Each articulation's **brightness vs velocity** goes into the tuning block with its velocity curve, and so does its **stick click** where it differs from the slot's own values (its `stick_*` parameters, Python's defaults where it has none).
    - **Every other value that differs from the bake's own** (the cymbal values and the velocity curves) goes into the bake's top-level `tuning` block: `{"format": "cymbalis-tuning", "version": 1, "applied_utc", "source", "cymbal": {...}, "articulations": {id: {"vel_0.6_db", "vel_0.3_db"}}}`. A per-band cymbal value is stored there as its 22 numbers.
    - A value equal to the bake's own drops out of the block, so applying the same file twice gives the same bake. Nothing else in the bake changes.
 3. Rebuild the plugin. Its bake loader (`plugin/dsp/Bake.cpp`, `Tuning.cpp`) applies the block (`applyTuning`):

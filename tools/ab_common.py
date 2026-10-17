@@ -45,6 +45,12 @@ PRESETS = {
         'articulations': None,
         'slots': [('BELL', None, 1.0), ('BOW', None, 0.5), ('EDGE', None, 0.0)],
     },
+    'swish': {
+        'preset': os.path.join(REPO, 'presets', 'swish', 'Swish_Baseline1.json'),
+        'articulations': os.path.join(REPO, 'presets', 'swish', 'articulations'),
+        'slots': [('BELL', None, 1.0), ('BOW', 'bow_tip', 0.5), ('BOW_SHOULDER', 'bow_shoulder', 0.5),
+                  ('EDGE', None, 0.0)],
+    },
 }
 
 
