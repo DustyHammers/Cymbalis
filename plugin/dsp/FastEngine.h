@@ -252,6 +252,7 @@ private:
     Component* cascadeComponent() noexcept;
     void commitBlockGains() noexcept;
     void clearBlockGains() noexcept;
+    void renormOscillators() noexcept;
     void applyPendingWander(double t) noexcept;
     void updateGainBounds() noexcept;
     void velocityParticipation(const VelocityTable& t, double v, double* out) const noexcept;
@@ -323,8 +324,8 @@ private:
     std::vector<float> cascW_;               // per mode: its share weight of the moved energy (exc_norm)
     // Gains of the ringing modes through the shared oscillator (mode order): this block's,
     // reaching its value at the block's end, and the product of the earlier blocks' since the
-    // segment started; and additions to the cascade component's amplitudes at this block's
-    // end. The next control point puts them into the state (commitBlockGains); a strike
+    // segment started (with renormOscillators()' factors); and additions to the cascade
+    // component's amplitudes at this block's end. The next control point puts them into the state (commitBlockGains); a strike
     // inside the block takes the part already rendered.
     std::vector<float> blkG_, injR_, injI_;
     std::vector<double> oscG_;

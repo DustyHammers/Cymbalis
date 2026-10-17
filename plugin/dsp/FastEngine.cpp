@@ -992,6 +992,8 @@ void FastEngine::beginControlBlock() noexcept
 
     if (blkGainOn_ || injOn_)
         commitBlockGains();
+    if (cascOn_)
+        renormOscillators();
     if (blk % kDropEvery == 0)
         dropQuietModes();
     const int na = nAct_;
@@ -2191,6 +2193,57 @@ void FastEngine::commitBlockGains() noexcept
         std::fill(injR_.begin(), injR_.end(), 0.0f);
         std::fill(injI_.begin(), injI_.end(), 0.0f);
         injOn_ = false;
+    }
+}
+
+// Energy cascade: a ringing mode can go on receiving energy while its shared oscillator
+// falls far below 1 (its own decay over a long segment, the cascade's gains), and so can the
+// cascade component's own decay (D). The component's amplitude, relative to both, would then
+// outgrow float. Where the oscillator is below 1e-3 its magnitude moves into every
+// component's amplitude in that mode and the oscillator returns to 1; where the cascade
+// component's D is below 1e-3 it moves into that component's amplitude and D returns to 1.
+// What rings does not change. The segment's gain product follows (a strike's re-anchoring
+// uses it). At a control point, before the block starts.
+void FastEngine::renormOscillators() noexcept
+{
+    Component* casc = cascComp_ >= 0 && components_[size_t(cascComp_)].used && components_[size_t(cascComp_)].cascade
+                          ? &components_[size_t(cascComp_)]
+                          : nullptr;
+    for (int a = 0; a < nAct_; ++a)
+    {
+        const size_t s = size_t(a);
+        if (casc != nullptr)
+        {
+            const size_t k = size_t(actIdx_[s]);
+            const float d = casc->D[k];
+            if (d < 1e-3f)
+            {
+                casc->Br[k] *= d;
+                casc->Bi[k] *= d;
+                casc->D[k] = 1.0f;
+            }
+        }
+        const double y2 = Yr_[s] * Yr_[s] + Yi_[s] * Yi_[s];
+        if (! (y2 < 1e-6) || ! (y2 > 0.0))
+            continue;
+        const double g = std::sqrt(y2);
+        const size_t k = size_t(actIdx_[s]);
+        Yr_[s] /= g;
+        Yi_[s] /= g;
+        oscG_[k] /= g;
+        oscGainOn_ = true;
+        const float gf = static_cast<float>(g);
+        for (auto& c : components_)
+            if (c.used && ! c.pending)
+            {
+                c.Br[k] *= gf;
+                c.Bi[k] *= gf;
+                if (c.envOn)
+                {
+                    c.Er[k] *= gf;
+                    c.Ei[k] *= gf;
+                }
+            }
     }
 }
 
