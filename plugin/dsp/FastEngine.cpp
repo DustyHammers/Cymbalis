@@ -319,6 +319,7 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
     // Energy cascade: each mode's share weight (exc_norm), the BOW articulation (its
     // threshold reference), the block gains, and the settings of the bake's tuning.
     cascW_.assign(np, 0.0f);
+    modeE_.assign(np, 0.0);
     for (size_t i = 0; i < n; ++i)
         cascW_[i] = static_cast<float>(std::max(b.excNorm[i], 0.0));
     cascSlot_ = -1;
@@ -336,7 +337,7 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
     injR_.assign(np, 0.0f);
     injI_.assign(np, 0.0f);
     oscG_.assign(np, 1.0);
-    setCascade(b.tuning.cymbal);
+    setMechanisms(b.tuning.cymbal);
     kinks_.resize(np);
     accL_.assign(size_t(kMaxControlBlock) * 4, 0.0f);
     accR_.assign(size_t(kMaxControlBlock) * 4, 0.0f);
@@ -514,7 +515,9 @@ void FastEngine::prepare(double sampleRate)
     clearBlockGains();
     cascComp_ = -1;
     cascAct_.fill(0.0);
-    updateCascade(); // its coefficients at this rate, and its threshold with this H
+    dampX_.fill(0.0);
+    rhoAny_ = false;
+    updateMechanisms(); // its coefficients at this rate, and its threshold with this H
 
     butterworthHighPass2(kHpCutoffHz, sr_, hpB0_, hpB1_, hpB2_, hpA1_, hpA2_);
     outGainCoef_ = 1.0 - std::exp(-1.0 / (kOutputGainSmoothS * sr_));
@@ -857,6 +860,11 @@ void FastEngine::addKink(const Component& c, int mode, double d0, double te0) no
     km.env1 = c.env1;
     km.g0 = modeGain(k, blkLf0_, blkMf0_);
     km.g1 = modeGain(k, blkLf1_, blkMf1_);
+    if (c.rhoOn) // its re-hit damping
+    {
+        km.g0 *= static_cast<double>(c.rho0);
+        km.g1 *= static_cast<double>(c.rho1);
+    }
 }
 
 // The component-modes whose ramp corner lies in this block, samples j0 .. j0+m of the
@@ -1095,8 +1103,8 @@ void FastEngine::beginControlBlock() noexcept
 
     // Components: each mode's amplitude at both ends of the block.
     sumComponents(t0, t1);
-    if (cascOn_)
-        cascadeBlock();
+    if (cascOn_ || dampOn_)
+        bandBlock();
 
     // Cymbal-wide LF/MF gains at the block's ends (lines 914-919), then the per-sample increment.
     for (int a = 0; a < na; ++a)
@@ -1234,10 +1242,38 @@ void FastEngine::cymbalWideAtStrike(double t) noexcept
 void FastEngine::sumComponents(double t0, double t1) noexcept
 {
     int nS = 0, nO = 0, nR = 0, nE = 0;
+    bool rho = false;
     for (auto& c : components_)
     {
         if (!c.used || c.pending)
             continue;
+        // Re-hit damping: the ramp's gain at the block's ends. A finished ramp goes into the
+        // amplitudes (its gain there is its end value, so nothing changes).
+        if (c.rhoOn)
+        {
+            if (c.rhoT0 >= 0.0 && t0 >= c.rhoT0 + c.rhoT)
+            {
+                const v4f g = splat(static_cast<float>(c.rhoB));
+                for (int o = 0; o < nPad_; o += 4)
+                {
+                    st(c.Br.data() + o, ld(c.Br.data() + o) * g);
+                    st(c.Bi.data() + o, ld(c.Bi.data() + o) * g);
+                    if (c.envOn)
+                    {
+                        st(c.Er.data() + o, ld(c.Er.data() + o) * g);
+                        st(c.Ei.data() + o, ld(c.Ei.data() + o) * g);
+                    }
+                }
+                c.rhoOn = false;
+                c.rho0 = c.rho1 = 1.0f;
+            }
+            else
+            {
+                c.rho0 = static_cast<float>(rhoAt(c, t0));
+                c.rho1 = static_cast<float>(rhoAt(c, t1));
+                rho = true;
+            }
+        }
         // After its onset window an envelope strike rings with its own decaying amplitude
         // (line 881: past onset, normal T60).
         if (c.envOn && t0 - c.tStrike >= c.envWindow)
@@ -1290,142 +1326,189 @@ void FastEngine::sumComponents(double t0, double t1) noexcept
                       static_cast<float>(envelopeAt(c, band, te1)));
         }
     }
+    rhoAny_ = rho;
     nKinks_ = 0;
-    {
-        float* __restrict a0rP = A0r_.data();
-        float* __restrict a0iP = A0i_.data();
-        float* __restrict a1rP = A1r_.data();
-        float* __restrict a1iP = A1i_.data();
-        const v4f one = splat(1.0f);
-        const int np = nPad_;
-        for (int o = 0; o < np; o += 8)
-        {
-            v4f a0r[2] = {}, a0i[2] = {}, a1r[2] = {}, a1i[2] = {};
-            for (int q = 0; q < nS; ++q)
-            {
-                Component& c = *settledList_[size_t(q)];
-                float* D = c.D.data() + o;
-                const float* dm = c.dmul.data() + o;
-                const float* br = c.Br.data() + o;
-                const float* bi = c.Bi.data() + o;
-                for (int h = 0; h < 2; ++h)
-                {
-                    const v4f d0 = ld(D + 4 * h), d1 = d0 * ld(dm + 4 * h);
-                    st(D + 4 * h, d1);
-                    const v4f r = ld(br + 4 * h), m = ld(bi + 4 * h);
-                    a0r[h] += r * d0;
-                    a0i[h] += m * d0;
-                    a1r[h] += r * d1;
-                    a1i[h] += m * d1;
-                }
-            }
-            for (int q = 0; q < nO; ++q)
-            {
-                Component& c = *onsetList_[size_t(q)];
-                const v4f e0 = splat(static_cast<float>(c.env0)), e1 = splat(static_cast<float>(c.env1));
-                float* D = c.D.data() + o;
-                const float* dm = c.dmul.data() + o;
-                const float* br = c.Br.data() + o;
-                const float* bi = c.Bi.data() + o;
-                const float* gm = c.gm1.data() + o;
-                for (int h = 0; h < 2; ++h)
-                {
-                    const v4f d0 = ld(D + 4 * h), d1 = d0 * ld(dm + 4 * h);
-                    st(D + 4 * h, d1);
-                    const v4f g = ld(gm + 4 * h);
-                    const v4f x0 = d0 * (one + g * e0), x1 = d1 * (one + g * e1);
-                    const v4f r = ld(br + 4 * h), m = ld(bi + 4 * h);
-                    a0r[h] += r * x0;
-                    a0i[h] += m * x0;
-                    a1r[h] += r * x1;
-                    a1i[h] += m * x1;
-                }
-            }
-            for (int q = 0; q < nR; ++q)
-            {
-                Component& c = *rampList_[size_t(q)];
-                // env0/env1 are 0 without onset gains, so the gain factor is then 1.
-                const v4f e0 = splat(static_cast<float>(c.env0)), e1 = splat(static_cast<float>(c.env1));
-                const v4f te0 = splat(static_cast<float>(t0 - c.tStrike));
-                const v4f te1 = splat(static_cast<float>(t1 - c.tStrike));
-                float* D = c.D.data() + o;
-                const float* dm = c.dmul.data() + o;
-                const float* br = c.Br.data() + o;
-                const float* bi = c.Bi.data() + o;
-                const float* gm = c.gm1.data() + o;
-                const float* rc = c.rc0.data() + o;
-                const float* rs = c.rsl.data() + o;
-                for (int h = 0; h < 2; ++h)
-                {
-                    const v4f d0 = ld(D + 4 * h), d1 = d0 * ld(dm + 4 * h);
-                    st(D + 4 * h, d1);
-                    const v4f g = ld(gm + 4 * h);
-                    const v4f c0 = ld(rc + 4 * h), sl = ld(rs + 4 * h);
-                    const v4f l0 = c0 + sl * te0, l1 = c0 + sl * te1;
-                    // The ramp reaches 1 inside this block (te0 < pt < te1): those
-                    // component-modes are rendered per sample in renderKinks().
-                    const v4i kink = (l0 < one) & (l1 > one);
-                    const v4f r0 = vclamp01(l0), r1 = vclamp01(l1);
-                    v4f x0 = d0 * (one + g * e0) * r0, x1 = d1 * (one + g * e1) * r1;
-                    if (kink[0] | kink[1] | kink[2] | kink[3])
-                    {
-                        for (int l = 0; l < 4; ++l)
-                            if (kink[l])
-                                addKink(c, o + 4 * h + l, d0[l], t0 - c.tStrike);
-                        x0 = (v4f) ((v4i) x0 & ~kink);
-                        x1 = (v4f) ((v4i) x1 & ~kink);
-                    }
-                    const v4f r = ld(br + 4 * h), m = ld(bi + 4 * h);
-                    a0r[h] += r * x0;
-                    a0i[h] += m * x0;
-                    a1r[h] += r * x1;
-                    a1i[h] += m * x1;
-                }
-            }
-            for (int q = 0; q < nE; ++q)
-            {
-                // |coupling| x band envelope x in-frame decay (x onset gains): lines 886-894.
-                // D keeps stepping for the ring after the window.
-                Component& c = *envList_[size_t(q)];
-                const v4f e0 = splat(static_cast<float>(c.env0)), e1 = splat(static_cast<float>(c.env1));
-                float* D = c.D.data() + o;
-                float* F = c.fd.data() + o;
-                const float* dm = c.dmul.data() + o;
-                const float* er = c.Er.data() + o;
-                const float* ei = c.Ei.data() + o;
-                const float* gm = c.gm1.data() + o;
-                const float* m0 = c.em0.data() + o;
-                const float* m1 = c.em1.data() + o;
-                // Without the frame restart the in-frame decay is off: F stays 1.
-                const v4f fstep = splat(c.frameRestart ? 1.0f : 0.0f);
-                for (int h = 0; h < 2; ++h)
-                {
-                    const v4f step = ld(dm + 4 * h);
-                    st(D + 4 * h, ld(D + 4 * h) * step);
-                    const v4f f0 = ld(F + 4 * h), f1 = f0 * (fstep * step + (one - fstep));
-                    st(F + 4 * h, f1);
-                    const v4f g = ld(gm + 4 * h);
-                    const v4f x0 = ld(m0 + 4 * h) * f0 * (one + g * e0);
-                    const v4f x1 = ld(m1 + 4 * h) * f1 * (one + g * e1);
-                    const v4f r = ld(er + 4 * h), m = ld(ei + 4 * h);
-                    a0r[h] += r * x0;
-                    a0i[h] += m * x0;
-                    a1r[h] += r * x1;
-                    a1i[h] += m * x1;
-                }
-            }
-            for (int h = 0; h < 2; ++h)
-            {
-                st(a0rP + o + 4 * h, a0r[h]);
-                st(a0iP + o + 4 * h, a0i[h]);
-                st(a1rP + o + 4 * h, a1r[h]);
-                st(a1iP + o + 4 * h, a1i[h]);
-            }
-        }
-    }
+    if (rhoAny_)
+        sumBlock<true>(t0, t1, nS, nO, nR, nE);
+    else
+        sumBlock<false>(t0, t1, nS, nO, nR, nE);
     for (int q = 0; q < nE; ++q)
         --envList_[size_t(q)]->frameBlocksLeft;
 
+}
+
+// A component's re-hit damping gain at time t: smoothstep from rhoA to rhoB over rhoT from
+// rhoT0 (rhoA before the ramp starts).
+double FastEngine::rhoAt(const Component& c, double t) const noexcept
+{
+    if (c.rhoT0 < 0.0)
+        return c.rhoA;
+    const double x = std::min(std::max((t - c.rhoT0) / c.rhoT, 0.0), 1.0);
+    return c.rhoA + (c.rhoB - c.rhoA) * (x * x * (3.0 - 2.0 * x));
+}
+
+// The components summed into each mode's amplitude at both ends of the block (A0, A1, mode
+// order), four modes per vector over every mode (silent modes hold zero). Rho: some
+// component has a re-hit damping ramp; each component's contribution is then scaled by its
+// gain at the block's ends (1 without a ramp).
+template <bool Rho>
+void FastEngine::sumBlock(double t0, double t1, int nS, int nO, int nR, int nE) noexcept
+{
+    float* __restrict a0rP = A0r_.data();
+    float* __restrict a0iP = A0i_.data();
+    float* __restrict a1rP = A1r_.data();
+    float* __restrict a1iP = A1i_.data();
+    const v4f one = splat(1.0f);
+    const int np = nPad_;
+    for (int o = 0; o < np; o += 8)
+    {
+        v4f a0r[2] = {}, a0i[2] = {}, a1r[2] = {}, a1i[2] = {};
+        for (int q = 0; q < nS; ++q)
+        {
+            Component& c = *settledList_[size_t(q)];
+            [[maybe_unused]] const v4f q0 = splat(c.rho0), q1 = splat(c.rho1);
+            float* D = c.D.data() + o;
+            const float* dm = c.dmul.data() + o;
+            const float* br = c.Br.data() + o;
+            const float* bi = c.Bi.data() + o;
+            for (int h = 0; h < 2; ++h)
+            {
+                const v4f d0 = ld(D + 4 * h), d1 = d0 * ld(dm + 4 * h);
+                st(D + 4 * h, d1);
+                v4f x0 = d0, x1 = d1;
+                if constexpr (Rho)
+                {
+                    x0 *= q0;
+                    x1 *= q1;
+                }
+                const v4f r = ld(br + 4 * h), m = ld(bi + 4 * h);
+                a0r[h] += r * x0;
+                a0i[h] += m * x0;
+                a1r[h] += r * x1;
+                a1i[h] += m * x1;
+            }
+        }
+        for (int q = 0; q < nO; ++q)
+        {
+            Component& c = *onsetList_[size_t(q)];
+            [[maybe_unused]] const v4f q0 = splat(c.rho0), q1 = splat(c.rho1);
+            const v4f e0 = splat(static_cast<float>(c.env0)), e1 = splat(static_cast<float>(c.env1));
+            float* D = c.D.data() + o;
+            const float* dm = c.dmul.data() + o;
+            const float* br = c.Br.data() + o;
+            const float* bi = c.Bi.data() + o;
+            const float* gm = c.gm1.data() + o;
+            for (int h = 0; h < 2; ++h)
+            {
+                const v4f d0 = ld(D + 4 * h), d1 = d0 * ld(dm + 4 * h);
+                st(D + 4 * h, d1);
+                const v4f g = ld(gm + 4 * h);
+                v4f x0 = d0 * (one + g * e0), x1 = d1 * (one + g * e1);
+                if constexpr (Rho)
+                {
+                    x0 *= q0;
+                    x1 *= q1;
+                }
+                const v4f r = ld(br + 4 * h), m = ld(bi + 4 * h);
+                a0r[h] += r * x0;
+                a0i[h] += m * x0;
+                a1r[h] += r * x1;
+                a1i[h] += m * x1;
+            }
+        }
+        for (int q = 0; q < nR; ++q)
+        {
+            Component& c = *rampList_[size_t(q)];
+            [[maybe_unused]] const v4f q0 = splat(c.rho0), q1 = splat(c.rho1);
+            // env0/env1 are 0 without onset gains, so the gain factor is then 1.
+            const v4f e0 = splat(static_cast<float>(c.env0)), e1 = splat(static_cast<float>(c.env1));
+            const v4f te0 = splat(static_cast<float>(t0 - c.tStrike));
+            const v4f te1 = splat(static_cast<float>(t1 - c.tStrike));
+            float* D = c.D.data() + o;
+            const float* dm = c.dmul.data() + o;
+            const float* br = c.Br.data() + o;
+            const float* bi = c.Bi.data() + o;
+            const float* gm = c.gm1.data() + o;
+            const float* rc = c.rc0.data() + o;
+            const float* rs = c.rsl.data() + o;
+            for (int h = 0; h < 2; ++h)
+            {
+                const v4f d0 = ld(D + 4 * h), d1 = d0 * ld(dm + 4 * h);
+                st(D + 4 * h, d1);
+                const v4f g = ld(gm + 4 * h);
+                const v4f c0 = ld(rc + 4 * h), sl = ld(rs + 4 * h);
+                const v4f l0 = c0 + sl * te0, l1 = c0 + sl * te1;
+                // The ramp reaches 1 inside this block (te0 < pt < te1): those
+                // component-modes are rendered per sample in renderKinks().
+                const v4i kink = (l0 < one) & (l1 > one);
+                const v4f r0 = vclamp01(l0), r1 = vclamp01(l1);
+                v4f x0 = d0 * (one + g * e0) * r0, x1 = d1 * (one + g * e1) * r1;
+                if constexpr (Rho)
+                {
+                    x0 *= q0;
+                    x1 *= q1;
+                }
+                if (kink[0] | kink[1] | kink[2] | kink[3])
+                {
+                    for (int l = 0; l < 4; ++l)
+                        if (kink[l])
+                            addKink(c, o + 4 * h + l, d0[l], t0 - c.tStrike);
+                    x0 = (v4f) ((v4i) x0 & ~kink);
+                    x1 = (v4f) ((v4i) x1 & ~kink);
+                }
+                const v4f r = ld(br + 4 * h), m = ld(bi + 4 * h);
+                a0r[h] += r * x0;
+                a0i[h] += m * x0;
+                a1r[h] += r * x1;
+                a1i[h] += m * x1;
+            }
+        }
+        for (int q = 0; q < nE; ++q)
+        {
+            // |coupling| x band envelope x in-frame decay (x onset gains): lines 886-894.
+            // D keeps stepping for the ring after the window.
+            Component& c = *envList_[size_t(q)];
+            [[maybe_unused]] const v4f q0 = splat(c.rho0), q1 = splat(c.rho1);
+            const v4f e0 = splat(static_cast<float>(c.env0)), e1 = splat(static_cast<float>(c.env1));
+            float* D = c.D.data() + o;
+            float* F = c.fd.data() + o;
+            const float* dm = c.dmul.data() + o;
+            const float* er = c.Er.data() + o;
+            const float* ei = c.Ei.data() + o;
+            const float* gm = c.gm1.data() + o;
+            const float* m0 = c.em0.data() + o;
+            const float* m1 = c.em1.data() + o;
+            // Without the frame restart the in-frame decay is off: F stays 1.
+            const v4f fstep = splat(c.frameRestart ? 1.0f : 0.0f);
+            for (int h = 0; h < 2; ++h)
+            {
+                const v4f step = ld(dm + 4 * h);
+                st(D + 4 * h, ld(D + 4 * h) * step);
+                const v4f f0 = ld(F + 4 * h), f1 = f0 * (fstep * step + (one - fstep));
+                st(F + 4 * h, f1);
+                const v4f g = ld(gm + 4 * h);
+                v4f x0 = ld(m0 + 4 * h) * f0 * (one + g * e0);
+                v4f x1 = ld(m1 + 4 * h) * f1 * (one + g * e1);
+                if constexpr (Rho)
+                {
+                    x0 *= q0;
+                    x1 *= q1;
+                }
+                const v4f r = ld(er + 4 * h), m = ld(ei + 4 * h);
+                a0r[h] += r * x0;
+                a0i[h] += m * x0;
+                a1r[h] += r * x1;
+                a1i[h] += m * x1;
+            }
+        }
+        for (int h = 0; h < 2; ++h)
+        {
+            st(a0rP + o + 4 * h, a0r[h]);
+            st(a0iP + o + 4 * h, a0i[h]);
+            st(a1rP + o + 4 * h, a1r[h]);
+            st(a1iP + o + 4 * h, a1i[h]);
+        }
+    }
 }
 
 // At a strike during the free phase: every component's amplitude is brought to this
@@ -1482,6 +1565,19 @@ void FastEngine::rebaseComponents() noexcept
     {
         if (!c.used || c.pending)
             continue;
+        // Re-hit damping: its gain here, as rendered, goes into the amplitudes; the rest of its
+        // ramp continues relative to it.
+        float rr = 1.0f;
+        if (c.rhoOn)
+        {
+            rr = j == 0 ? c.rho1 : c.rho0 + (c.rho1 - c.rho0) * frac;
+            if (! (rr > 0.0f))
+                rr = 0.0f;
+            c.rhoA = rr > 0.0f ? c.rhoA / rr : 1.0;
+            c.rhoB = rr > 0.0f ? c.rhoB / rr : 1.0;
+            c.rho0 = c.rho1 = 1.0f;
+        }
+        const v4f rv = splat(rr);
         float* __restrict Br = c.Br.data();
         float* __restrict Bi = c.Bi.data();
         const float* __restrict D = c.D.data();
@@ -1494,6 +1590,8 @@ void FastEngine::rebaseComponents() noexcept
                 const v4f d0 = dt * ld(inv + o);
                 dt = d0 + (dt - d0) * fr;
             }
+            if (c.rhoOn)
+                dt *= rv;
             const v4f br = ld(Br + o) * dt, bi = ld(Bi + o) * dt;
             const v4f ur = ld(rotR_.data() + o), ui = ld(rotI_.data() + o);
             const v4f nr = br * ur - bi * ui, ni = br * ui + bi * ur;
@@ -1505,6 +1603,12 @@ void FastEngine::rebaseComponents() noexcept
         // An envelope strike's |coupling| only turns with the oscillator (it has no decay).
         if (c.envOn)
             multiplyAmplitudes(c.Er.data(), c.Ei.data(), rotR_.data(), rotI_.data());
+        if (c.envOn && c.rhoOn)
+            for (int o = 0; o < nPad_; o += 4)
+            {
+                st(c.Er.data() + o, ld(c.Er.data() + o) * rv);
+                st(c.Ei.data() + o, ld(c.Ei.data() + o) * rv);
+            }
     }
     for (int k = 0; k < n_; ++k)
     {
@@ -1564,6 +1668,21 @@ void FastEngine::mergeComponents(Component& into, Component& from, bool dropEnve
         into.eps = (eInto * into.eps + eFrom * from.eps) / (eInto + eFrom);
     into.order = std::max(into.order, from.order);
     into.cascade = false;
+    // Re-hit damping: what is left of either ramp, weighted by energy (merges happen where
+    // both ramps are at 1: at a strike, or between components without one).
+    if (into.rhoOn || from.rhoOn)
+    {
+        const double ra = into.rhoOn ? into.rhoB : 1.0, rb = from.rhoOn ? from.rhoB : 1.0;
+        if (! into.rhoOn)
+        {
+            into.rhoT0 = from.rhoT0;
+            into.rhoT = from.rhoT;
+        }
+        into.rhoB = eInto + eFrom > 0.0 ? (eInto * ra + eFrom * rb) / (eInto + eFrom) : ra;
+        into.rhoA = 1.0;
+        into.rhoOn = true;
+        into.rho0 = into.rho1 = 1.0f;
+    }
     if (dropEnvelopes)
     {
         into.onsetOn = into.rampOn = into.envOn = false;
@@ -1896,39 +2015,59 @@ void FastEngine::updateGainBounds() noexcept
     }
 }
 
-// Energy cascade settings (docs/TUNING.md), from a tuning: amount 0 switches it off.
-void FastEngine::setCascade(const CymbalTuning& c) noexcept
+// The whole-cymbal mechanisms' settings (docs/TUNING.md: energy cascade, loud-band damping,
+// re-hit damping), from a tuning: amount 0 switches each off.
+void FastEngine::setMechanisms(const CymbalTuning& c) noexcept
 {
+    auto band = [](double x) {
+        return static_cast<int>(std::min<long>(std::max<long>(std::lround(x), 0), kExcitationBands - 1));
+    };
     cascAmount_ = std::min(std::max(c.cascadeAmount, 0.0), 1.0);
     cascThrDb_ = c.cascadeThresholdDb;
     cascSpeedS_ = std::max(c.cascadeSpeedMs, 0.1) * 1e-3;
     cascReleaseS_ = std::max(c.cascadeReleaseMs, 0.1) * 1e-3;
     cascSpread_ = static_cast<int>(std::min<long>(std::max<long>(std::lround(c.cascadeSpread), 1), kCascadeMaxSpread));
-    cascLo_ = static_cast<int>(std::min<long>(std::max<long>(std::lround(c.cascadeLowBand), 0), kExcitationBands - 1));
-    cascHi_ = static_cast<int>(std::min<long>(std::max<long>(std::lround(c.cascadeHighBand), 0), kExcitationBands - 1));
-    updateCascade();
+    cascLo_ = band(c.cascadeLowBand);
+    cascHi_ = band(c.cascadeHighBand);
+    dampAmount_ = std::max(c.loudDampAmount, 0.0);
+    dampThrDb_ = c.loudDampThresholdDb;
+    dampTilt_ = std::min(std::max(c.loudDampTilt, -1.0), 1.0);
+    rehitAmount_ = std::min(std::max(c.rehitDampAmount, 0.0), 1.0);
+    rehitTimeS_ = std::max(c.rehitDampTimeMs, 1.0) * 1e-3;
+    for (size_t s = 0; s < rehitW_.size(); ++s)
+        rehitW_[s] = std::max(c.rehitWeight[s], 0.0);
+    updateMechanisms();
 }
 
-// The cascade's coefficients at the prepared rate and control block, and its threshold.
-void FastEngine::updateCascade() noexcept
+// Their coefficients at the prepared rate and control block, and the band thresholds.
+void FastEngine::updateMechanisms() noexcept
 {
     cascOn_ = cascAmount_ > 0.0;
     if (! cascOn_)
         cascAct_.fill(0.0);
+    dampOn_ = dampAmount_ > 0.0;
+    if (! dampOn_)
+        dampX_.fill(0.0);
+    rehitOn_ = rehitAmount_ > 0.0;
+    // Tilt: weight 1 - tilt at the lowest band, 1 + tilt at the highest, linear in between.
+    for (int j = 0; j < kExcitationBands; ++j)
+        dampTiltW_[size_t(j)] =
+            1.0 + dampTilt_ * (static_cast<double>(j) - 0.5 * (kExcitationBands - 1)) / (0.5 * (kExcitationBands - 1));
     if (sr_ <= 0.0)
         return;
     const double dt = static_cast<double>(K_) / sr_;
     cascAtk_ = 1.0 - std::exp(-dt / cascSpeedS_);
     cascRel_ = 1.0 - std::exp(-dt / cascReleaseS_);
-    if (cascOn_)
-        computeCascadeRef();
+    dampCoef_ = 1.0 - std::exp(-dt / kScaleSmoothS);
+    if (cascOn_ || dampOn_)
+        computeBandRef();
 }
 
-// The threshold's reference: each band's energy after a velocity-1 strike of the BOW
+// The thresholds' reference: each band's energy after a velocity-1 strike of the BOW
 // articulation at its position, as that strike's contact leaves it (|coupling x H|^2 summed
 // over the band's modes), with the articulation's calibration, level and band gains as they
 // are now. Does not allocate.
-void FastEngine::computeCascadeRef() noexcept
+void FastEngine::computeBandRef() noexcept
 {
     const BakeData& b = *bake_;
     const size_t slot = size_t(cascSlot_);
@@ -1955,41 +2094,73 @@ void FastEngine::computeCascadeRef() noexcept
     const double calib = s.calibScalar * slotTrim_[slot] * boost; // the velocity curve is 0 dB at 1
     const float* exc = excGainOn_[slot] != 0 ? excGain_.data() + slot * n : nullptr;
     const bool contact = params_.contactPermode && Hr_.size() == n;
-    cascRef_.fill(0.0);
+    bandRef_.fill(0.0);
     for (size_t i = 0; i < n; ++i)
     {
         double m = b.excNorm[i] * numpyScalarPower(scratchVel_[i], s.velGainPower) * scratchPosW_[i] * calib;
         if (exc != nullptr)
             m *= static_cast<double>(exc[i]);
         const double h2 = contact ? Hr_[i] * Hr_[i] + Hi_[i] * Hi_[i] : 1.0;
-        cascRef_[modeBand_[i]] += m * m * h2;
+        bandRef_[modeBand_[i]] += m * m * h2;
     }
-    const double thr = std::pow(10.0, cascThrDb_ / 10.0);
+    const double thr = std::pow(10.0, cascThrDb_ / 10.0), dthr = std::pow(10.0, dampThrDb_ / 10.0);
     for (int j = 0; j < kExcitationBands; ++j)
-        cascThr_[size_t(j)] = cascRef_[size_t(j)] * thr;
+    {
+        cascThr_[size_t(j)] = bandRef_[size_t(j)] * thr;
+        dampThr_[size_t(j)] = bandRef_[size_t(j)] * dthr;
+    }
 }
 
-// Energy cascade, at a control point, once the components are summed: A1 holds each mode's
-// amplitude at the block's end relative to the shared oscillator, Y the oscillator there.
+// Re-hit damping, at a strike (after the re-anchoring, so every ramp is at 1 here): each
+// strike already ringing is scaled to 1 - amount x velocity x the struck articulation's
+// weight (at least 0) over the ramp time, as a smoothstep from the start of the free phase,
+// and what is left of an earlier ramp is carried into it. The struck component and strikes
+// still in their contact are not scaled. Off (and no ramp running): nothing changes.
+void FastEngine::startRehit(const Component& struck, int slot, double velocity) noexcept
+{
+    const double s =
+        rehitOn_ ? std::max(0.0, 1.0 - rehitAmount_ * clamp01(velocity) * rehitW_[size_t(slot) % rehitW_.size()]) : 1.0;
+    for (auto& c : components_)
+    {
+        if (! c.used || c.pending || &c == &struck || (! c.rhoOn && s >= 1.0))
+            continue;
+        const double rest = c.rhoOn ? c.rhoB : 1.0;
+        c.rhoOn = true;
+        c.rhoA = 1.0;
+        c.rhoB = rest * s;
+        c.rhoT0 = -1.0;
+        c.rhoT = rehitTimeS_;
+        c.rho0 = c.rho1 = 1.0f;
+    }
+}
+
+// Loud-band damping and the energy cascade, at a control point, once the components are
+// summed: A1 holds each mode's amplitude at the block's end relative to the shared
+// oscillator, Y the oscillator there. Each band's ringing energy (all strikes, before the
+// cymbal-wide LF/MF scales) is sum |Y A1|^2 over its ringing modes.
 //
-//   - Each band's ringing energy (all strikes, before the cymbal-wide LF/MF scales) is
-//     sum |Y A1|^2 over its ringing modes. Its activation follows 1 while it is above its
-//     threshold and 0 below it, one-pole with the attack time (SPEED) or the release time.
+// Loud-band damping: x, how far the band is above its threshold (0 at it, 1 at 20 dB
+// above, capped), smoothed (20 ms); its modes decay faster by the gain
+// exp(-ln(1000) / T60 x amount x tilt weight x x x block) per block.
+//
+// Energy cascade:
+//   - A band's activation follows 1 while it is above its threshold and 0 below it, one-pole
+//     with the attack time (SPEED) or the release time.
 //   - A band between the lowest and highest band gives the fraction
-//     1 - exp(-amount x activation x block / SPEED) of its energy to the bands up to SPREAD
-//     above it (within the highest band, ringing): halving per band, normalised. Its modes
-//     are scaled by sqrt(1 - fraction) through the shared oscillator's gain at the block's
-//     end, so every strike in them alike.
+//     1 - exp(-amount x activation x block / SPEED) of its energy (after the damping) to the
+//     bands up to SPREAD above it (within the highest band, ringing): halving per band,
+//     normalised. Its modes are scaled by sqrt(1 - fraction).
 //   - A target band's energy goes to its ringing modes in proportion to exc_norm, into the
 //     cascade component: added in phase with what that component already holds in the
 //     mode (a new mode takes a phase from the engine's random sequence), so the moved energy
 //     arrives exactly. It decays with the mode's T60. Its interference with what else rings
 //     in the mode averages out over a band's modes, as when strikes add.
 //
-// Both reach their value at the block's end (this block's end amplitude carries them; the
-// next control point puts them into the state), so nothing steps. Without a free component
-// for the moved energy nothing moves in this block. Does not allocate.
-void FastEngine::cascadeBlock() noexcept
+// Both scale the source modes through the shared oscillator's gain at the block's end (so
+// every strike in them alike) and this block's end amplitude carries every change (the next
+// control point puts it into the state), so nothing steps. Without a free component for the
+// moved energy nothing moves in this block. Does not allocate.
+void FastEngine::bandBlock() noexcept
 {
     const int na = nAct_;
     const int* idx = actIdx_.data();
@@ -1999,66 +2170,107 @@ void FastEngine::cascadeBlock() noexcept
     {
         const size_t s = size_t(a), k = size_t(idx[a]);
         const double ar = A1r_[k], ai = A1i_[k];
-        energy[modeBand_[k]] += (Yr_[s] * Yr_[s] + Yi_[s] * Yi_[s]) * (ar * ar + ai * ai);
+        modeE_[s] = (Yr_[s] * Yr_[s] + Yi_[s] * Yi_[s]) * (ar * ar + ai * ai);
+        energy[modeBand_[k]] += modeE_[s];
         weight[modeBand_[k]] += static_cast<double>(cascW_[k]);
     }
-    bool moves = false;
-    for (int j = cascLo_; j <= cascHi_; ++j)
-    {
-        const size_t b = size_t(j);
-        const double target = energy[b] > cascThr_[b] ? 1.0 : 0.0;
-        double& act = cascAct_[b];
-        act += (target - act) * (target > act ? cascAtk_ : cascRel_);
-        if (act < 1e-9)
-        {
-            act = 0.0;
-            continue;
-        }
-        if (! (energy[b] > 0.0))
-            continue;
-        double shares = 0.0;
-        for (int d = 1; d <= cascSpread_ && j + d <= cascHi_; ++d)
-            if (weight[size_t(j + d)] > 0.0)
-                shares += kCascadeShare[d];
-        if (! (shares > 0.0))
-            continue;
-        const double f = 1.0 - std::exp(-cascAmount_ * act * dt / cascSpeedS_);
-        const double moved = f * energy[b];
-        out[b] = f;
-        for (int d = 1; d <= cascSpread_ && j + d <= cascHi_; ++d)
-            if (weight[size_t(j + d)] > 0.0)
-                in[size_t(j + d)] += moved * kCascadeShare[d] / shares;
-        moves = true;
-    }
-    if (! moves)
-        return;
-    Component* casc = cascadeComponent();
-    if (casc == nullptr)
-        return;
-
-    // Sources: the shared oscillator's gain at the block's end (and this block's end amplitude).
-    for (int a = 0; a < na; ++a)
-    {
-        const size_t s = size_t(a), k = size_t(idx[a]);
-        const double f = out[modeBand_[k]];
-        if (f <= 0.0)
-            continue;
-        const double g = std::sqrt(1.0 - f);
+    // A ringing mode's gain over this block: the oscillator's anchor at the block's end,
+    // this block's end amplitude, and the gain the next control point commits.
+    auto gain = [&](size_t s, size_t k, double g) {
         Yr_[s] *= g;
         Yi_[s] *= g;
         A1r_[k] = static_cast<float>(A1r_[k] * g);
         A1i_[k] = static_cast<float>(A1i_[k] * g);
         blkG_[k] = static_cast<float>(blkG_[k] * g);
         blkGainOn_ = true;
-    }
-    // Component-modes rendered per sample in this block (onset ramps) end with that gain.
-    for (int q = 0; q < nKinks_; ++q)
+    };
+    bool gains = false;
+
+    if (dampOn_)
     {
-        KinkMode& km = kinks_[size_t(q)];
-        const double f = out[modeBand_[size_t(idx[km.sa])]];
-        if (f > 0.0)
-            km.g1 *= std::sqrt(1.0 - f);
+        bool any = false;
+        for (int j = 0; j < kExcitationBands; ++j)
+        {
+            const size_t b = size_t(j);
+            double x = 0.0;
+            if (energy[b] > dampThr_[b])
+                x = dampThr_[b] > 0.0 ? std::min(10.0 * std::log10(energy[b] / dampThr_[b]) / 20.0, 1.0) : 1.0;
+            dampX_[b] += (x - dampX_[b]) * dampCoef_;
+            if (dampX_[b] < 1e-9)
+                dampX_[b] = 0.0;
+            any = any || dampX_[b] > 0.0;
+        }
+        if (any)
+        {
+            const double f = dampAmount_ * dt;
+            energy.fill(0.0);
+            for (int a = 0; a < na; ++a)
+            {
+                const size_t s = size_t(a), k = size_t(idx[a]), b = modeBand_[k];
+                const double w = std::max(dampTiltW_[b], 0.0) * dampX_[b];
+                if (w > 0.0)
+                {
+                    const double g = std::exp(negLambda_[k] * f * w);
+                    gain(s, k, g);
+                    modeE_[s] *= g * g;
+                    gains = true;
+                }
+                energy[b] += modeE_[s];
+            }
+        }
     }
+
+    bool moves = false;
+    if (cascOn_)
+        for (int j = cascLo_; j <= cascHi_; ++j)
+        {
+            const size_t b = size_t(j);
+            const double target = energy[b] > cascThr_[b] ? 1.0 : 0.0;
+            double& act = cascAct_[b];
+            act += (target - act) * (target > act ? cascAtk_ : cascRel_);
+            if (act < 1e-9)
+            {
+                act = 0.0;
+                continue;
+            }
+            if (! (energy[b] > 0.0))
+                continue;
+            double shares = 0.0;
+            for (int d = 1; d <= cascSpread_ && j + d <= cascHi_; ++d)
+                if (weight[size_t(j + d)] > 0.0)
+                    shares += kCascadeShare[d];
+            if (! (shares > 0.0))
+                continue;
+            const double f = 1.0 - std::exp(-cascAmount_ * act * dt / cascSpeedS_);
+            const double moved = f * energy[b];
+            out[b] = f;
+            for (int d = 1; d <= cascSpread_ && j + d <= cascHi_; ++d)
+                if (weight[size_t(j + d)] > 0.0)
+                    in[size_t(j + d)] += moved * kCascadeShare[d] / shares;
+            moves = true;
+        }
+    Component* casc = moves ? cascadeComponent() : nullptr;
+    if (casc != nullptr)
+        // Sources.
+        for (int a = 0; a < na; ++a)
+        {
+            const size_t s = size_t(a), k = size_t(idx[a]);
+            const double f = out[modeBand_[k]];
+            if (f > 0.0)
+            {
+                gain(s, k, std::sqrt(1.0 - f));
+                gains = true;
+            }
+        }
+    // Component-modes rendered per sample in this block (onset ramps) end with the gain.
+    if (gains)
+        for (int q = 0; q < nKinks_; ++q)
+        {
+            KinkMode& km = kinks_[size_t(q)];
+            km.g1 *= static_cast<double>(blkG_[size_t(idx[km.sa])]);
+        }
+    if (casc == nullptr)
+        return;
     // Targets: the cascade component's amplitude in each mode, raised by the mode's share.
     const double twoPi = bake_->twoPi;
     for (int a = 0; a < na; ++a)
@@ -2124,7 +2336,8 @@ FastEngine::Component* FastEngine::cascadeComponent() noexcept
         double best = 1e300;
         for (auto& x : components_)
             for (auto& y : components_)
-                if (&x < &y && x.settled && y.settled && ! x.pending && ! y.pending && std::fabs(x.eps - y.eps) < best)
+                if (&x < &y && x.settled && y.settled && ! x.pending && ! y.pending && ! x.rhoOn && ! y.rhoOn &&
+                    std::fabs(x.eps - y.eps) < best)
                 {
                     best = std::fabs(x.eps - y.eps);
                     a = &x;
@@ -2147,6 +2360,8 @@ FastEngine::Component* FastEngine::cascadeComponent() noexcept
     c.used = true;
     c.pending = false;
     c.cascade = true;
+    c.rhoOn = false;
+    c.rho0 = c.rho1 = 1.0f;
     c.order = ++componentOrder_;
     c.contactStart = sampleNow_;
     c.tStrike = timeBase_ + static_cast<double>(sampleNow_) / sr_;
@@ -2376,9 +2591,9 @@ void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecayS
 
     outGainTarget_ = std::pow(10.0, c.outputGainDb / 20.0);
 
-    // Energy cascade: from the next control point. Its threshold follows the BOW
-    // articulation's values set above.
-    setCascade(c);
+    // Energy cascade and loud-band damping from the next control point, re-hit damping from
+    // the next strike. Their thresholds follow the BOW articulation's values set above.
+    setMechanisms(c);
 }
 #endif
 
@@ -2461,6 +2676,9 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     Component& comp = allocateComponent();
     comp.used = true;
     comp.cascade = false;
+    comp.rhoOn = false;
+    comp.rho0 = comp.rho1 = 1.0f;
+    startRehit(comp, slotIndex, velocity);
     comp.order = ++componentOrder_;
     comp.contactStart = sampleNow_;
     Contact* contact = nullptr;
@@ -2678,7 +2896,7 @@ void FastEngine::applyDecay() noexcept
         for (int k = 0; k < n_; ++k)
             setDecay(components_[size_t(cascComp_)], k);
     if (cascOn_)
-        computeCascadeRef();
+        computeBandRef();
     freeStarted_ = false;
     startFreePhase(true);
 }
@@ -2758,6 +2976,8 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
         std::fill(c.D.begin(), c.D.end(), 1.0f);
         if (c.envOn && ! sameGrid) // the new control grid starts here: find this strike's frame phase on it
             restartFrames(c, tFree - c.tStrike);
+        if (c.rhoOn && c.rhoT0 < 0.0) // a re-hit damping ramp starts with the free phase
+            c.rhoT0 = tFree;
     }
     baseSample_ = sampleNow_;
 

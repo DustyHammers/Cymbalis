@@ -20,7 +20,9 @@ enum class Group
     mf,
     lf,
     edgeEnvelope,
-    cascade
+    cascade,
+    loudDamping,
+    rehitDamping
 };
 
 const char* groupName (Group g);

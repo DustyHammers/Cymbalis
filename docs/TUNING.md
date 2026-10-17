@@ -51,7 +51,7 @@ Changes apply live:
 - **Wander depth and rate** change at the next control point, without a phase jump.
 - **Output gain** is smoothed (20 ms).
 - **Ring length per band** applies at the next control point. Every ringing strike decays at the new rates from there, without a step in level.
-- **Energy cascade** values apply from the next control point.
+- **Energy cascade** and **loud-band damping** values apply from the next control point; **re-hit damping** values from the next strike.
 - **Ring length is the exception:** it rebuilds the engine through the preset-switch path. The cymbal stops (30 ms fade) and restarts, and the change applies when the slider is released.
 
 The values travel to the audio thread without locks or allocation.
@@ -138,6 +138,12 @@ In the window, the **BANDS** section below the articulations works like a graphi
 | | Release | `cascade_release_ms` | 10–3000 ms | all | How fast the transfer stops once the band falls below the threshold. Default 150 ms |
 | | Spread | `cascade_spread` | 1–6 bands | all | How far up the energy goes. Default 2 |
 | | Lowest band, highest band | `cascade_low_band`, `cascade_high_band` | band 0–21 | all | The bands that take part (shown as their centre frequencies). Default 0 and 21: all |
+| Loud-band damping | Amount | `loud_damp_amount` | 0–4 | all | 0 (default) switches it off. See "Loud-band damping" below |
+| | Threshold | `loud_damp_threshold_db` | −40 to 0 dB | all | As the cascade's: per band, relative to a velocity-1.0 BOW strike. Default −12 dB |
+| | Tilt | `loud_damp_tilt` | −1 to +1 | all | Below 0 more effect on the low bands, above 0 on the high bands. Default 0 |
+| Re-hit damping | Amount | `rehit_damp_amount` | 0–1 | all | 0 (default) switches it off. See "Re-hit damping" below |
+| | Time | `rehit_damp_time_ms` | 1–50 ms | all | How long the damping takes. Default 10 ms |
+| | Weight, per articulation | `rehit_damp_weights` | 0–2 each | all | One row per articulation of the preset, e.g. "Weight: BOW". Default 1 |
 
 A slider's range widens to include a baked or loaded value outside it. Values for other presets are hidden.
 
@@ -174,6 +180,32 @@ Limits:
 - The moved energy is held by one strike component of the engine's pool of 24. When the pool holds 24 strikes and none of them has settled (dense playing, every strike still in its onset), nothing moves for that control point.
 - During a strike's contact (NOVA RIDE only, about 0.3 ms) nothing moves.
 
+#### Loud-band damping
+
+While a band rings above its threshold, its modes decay faster. It is a plugin mechanism (`docs/PORT_MAP.md`, plugin mechanism 11) and acts on the whole cymbal.
+
+At every control point the band energies are measured as for the energy cascade (every strike together, before the LF and MF build-up scales). For each band:
+
+- **How far above** the threshold it is: 0 at the threshold, 1 at 20 dB above it and beyond (capped), linear in dB in between. It is smoothed over 20 ms, so the damping comes and goes without steps.
+- **Tilt** weights the bands: 1 − tilt for the lowest band, 1 + tilt for the highest, linear in between. At −1 the low bands get up to twice the effect and the highest none; at +1 the reverse.
+- **The decay rate** of the band's modes becomes rate × (1 + amount × tilt weight × how far above). The rate is the mode's own, from its T60. At amount 4, a band 20 dB or more above its threshold (tilt 0) decays five times as fast.
+
+The extra decay acts on every strike ringing in the band alike. It is applied smoothly across each control block, with no step. With amount 0 it is skipped entirely. In the window it is the **LOUD-BAND DAMPING** group of the whole-cymbal part.
+
+When the energy cascade is also on, the damping acts first in each control block, and the cascade moves part of what is left.
+
+#### Re-hit damping
+
+A new strike first damps what is already ringing, then adds its own energy. It is a plugin mechanism (`docs/PORT_MAP.md`, plugin mechanism 12) and acts on the whole cymbal.
+
+- **How much:** at a strike, everything already ringing is scaled down to 1 − amount × velocity × the struck articulation's weight (never below 0). The velocity is the engine's: after the Velocity Sensitivity knob. For example, at amount 0.5, a velocity-0.8 BOW strike with weight 1 leaves 60 % of the ringing amplitude.
+- **How fast:** the scaling runs over **Time** (1–50 ms) as a smooth S-curve, from the moment the strike's contact ends (NOVA RIDE: about 0.3 ms; the other presets have no contact phase). It is evaluated at the control points (about 2.8 ms apart) and interpolated in between. So a Time shorter than one control block still takes about one block, smoothly, with no click.
+- **What it acts on:** only the energy that was already ringing, every strike of it. The new strike's own energy is not scaled.
+- **Weights:** each articulation of the preset has its own weight (0–2, default 1). A weight of 0 means that articulation's strikes do not damp; 2 doubles the effect.
+- **Strikes in quick succession:** a strike that lands while an earlier damping is still running carries what is left of it into its own: the earlier damping completes within the new strike's Time.
+
+With amount 0 nothing is computed and every preset plays exactly as before (a damping already running when the amount is set to 0 completes). In the window it is the **RE-HIT DAMPING** group of the whole-cymbal part, with one weight row per articulation.
+
 ### Meters
 
 - **Output, after the Volume knob:** the peak (held for 1.5 s) and the RMS over about 300 ms, in dBFS. **CLIP** lights when a sample reaches 0 dBFS; click it to reset it.
@@ -197,7 +229,8 @@ Limits:
   "producer": "Cymbalis Tuning",
   "cymbal": { "mf_sens_depth": 0.3, "ring_length": 1.2,
               "ring_length_bands": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.7, 0.6, 0.5, 0.5],
-              "cascade_amount": 0.4, "cascade_threshold_db": -18.0, "cascade_spread": 3.0 },
+              "cascade_amount": 0.4, "cascade_threshold_db": -18.0, "cascade_spread": 3.0,
+              "rehit_damp_amount": 0.5, "rehit_damp_weights": { "bell_tip": 1, "bell_shoulder": 1, "bow_tip": 1, "bow_shoulder": 1, "edge": 0.5 } },
   "articulations": {
     "bow_tip": { "entry": "BOW", "level_db": -1.0, "vel_0.6_db": -2.0 },
     "edge": { "entry": "EDGE", "band_gains_db": [0, 0, 0, -3.5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2.0, 2.0, 0, 0],
@@ -211,7 +244,7 @@ Limits:
 }
 ```
 
-- `cymbal` and `articulations` hold only the values that differ from the bake; loading a file applies these on top of the bake. A per-band cymbal value (`ring_length_bands`) is written as all 22 bands, lowest first, when any differs. An articulation's `band_gains_db`, `onset_delay_ms` and `onset_speed` are each written as all 22 bands, lowest first, when any of them differs.
+- `cymbal` and `articulations` hold only the values that differ from the bake; loading a file applies these on top of the bake. A per-band cymbal value (`ring_length_bands`) is written as all 22 bands, lowest first, when any differs. `rehit_damp_weights` is written with every articulation's weight, by articulation id, when any differs. An articulation's `band_gains_db`, `onset_delay_ms` and `onset_speed` are each written as all 22 bands, lowest first, when any of them differs.
 - `effective` is a full copy of every value for reference; nothing reads it.
 - `entry` names the bake entry (slot) of an articulation.
 - `preset` is the preset id (`nova_ride`, `smoke_flat_ride`, `hammered_thin_ride`); `bake_format_version` is the bake's `format_version`.
@@ -235,7 +268,7 @@ Limits:
 3. Rebuild the plugin. Its bake loader (`plugin/dsp/Bake.cpp`, `Tuning.cpp`) applies the block (`applyTuning`):
    - the parameters;
    - every mode's T60 times `ring_length` and its band's `ring_length_bands` factor;
-   - the energy cascade's settings, which the engine reads when it is built;
+   - the settings of the energy cascade, the loud-band damping and the re-hit damping (with its weights by articulation id), which the engine reads when it is built;
    - the LFO rates scaled to `wander_rate_hz`;
    - the LF and MF weights from `lf_cutoff_hz`, `mf_lo_hz` and `mf_hi_hz`;
    - the NPZ settings, the output gain and the velocity curves.

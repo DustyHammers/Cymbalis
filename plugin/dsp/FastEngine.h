@@ -52,6 +52,11 @@
 //     scaled down through the shared oscillator's gain (every strike in them alike); the
 //     energy arrives in the target modes as a component of its own (cascade component) that
 //     decays with each mode's T60. Both change over the block, with no step.
+//   - Loud-band damping (plugin mechanism 11), off at amount 0: from the same measurement,
+//     the modes of a band above its threshold decay faster, through the same oscillator gain.
+//   - Re-hit damping (plugin mechanism 12), off at amount 0: a strike scales the strikes
+//     already ringing down over a short ramp, a gain per component evaluated at the control
+//     points; the new strike's own energy is not scaled.
 //
 // Thread use: the constructor and prepare() allocate and must not run on the audio
 // thread. strike() and process() never allocate, lock or touch files.
@@ -194,6 +199,12 @@ private:
         std::vector<float> rc0, rsl;    // ramp = clamp(rc0 + rsl * t, 0, 1): bf, (1 - bf) / pt (1, 0: none)
         std::vector<double> epsK;       // wash_damp - oscWash_ (merged components differ per mode)
         std::vector<double> pt;         // ramp peak time (0 = none)
+        // Re-hit damping: a later strike scales this one by rhoA + (rhoB - rhoA) x
+        // smoothstep((t - rhoT0) / rhoT) (rhoT0 < 0: from the start of the next free phase),
+        // rho0 and rho1 at the current block's ends. Off: 1.
+        bool rhoOn = false;
+        double rhoA = 1.0, rhoB = 1.0, rhoT0 = 0.0, rhoT = 0.01;
+        float rho0 = 1.0f, rho1 = 1.0f;
         // Envelope strikes only (allocated when the bake has an NPZ band envelope):
         std::vector<float> Er, Ei;      // |coupling| with this strike's phase
         std::vector<float> fd;          // in-frame decay at the next control point
@@ -217,6 +228,9 @@ private:
     void renderFree(float* left, float* right, int n) noexcept;
     void beginControlBlock() noexcept;
     void sumComponents(double t0, double t1) noexcept;
+    template <bool Rho>
+    void sumBlock(double t0, double t1, int nS, int nO, int nR, int nE) noexcept;
+    double rhoAt(const Component& c, double t) const noexcept;
     void dropQuietModes() noexcept;
     void renderKinks(float* left, float* right, int j0, int m) noexcept;
     void addKink(const Component& c, int mode, double d0, double te0) noexcept;
@@ -245,10 +259,11 @@ private:
     void computeWanderTables() noexcept;
     void computeHertzRef() noexcept;
     void computeRemapTable() noexcept;
-    void setCascade(const CymbalTuning& c) noexcept;
-    void updateCascade() noexcept;
-    void computeCascadeRef() noexcept;
-    void cascadeBlock() noexcept;
+    void setMechanisms(const CymbalTuning& c) noexcept;
+    void updateMechanisms() noexcept;
+    void computeBandRef() noexcept;
+    void bandBlock() noexcept;
+    void startRehit(const Component& struck, int slot, double velocity) noexcept;
     Component* cascadeComponent() noexcept;
     void commitBlockGains() noexcept;
     void clearBlockGains() noexcept;
@@ -318,10 +333,24 @@ private:
     double cascAtk_ = 0.0, cascRel_ = 0.0;   // activation one-pole coefficients per control block
     int cascSlot_ = 0;                       // the BOW articulation (the threshold's reference)
     int cascComp_ = -1;                      // the cascade component (index), -1: none
-    std::array<double, kExcitationBands> cascRef_ {};  // band energy of a velocity-1 BOW strike
+    std::array<double, kExcitationBands> bandRef_ {};  // band energy of a velocity-1 BOW strike (also the damping's reference)
     std::array<double, kExcitationBands> cascThr_ {};  // threshold energy per band
     std::array<double, kExcitationBands> cascAct_ {};  // activation per band (0 .. 1)
     std::vector<float> cascW_;               // per mode: its share weight of the moved energy (exc_norm)
+    std::vector<double> modeE_;              // per ringing mode: its energy at this block's end (scratch)
+
+    // Loud-band damping (docs/TUNING.md). dampOn_: amount > 0.
+    bool dampOn_ = false;
+    double dampAmount_ = 0.0, dampThrDb_ = -12.0, dampTilt_ = 0.0, dampCoef_ = 0.0;
+    std::array<double, kExcitationBands> dampThr_ {};  // threshold energy per band
+    std::array<double, kExcitationBands> dampX_ {};    // how far above it (0 .. 1), smoothed
+    std::array<double, kExcitationBands> dampTiltW_ {}; // tilt weight per band (0 .. 2)
+
+    // Re-hit damping (docs/TUNING.md). rehitOn_: amount > 0. rhoAny_: some component has a
+    // ramp (the control loop then applies the components' gains).
+    bool rehitOn_ = false, rhoAny_ = false;
+    double rehitAmount_ = 0.0, rehitTimeS_ = 0.01;
+    std::array<double, kMaxArticulations> rehitW_ {};
     // Gains of the ringing modes through the shared oscillator (mode order): this block's,
     // reaching its value at the block's end, and the product of the earlier blocks' since the
     // segment started (with renormOscillators()' factors); and additions to the cascade

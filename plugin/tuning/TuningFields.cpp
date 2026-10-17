@@ -16,6 +16,8 @@ const char* groupName (Group g)
         case Group::lf: return "LF BUILD-UP";
         case Group::edgeEnvelope: return "EDGE ENVELOPE";
         case Group::cascade: return "ENERGY CASCADE";
+        case Group::loudDamping: return "LOUD-BAND DAMPING";
+        case Group::rehitDamping: return "RE-HIT DAMPING";
     }
     return "";
 }
@@ -96,6 +98,13 @@ const std::vector<Field>& cymbalFields()
         { "cascade_spread", "Spread", "bands", Group::cascade, Needs::always, 1.0, 6.0, 0, &C::cascadeSpread, false, Scope::all, 1.0 },
         { "cascade_low_band", "Lowest band", "", Group::cascade, Needs::always, 0.0, 21.0, 0, &C::cascadeLowBand, false, Scope::all, 1.0, true },
         { "cascade_high_band", "Highest band", "", Group::cascade, Needs::always, 0.0, 21.0, 0, &C::cascadeHighBand, false, Scope::all, 1.0, true },
+
+        { "loud_damp_amount", "Amount (0 = off)", "", Group::loudDamping, Needs::always, 0.0, 4.0, 2, &C::loudDampAmount, false },
+        { "loud_damp_threshold_db", "Threshold (0 dB = a velocity-1.0 BOW strike)", "dB", Group::loudDamping, Needs::always, -40.0, 0.0, 1, &C::loudDampThresholdDb, false },
+        { "loud_damp_tilt", "Tilt (- more on low bands, + on high)", "", Group::loudDamping, Needs::always, -1.0, 1.0, 2, &C::loudDampTilt, false },
+
+        { "rehit_damp_amount", "Amount (0 = off)", "", Group::rehitDamping, Needs::always, 0.0, 1.0, 2, &C::rehitDampAmount, false },
+        { "rehit_damp_time_ms", "Time", "ms", Group::rehitDamping, Needs::always, 1.0, 50.0, 1, &C::rehitDampTimeMs, false },
     };
     return fields;
 }
@@ -152,6 +161,14 @@ juce::String readBands (const juce::var& value, const BandSpec& f, const juce::S
 
 juce::String idOf (const BakeData& b, size_t s) { return b.slots[s].id; }
 
+bool sameRehitWeights (const BakeData& b, const CymbalTuning& x, const CymbalTuning& y)
+{
+    for (size_t s = 0; s < b.slots.size(); ++s)
+        if (! juce::exactlyEqual (x.rehitWeight[s], y.rehitWeight[s]))
+            return false;
+    return true;
+}
+
 juce::var cymbalObject (const BakeData& b, const Tuning& t, bool onlyChanged)
 {
     auto* o = new juce::DynamicObject();
@@ -175,6 +192,14 @@ juce::var cymbalObject (const BakeData& b, const Tuning& t, bool onlyChanged)
                 bands.add (g);
             o->setProperty (f.spec.key, bands);
         }
+    // Re-hit damping weights: every articulation's, by id, when any differs.
+    if (! onlyChanged || ! sameRehitWeights (b, t.cymbal, b.tuning.cymbal))
+    {
+        auto* w = new juce::DynamicObject();
+        for (size_t s = 0; s < b.slots.size(); ++s)
+            w->setProperty (idOf (b, s), t.cymbal.rehitWeight[s]);
+        o->setProperty (kRehitWeightsKey, juce::var (w));
+    }
     return juce::var (o);
 }
 
@@ -261,6 +286,26 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
                 t.cymbal.frameDecayRestart = (bool) p.value;
                 continue;
             }
+            if (key == kRehitWeightsKey)
+            {
+                auto* w = p.value.getDynamicObject();
+                if (w == nullptr)
+                    return juce::String (kRehitWeightsKey) + " must name articulations and their weights.";
+                for (const auto& q : w->getProperties())
+                {
+                    int slot = -1;
+                    for (size_t s = 0; s < b.slots.size(); ++s)
+                        if (idOf (b, s) == q.name.toString())
+                            slot = (int) s;
+                    if (slot < 0)
+                        return "This preset has no articulation \"" + q.name.toString() + "\" (" + kRehitWeightsKey + ").";
+                    const double x = (double) q.value;
+                    if (! std::isfinite (x) || x < 0.0)
+                        return juce::String (kRehitWeightsKey) + " values must be 0 or more.";
+                    t.cymbal.rehitWeight[(size_t) slot] = x;
+                }
+                continue;
+            }
             bool known = false;
             for (const auto& f : cymbalBandFields())
                 if (key == f.spec.key)
@@ -331,6 +376,8 @@ bool isModified (const BakeData& b, const Tuning& t)
         if (! juce::exactlyEqual (t.cymbal.*(f.member), b.tuning.cymbal.*(f.member)))
             return true;
     if (t.cymbal.frameDecayRestart != b.tuning.cymbal.frameDecayRestart)
+        return true;
+    if (! sameRehitWeights (b, t.cymbal, b.tuning.cymbal))
         return true;
     for (const auto& f : cymbalBandFields())
         if (t.cymbal.*(f.member) != b.tuning.cymbal.*(f.member))

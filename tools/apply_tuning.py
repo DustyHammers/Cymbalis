@@ -22,9 +22,11 @@ tuning block it already has). Then:
     (band edges, 22 delays in ms and 22 speeds); delay 0 and speed 1 everywhere removes it;
   * every other value that differs from the bake's own value goes into the bake's
     "tuning" block, which the plugin's bake loader applies; per-band cymbal values
-    (ring_length_bands) as 22 values. The plugin's own mechanisms (energy cascade,
-    cascade_*) have a neutral value as the bake's own (amount 0: off). A value equal to the
-    bake's own drops out of the block, so applying the same file twice gives the same bake.
+    (ring_length_bands) as 22 values. The plugin's own mechanisms (energy cascade
+    cascade_*, loud-band damping loud_damp_*, re-hit damping rehit_damp_* with its weights
+    per articulation, rehit_damp_weights) have a neutral value as the bake's own (amount 0:
+    off; weights 1). A value equal to the bake's own drops out of the block, so applying the
+    same file twice gives the same bake.
 
 Nothing else in the bake changes. Running it on resources/presets is a separate task, done
 only when Kris asks.
@@ -54,6 +56,8 @@ CYMBAL_KEYS = [
     'edge_band_env_onset_s',
     'cascade_amount', 'cascade_threshold_db', 'cascade_speed_ms', 'cascade_release_ms',
     'cascade_spread', 'cascade_low_band', 'cascade_high_band',
+    'loud_damp_amount', 'loud_damp_threshold_db', 'loud_damp_tilt',
+    'rehit_damp_amount', 'rehit_damp_time_ms',
 ]
 # The plugin's own whole-cymbal mechanisms (plugin/dsp/Tuning.h): their neutral values (the
 # bake's own) and allowed ranges; (lo, hi, whole) with whole = a whole number.
@@ -65,7 +69,15 @@ PLUGIN_KEYS = {
     'cascade_spread': (2.0, (1.0, 6.0, True)),
     'cascade_low_band': (0.0, (0.0, 21.0, True)),
     'cascade_high_band': (21.0, (0.0, 21.0, True)),
+    'loud_damp_amount': (0.0, (0.0, 4.0, False)),
+    'loud_damp_threshold_db': (-12.0, (-120.0, 40.0, False)),
+    'loud_damp_tilt': (0.0, (-1.0, 1.0, False)),
+    'rehit_damp_amount': (0.0, (0.0, 1.0, False)),
+    'rehit_damp_time_ms': (10.0, (1.0, 50.0, False)),
 }
+# Re-hit damping weight of each articulation, {id: weight}; neutral 1.
+WEIGHTS_KEY = 'rehit_damp_weights'
+WEIGHT_MIN, WEIGHT_MAX = 0.0, 2.0
 RESTART_KEY = 'edge_frame_decay_restart'
 # Per-band cymbal values (22 values, lowest band first): name -> (range, unit, neutral value).
 CYMBAL_BAND_KEYS = {
@@ -188,9 +200,11 @@ def main():
 
     own = own_values(bake)
     block = bake.get('tuning') or {}
+    ids = {articulation_id(s): i for i, s in enumerate(bake['slots'])}
+    own[WEIGHTS_KEY] = {aid: 1.0 for aid in ids}
     current = dict(own)
     current.update(block.get('cymbal', {}))
-    ids = {articulation_id(s): i for i, s in enumerate(bake['slots'])}
+    current[WEIGHTS_KEY] = {**own[WEIGHTS_KEY], **(block.get('cymbal', {}).get(WEIGHTS_KEY) or {})}
     curves = {aid: dict(block.get('articulations', {}).get(aid, {})) for aid in ids}
     bands = {aid: slot_bands(bake['slots'][i]) for aid, i in ids.items()}
     shifts = {aid: slot_shift(bake['slots'][i]) for aid, i in ids.items()}
@@ -201,6 +215,16 @@ def main():
             if not isinstance(v, bool):
                 fail(f'{RESTART_KEY} must be true or false')
             current[key] = v
+        elif key == WEIGHTS_KEY:
+            if not isinstance(v, dict):
+                fail(f'{WEIGHTS_KEY} must map articulation ids to weights')
+            for aid, w in v.items():
+                if aid not in ids:
+                    fail(f'{WEIGHTS_KEY}: the bake has no articulation {aid!r} (it has {sorted(ids)})')
+                w = finite(f'{WEIGHTS_KEY}.{aid}', w)
+                if not WEIGHT_MIN <= w <= WEIGHT_MAX:
+                    fail(f'{WEIGHTS_KEY} values must lie in {WEIGHT_MIN:g} to {WEIGHT_MAX:g}')
+                current[WEIGHTS_KEY][aid] = w
         elif key in PLUGIN_KEYS:
             lo, hi, whole = PLUGIN_KEYS[key][1]
             current[key] = finite(key, v)
@@ -237,7 +261,7 @@ def main():
                 fail(f'unknown articulation value {aid}.{key}')
 
     # The new tuning block: what differs from the bake's own values.
-    new_cymbal = {k: current[k] for k in CYMBAL_KEYS + [RESTART_KEY] + list(CYMBAL_BAND_KEYS)
+    new_cymbal = {k: current[k] for k in CYMBAL_KEYS + [RESTART_KEY] + list(CYMBAL_BAND_KEYS) + [WEIGHTS_KEY]
                   if k in current and current[k] != own.get(k)}
     new_arts = {}
     for aid, vals in curves.items():
