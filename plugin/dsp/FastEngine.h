@@ -148,6 +148,11 @@ public:
     // computed here), and applies it at the next control point: the ringing strikes decay
     // at the new rates from there, with no step. Does not allocate.
     void setTuning(const Tuning& t, const float* modeGains, const DecaySet* decay = nullptr) noexcept;
+    // When each one-third-octave band of the slot's last strike peaks, in ms after the strike
+    // (-1: the band has no energy in it, or the slot has not been struck): per mode the end of
+    // its onset ramp, or with a band envelope when its envelope band peaks (after the onset
+    // shift), else 0; per band the mean over its modes, weighted by their energy at the strike.
+    const std::array<float, kExcitationBands>& onsetPeaksMs(int slot) const noexcept { return onsetPeakMs_[size_t(slot)]; }
 #endif
 
     // Engine time of the next sample, in seconds since construction.
@@ -279,6 +284,9 @@ private:
     void npzCoupling(double velocity, double* out) const noexcept;
     void startEnvelope(Component& c, double velocity) noexcept;
     void startStick(int slot, double velocity, double position, double level) noexcept;
+#if CYMBALIS_TUNING
+    void onsetPeaks(const Component& c, int slot) noexcept;
+#endif
     void renderStick(float* left, float* right, int n) noexcept;
     double envelopeAt(const Component& c, int band, double te) const noexcept;
     void restartFrames(Component& c, double elapsed) noexcept;
@@ -304,6 +312,14 @@ private:
     // modes, whether any is not 0, and the attack time constant (s).
     std::vector<double> attackGm1_, attackGm1Max_, attackTauS_;
     std::vector<uint8_t> attackOn_;
+    // Per slot: whether the SOFT and HARD velocity layers differ, of its onset shift and of
+    // its attack gains (docs/TUNING.md). Then a strike takes each band between them at its
+    // velocity (strike*_ hold that strike's values); else the slot's values above.
+    std::vector<uint8_t> shiftLayers_, attackLayers_;
+    std::array<double, kExcitationBands> strikeDelay_ {}, strikeSpeed_ {}, strikeAttackDb_ {}, strikeGm1_ {};
+#if CYMBALIS_TUNING
+    std::vector<std::array<float, kExcitationBands>> onsetPeakMs_; // per slot (onsetPeaksMs)
+#endif
     std::array<bool, kExcitationBands> bandHasModes_ {};
     // Brightness vs velocity: ln(f / 1 kHz) per mode.
     std::vector<double> logF1k_;
@@ -386,6 +402,7 @@ private:
     std::vector<uint8_t> npzShiftBand_;    // the onset-shift band of each envelope band
     std::vector<double> remapTable_;       // the NPZ velocities normalised to 0..1, ^ remapExp_ (line 1049)
     std::vector<double> bandVal0_, bandVal1_; // per band, scratch for one block
+    std::vector<double> envPeakS_;            // per band: when the latest envelope strike's envelope peaks (s)
 
     // Contact force at the host rate (contactLen_ x numModes, DC-normalised per mode) and
     // its response H = sum_j f_j step^(len - j): the state a unit coupling leaves at the

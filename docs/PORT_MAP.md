@@ -535,6 +535,15 @@ These are plugin mechanisms; none is a port of Python. Kris tunes them by ear in
      - the calibration scalar. Python computes it with an edge strike at velocity 1.0 (a.7), so with V5. It is kept so that nothing below 0.9905 changes.
    - **Where.** `tools/bake_preset.py` applies it (`VP_COLUMN_FIXES`), so a re-bake keeps it, and records it in the bake's `notes`. Both builds play the same bake. The tuning build has no copy of the velocity tables.
 
+### Velocity layers (tuning)
+
+18. **The onset shift and the attack gains have SOFT and HARD velocity layers** (2026-10-17; `docs/TUNING.md`, "Velocity layers"). Per articulation and band, the onset delay, onset speed and attack gain each have a value at velocity 0.3 (SOFT) and at 1.0 (HARD). A strike takes each band between them with the weight t = ln v / ln 0.3, clamped to 0..1, as the velocity curve does. Delay and attack gain are interpolated linearly, speed geometrically (`layeredShift`, `layeredAttack`). Python has nothing like it.
+   - **On top of the onset data.** As decisions 8 and 15: a band envelope keeps its blend between the captures of the strike's velocity and is read at (t − delay) × speed; an onset ramp peaks at peak time / speed + delay; a bow, bell or center strike at its base position has peak time 0.
+   - **Neutral.** Both layers start as the articulation's single values (delay 0, speed 1, the attack gains of the bake). A slot whose layers are equal uses its values exactly as before (`shiftLayers_`, `attackLayers_`), so every preset plays bit for bit as before (checked).
+   - **Per strike.** With different layers: 22 delays and speeds and 22 attack gains (one `pow` each) from the two arrays, into fixed arrays; no allocation.
+   - **Stored** in the bake with the slot: `slots[].onset_shift.delay_ms_soft`, `speed_soft` and `slots[].attack_band_gains.gains_db_soft` beside the HARD values. Without them a bake entry uses one layer for both.
+   - **Peak readout** (tuning build only, `FastEngine::onsetPeaksMs`). At each strike: per mode the time its band envelope peaks after the shift (its band's largest interpolated frame, `startEnvelope`), or its ramp's peak time, else 0; per one-third-octave band the mean weighted by |coupling|². The processor hands it to the Tuning window through atomics. It does not change the sound.
+
 ### Implementation notes for these decisions
 
 - **Calibration is applied when the strike is injected.** Python multiplies the whole output by one scalar at the end. With NL off, every remaining mechanism is linear in amplitude, so the two give the same result to within rounding.

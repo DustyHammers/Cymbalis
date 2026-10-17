@@ -125,7 +125,48 @@ private:
     bool updating = false;
 };
 
-// The per-band values of the chosen articulation: a selector and one BandRow per BandField.
+// The velocity layer the layered rows (attack gain, onset delay, onset speed) show: SOFT
+// (velocity 0.3) or HARD (1.0); LINK (an edit sets both layers) and COPY SOFT -> HARD.
+class LayerBar final : public juce::Component
+{
+public:
+    LayerBar();
+
+    bool soft() const { return softButton.getToggleState(); }
+    bool linked() const { return link.getToggleState(); }
+    std::function<void()> onLayer, onCopy;
+
+    void resized() override;
+    void paint (juce::Graphics& g) override;
+
+private:
+    juce::Label note;
+    juce::TextButton softButton { "SOFT (0.3)" }, hardButton { "HARD (1.0)" }, copy { "COPY SOFT -> HARD" };
+    juce::ToggleButton link { "LINK" };
+};
+
+// When each band of the selected articulation's last strike peaked, in ms after the strike,
+// under the band columns.
+class PeakRow final : public juce::Component
+{
+public:
+    explicit PeakRow (TuningLookAndFeel& small);
+    ~PeakRow() override;
+
+    void setPeaks (const std::array<float, kExcitationBands>& ms, bool valid);
+
+    void resized() override;
+    static constexpr int height = 44;
+
+private:
+    juce::Label title;
+    std::array<juce::Label, kExcitationBands> values;
+    std::array<float, kExcitationBands> shown {};
+    bool shownValid = false, first = true;
+};
+
+// The per-band values of the chosen articulation: a selector and one BandRow per BandField,
+// the velocity layer bar above the layered rows and the peak readout under them.
 class BandEq final : public juce::Component
 {
 public:
@@ -135,6 +176,8 @@ public:
     int selected() const { return selector.getSelectedItemIndex(); }
     BandRow& row (size_t field) { return *rows[field]; }
     ValueRow& attackTime() { return *attackTimeRow; } // the attack time, under the attack gains
+    LayerBar& layers() { return layerBar; }
+    PeakRow& peaks() { return *peakRow; }
 
     std::function<void()> onSelect;
 
@@ -148,6 +191,8 @@ private:
     juce::ComboBox selector;
     std::vector<std::unique_ptr<BandRow>> rows;
     std::unique_ptr<ValueRow> attackTimeRow;
+    LayerBar layerBar;
+    std::unique_ptr<PeakRow> peakRow;
     bool updating = false;
 };
 

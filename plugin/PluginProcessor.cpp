@@ -439,6 +439,13 @@ void CymbalisProcessor::strikeSlots (Cymbal& c, int note, double velocity, doubl
         c.engine->strike (entry, velocity, cymbalis::slotPosition (cymbalis::kSlots[s], b1, b2));
 #if CYMBALIS_TUNING
         startHitMeter ((int) s, entry, velocity, at);
+        if (entry < cymbalis::kMaxArticulations)
+        {
+            const auto& peaks = c.engine->onsetPeaksMs (entry);
+            for (size_t j = 0; j < peaks.size(); ++j)
+                peakMs[(size_t) c.preset][(size_t) entry][j].store (peaks[j], std::memory_order_relaxed);
+            peakSet[(size_t) c.preset][(size_t) entry].store (true);
+        }
 #endif
     }
 }
