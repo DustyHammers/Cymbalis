@@ -15,6 +15,7 @@ const char* groupName (Group g)
         case Group::mf: return "MF BUILD-UP";
         case Group::lf: return "LF BUILD-UP";
         case Group::edgeEnvelope: return "EDGE ENVELOPE";
+        case Group::cascade: return "ENERGY CASCADE";
     }
     return "";
 }
@@ -87,6 +88,14 @@ const std::vector<Field>& cymbalFields()
         { "lf_wander_rate_boost", "Wander-rate boost", "", Group::lf, Needs::always, 0.0, 2.0, 2, &C::lfWanderRateBoost, false },
 
         { "edge_band_env_onset_s", "Window", "s", Group::edgeEnvelope, Needs::envelope, 0.1, 30.0, 2, &C::edgeEnvWindowS, false, Scope::edge },
+
+        { "cascade_amount", "Amount (0 = off)", "", Group::cascade, Needs::always, 0.0, 1.0, 2, &C::cascadeAmount, false },
+        { "cascade_threshold_db", "Threshold (0 dB = a velocity-1.0 BOW strike)", "dB", Group::cascade, Needs::always, -40.0, 0.0, 1, &C::cascadeThresholdDb, false },
+        { "cascade_speed_ms", "Speed (attack)", "ms", Group::cascade, Needs::always, 5.0, 1000.0, 0, &C::cascadeSpeedMs, false },
+        { "cascade_release_ms", "Release", "ms", Group::cascade, Needs::always, 10.0, 3000.0, 0, &C::cascadeReleaseMs, false },
+        { "cascade_spread", "Spread", "bands", Group::cascade, Needs::always, 1.0, 6.0, 0, &C::cascadeSpread, false, Scope::all, 1.0 },
+        { "cascade_low_band", "Lowest band", "", Group::cascade, Needs::always, 0.0, 21.0, 0, &C::cascadeLowBand, false, Scope::all, 1.0, true },
+        { "cascade_high_band", "Highest band", "", Group::cascade, Needs::always, 0.0, 21.0, 0, &C::cascadeHighBand, false, Scope::all, 1.0, true },
     };
     return fields;
 }

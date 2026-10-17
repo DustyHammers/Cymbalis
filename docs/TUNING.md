@@ -51,6 +51,7 @@ Changes apply live:
 - **Wander depth and rate** change at the next control point, without a phase jump.
 - **Output gain** is smoothed (20 ms).
 - **Ring length per band** applies at the next control point. Every ringing strike decays at the new rates from there, without a step in level.
+- **Energy cascade** values apply from the next control point.
 - **Ring length is the exception:** it rebuilds the engine through the preset-switch path. The cymbal stops (30 ms fade) and restarts, and the change applies when the slider is released.
 
 The values travel to the audio thread without locks or allocation.
@@ -131,6 +132,12 @@ In the window, the **BANDS** section below the articulations works like a graphi
 | | Wander-rate boost | `lf_wander_rate_boost` | 0–2 | all | The LF accumulator speeds up the wander |
 | Edge envelope | Window | `edge_band_env_onset_s` | 0.1–30 s | 602, Bettis | How long an edge strike follows the NPZ band envelope; per strike |
 | | 20 ms frame-decay restart | `edge_frame_decay_restart` | on/off | 602, Bettis | On (the bake): the in-frame decay restarts every 20 ms (`docs/PORT_MAP.md`, "The in-frame decay is a 50 Hz sawtooth"). Off: no in-frame decay; the level follows the band envelope alone. Per strike |
+| Energy cascade | Amount | `cascade_amount` | 0–1 | all | 0 (default) switches it off. See "Energy cascade" below |
+| | Threshold | `cascade_threshold_db` | −40 to 0 dB | all | Per band, relative to that band's energy after a velocity-1.0 BOW strike. Default −12 dB |
+| | Speed (attack) | `cascade_speed_ms` | 5–1000 ms | all | How fast the transfer starts, and its time constant at amount 1. Default 100 ms |
+| | Release | `cascade_release_ms` | 10–3000 ms | all | How fast the transfer stops once the band falls below the threshold. Default 150 ms |
+| | Spread | `cascade_spread` | 1–6 bands | all | How far up the energy goes. Default 2 |
+| | Lowest band, highest band | `cascade_low_band`, `cascade_high_band` | band 0–21 | all | The bands that take part (shown as their centre frequencies). Default 0 and 21: all |
 
 A slider's range widens to include a baked or loaded value outside it. Values for other presets are hidden.
 
@@ -141,6 +148,31 @@ Each of the 22 one-third-octave bands of the band gains has a ring-length multip
 In the window it is the **RING LENGTH PER BAND** row in the CYMBAL group: 22 vertical sliders on a logarithmic scale with ×1 in the middle, numeric entry, a per-band reset and FLAT (every band to ×1).
 
 A change applies live, at the next control point (about 2.8 ms). The new decay coefficients are computed off the audio thread and handed over; there the ringing state is re-anchored, as a strike does without its contact, and every ringing strike decays at the new rates from that sample. Nothing steps. With every band at ×1 nothing changes and nothing is computed.
+
+#### Energy cascade
+
+After hard hits, energy moves from lower bands into higher ones over time, and the cymbal's total energy stays the same: the bloom and wash of a crash. The bands are the 22 one-third-octave bands of the band gains. It is a plugin mechanism (`docs/PORT_MAP.md`, plugin mechanism 10) and acts on the whole cymbal, whatever struck it.
+
+At every control point (about 2.8 ms) the engine:
+
+1. **Measures** the ringing energy of each band: every strike together, as the modes ring (before the LF and MF build-up scales).
+2. **Compares** it with the band's threshold. 0 dB is that band's energy right after a velocity-1.0 strike of the preset's BOW articulation (as it plays now: its level and band gains count). At −12 dB, a band rings above its threshold after a BOW strike of about velocity 0.5 or harder.
+3. **Activates** the band. Its activation rises towards 1 while it is above the threshold, with the attack time **Speed**, and falls towards 0 below it, with the **Release** time. So the transfer starts smoothly and stops smoothly once the band has fallen below the threshold.
+4. **Moves** energy. Each band from the lowest to the highest gives up the fraction 1 − exp(−amount × activation × 2.8 ms / Speed) of its energy per control point. At amount 1 and full activation, a band's energy moves on with the time constant Speed.
+   - The energy goes to the bands up to **Spread** above it, within the highest band. Each band further up gets half as much as the one below it.
+   - Within a band it goes to the ringing modes in proportion to their excitation weights (`exc_norm`).
+   - It arrives as new ringing energy in each mode, with a random phase from the engine's random sequence, and decays with the mode's own T60. A band that receives energy and is above its own threshold passes energy on in turn.
+
+Energy is conserved: what leaves a band arrives above it. The moved part is exact; its interference with what already rings in a mode averages out over a band's modes, as when two strikes add. A highest band has nowhere to pass energy to, so energy gathers there.
+
+Nothing clicks: the source modes are scaled down and the target modes raised across each control block, with no step. A strike that lands inside a block takes the part of that block's change already played.
+
+With amount 0 the cascade is skipped entirely: nothing is measured or computed, and every preset plays exactly as before. In the window it is the **ENERGY CASCADE** group of the whole-cymbal part.
+
+Limits:
+- Energy goes only to modes that are ringing. Silent modes (below the skip threshold of 1e-9 × level) receive none, and a band with no ringing mode takes no energy.
+- The moved energy is held by one strike component of the engine's pool of 24. When the pool holds 24 strikes and none of them has settled (dense playing, every strike still in its onset), nothing moves for that control point.
+- During a strike's contact (NOVA RIDE only, about 0.3 ms) nothing moves.
 
 ### Meters
 
@@ -164,7 +196,8 @@ A change applies live, at the next control point (about 2.8 ms). The new decay c
   "date": "2026-10-16T14:02:11.000+02:00",
   "producer": "Cymbalis Tuning",
   "cymbal": { "mf_sens_depth": 0.3, "ring_length": 1.2,
-              "ring_length_bands": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.7, 0.6, 0.5, 0.5] },
+              "ring_length_bands": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.7, 0.6, 0.5, 0.5],
+              "cascade_amount": 0.4, "cascade_threshold_db": -18.0, "cascade_spread": 3.0 },
   "articulations": {
     "bow_tip": { "entry": "BOW", "level_db": -1.0, "vel_0.6_db": -2.0 },
     "edge": { "entry": "EDGE", "band_gains_db": [0, 0, 0, -3.5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2.0, 2.0, 0, 0],
@@ -202,6 +235,7 @@ A change applies live, at the next control point (about 2.8 ms). The new decay c
 3. Rebuild the plugin. Its bake loader (`plugin/dsp/Bake.cpp`, `Tuning.cpp`) applies the block (`applyTuning`):
    - the parameters;
    - every mode's T60 times `ring_length` and its band's `ring_length_bands` factor;
+   - the energy cascade's settings, which the engine reads when it is built;
    - the LFO rates scaled to `wander_rate_hz`;
    - the LF and MF weights from `lf_cutoff_hz`, `mf_lo_hz` and `mf_hi_hz`;
    - the NPZ settings, the output gain and the velocity curves.

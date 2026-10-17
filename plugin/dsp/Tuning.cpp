@@ -40,6 +40,13 @@ const std::vector<CymbalKey>& cymbalKeys()
         { "lf_bell_weight", &CymbalTuning::lfWBell },
         { "lf_wander_rate_boost", &CymbalTuning::lfWanderRateBoost },
         { "edge_band_env_onset_s", &CymbalTuning::edgeEnvWindowS },
+        { "cascade_amount", &CymbalTuning::cascadeAmount },
+        { "cascade_threshold_db", &CymbalTuning::cascadeThresholdDb },
+        { "cascade_speed_ms", &CymbalTuning::cascadeSpeedMs },
+        { "cascade_release_ms", &CymbalTuning::cascadeReleaseMs },
+        { "cascade_spread", &CymbalTuning::cascadeSpread },
+        { "cascade_low_band", &CymbalTuning::cascadeLowBand },
+        { "cascade_high_band", &CymbalTuning::cascadeHighBand },
     };
     return keys;
 }

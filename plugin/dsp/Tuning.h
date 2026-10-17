@@ -70,6 +70,14 @@ struct CymbalTuning
     double lfWBow = 0.5, lfWEdge = 1.0, lfWBell = 0.1, lfWanderRateBoost = 0.0;
     double edgeEnvWindowS = 1.5;     // NPZ band envelope window after an edge strike
     bool frameDecayRestart = true;   // in-frame decay restarting every 20 ms (false: none)
+    // Energy cascade (FastEngine): while a band rings above the threshold, energy moves from
+    // it into the bands above it. Amount 0: off. Bands are indices 0 .. 21 (as the band gains).
+    double cascadeAmount = 0.0;        // 0 .. 1
+    double cascadeThresholdDb = -12.0; // relative to the band's energy after a velocity-1 BOW strike
+    double cascadeSpeedMs = 100.0;     // attack of the transfer, and its time constant at amount 1
+    double cascadeReleaseMs = 150.0;   // how fast the transfer stops below the threshold
+    double cascadeSpread = 2.0;        // how many bands up the energy goes (1 .. 6)
+    double cascadeLowBand = 0.0, cascadeHighBand = 21.0; // the bands that take part
 };
 
 constexpr int kMaxArticulations = 8;

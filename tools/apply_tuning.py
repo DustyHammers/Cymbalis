@@ -22,8 +22,9 @@ tuning block it already has). Then:
     (band edges, 22 delays in ms and 22 speeds); delay 0 and speed 1 everywhere removes it;
   * every other value that differs from the bake's own value goes into the bake's
     "tuning" block, which the plugin's bake loader applies; per-band cymbal values
-    (ring_length_bands) as 22 values. A value equal to the bake's own
-    drops out of the block, so applying the same file twice gives the same bake.
+    (ring_length_bands) as 22 values. The plugin's own mechanisms (energy cascade,
+    cascade_*) have a neutral value as the bake's own (amount 0: off). A value equal to the
+    bake's own drops out of the block, so applying the same file twice gives the same bake.
 
 Nothing else in the bake changes. Running it on resources/presets is a separate task, done
 only when Kris asks.
@@ -51,7 +52,20 @@ CYMBAL_KEYS = [
     'lf_sens_depth', 'lf_sens_tau', 'lf_min_scale', 'lf_max_scale', 'lf_cutoff_hz',
     'lf_bow_weight', 'lf_edge_weight', 'lf_bell_weight', 'lf_wander_rate_boost',
     'edge_band_env_onset_s',
+    'cascade_amount', 'cascade_threshold_db', 'cascade_speed_ms', 'cascade_release_ms',
+    'cascade_spread', 'cascade_low_band', 'cascade_high_band',
 ]
+# The plugin's own whole-cymbal mechanisms (plugin/dsp/Tuning.h): their neutral values (the
+# bake's own) and allowed ranges; (lo, hi, whole) with whole = a whole number.
+PLUGIN_KEYS = {
+    'cascade_amount': (0.0, (0.0, 1.0, False)),
+    'cascade_threshold_db': (-12.0, (-120.0, 40.0, False)),
+    'cascade_speed_ms': (100.0, (0.1, 60000.0, False)),
+    'cascade_release_ms': (150.0, (0.1, 60000.0, False)),
+    'cascade_spread': (2.0, (1.0, 6.0, True)),
+    'cascade_low_band': (0.0, (0.0, 21.0, True)),
+    'cascade_high_band': (21.0, (0.0, 21.0, True)),
+}
 RESTART_KEY = 'edge_frame_decay_restart'
 # Per-band cymbal values (22 values, lowest band first): name -> (range, unit, neutral value).
 CYMBAL_BAND_KEYS = {
@@ -93,6 +107,8 @@ def own_values(bake):
     npz = bake.get('edge_npz')
     own['edge_band_env_onset_s'] = float(npz['onset_s']) if npz else 1.5
     own[RESTART_KEY] = True
+    for key, (neutral, _) in PLUGIN_KEYS.items():
+        own[key] = neutral
     for key, (_, _, neutral) in CYMBAL_BAND_KEYS.items():
         own[key] = [neutral] * N_BANDS
     return own
@@ -185,6 +201,11 @@ def main():
             if not isinstance(v, bool):
                 fail(f'{RESTART_KEY} must be true or false')
             current[key] = v
+        elif key in PLUGIN_KEYS:
+            lo, hi, whole = PLUGIN_KEYS[key][1]
+            current[key] = finite(key, v)
+            if not lo <= current[key] <= hi or (whole and current[key] != round(current[key])):
+                fail(f'{key} must be {"a whole number " if whole else ""}in {lo:g} to {hi:g}')
         elif key in CYMBAL_KEYS:
             current[key] = finite(key, v)
         elif key in CYMBAL_BAND_KEYS:

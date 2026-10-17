@@ -51,6 +51,10 @@ constexpr double kWashDampFloor = 0.3; // line 1129: wash_damp = max(0.3, ...)
 constexpr double kScaleSmoothS = 0.02;  // one-pole smoothing of the LF and MF scales
 constexpr double kOutputGainSmoothS = 0.02; // one-pole smoothing of the output gain
 constexpr double kLfoSeriesMax = 0.25;  // cosSinSeries() is exact in double below this (rad)
+constexpr int kCascadeMaxSpread = 6;   // the energy cascade's farthest target band
+// Share of the moved energy of a target band d bands above the source (halving per band),
+// before normalising over the targets there are.
+constexpr double kCascadeShare[kCascadeMaxSpread + 1] = {0.0, 1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125};
 
 // Vectors of 4 modes per kernel group: enough independent oscillators to hide the
 // multiply latency without running out of registers (16 SSE registers, 32 NEON).
@@ -312,6 +316,27 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
         v->assign(np, 0.0);
     for (auto* v : {&A0r_, &A0i_, &A1r_, &A1i_, &dropW_, &dropE_, &rotR_, &rotI_, &sumR_, &sumI_})
         v->assign(np, 0.0f);
+    // Energy cascade: each mode's share weight (exc_norm), the BOW articulation (its
+    // threshold reference), the block gains, and the settings of the bake's tuning.
+    cascW_.assign(np, 0.0f);
+    for (size_t i = 0; i < n; ++i)
+        cascW_[i] = static_cast<float>(std::max(b.excNorm[i], 0.0));
+    cascSlot_ = -1;
+    for (size_t s = 0; s < b.slots.size(); ++s)
+        if (b.slots[s].id == "bow")
+            cascSlot_ = static_cast<int>(s);
+    if (cascSlot_ < 0) // no BOW: the articulation struck nearest the bow position
+    {
+        cascSlot_ = 0;
+        for (size_t s = 1; s < b.slots.size(); ++s)
+            if (std::fabs(b.slots[s].position - 0.5) < std::fabs(b.slots[size_t(cascSlot_)].position - 0.5))
+                cascSlot_ = static_cast<int>(s);
+    }
+    blkG_.assign(np, 1.0f);
+    injR_.assign(np, 0.0f);
+    injI_.assign(np, 0.0f);
+    oscG_.assign(np, 1.0);
+    setCascade(b.tuning.cymbal);
     kinks_.resize(np);
     accL_.assign(size_t(kMaxControlBlock) * 4, 0.0f);
     accR_.assign(size_t(kMaxControlBlock) * 4, 0.0f);
@@ -486,6 +511,10 @@ void FastEngine::prepare(double sampleRate)
     computeDecay(b, sr_, K_, oscWash_, negLambda_.data(), force_, contactLen_, d);
     pendDecay_ = d; // preallocated for live changes (the same sizes)
     takeDecay(d);
+    clearBlockGains();
+    cascComp_ = -1;
+    cascAct_.fill(0.0);
+    updateCascade(); // its coefficients at this rate, and its threshold with this H
 
     butterworthHighPass2(kHpCutoffHz, sr_, hpB0_, hpB1_, hpB2_, hpA1_, hpA2_);
     outGainCoef_ = 1.0 - std::exp(-1.0 / (kOutputGainSmoothS * sr_));
@@ -961,6 +990,10 @@ void FastEngine::beginControlBlock() noexcept
     const double t0 = segTBase_ + static_cast<double>(blk * K_) / sr_;
     const double t1 = segTBase_ + static_cast<double>((blk + 1) * K_) / sr_;
 
+    if (blkGainOn_ || injOn_)
+        commitBlockGains();
+    if (cascOn_)
+        renormOscillators();
     if (blk % kDropEvery == 0)
         dropQuietModes();
     const int na = nAct_;
@@ -1062,6 +1095,8 @@ void FastEngine::beginControlBlock() noexcept
 
     // Components: each mode's amplitude at both ends of the block.
     sumComponents(t0, t1);
+    if (cascOn_)
+        cascadeBlock();
 
     // Cymbal-wide LF/MF gains at the block's ends (lines 914-919), then the per-sample increment.
     for (int a = 0; a < na; ++a)
@@ -1415,6 +1450,31 @@ void FastEngine::rebaseComponents() noexcept
         rotR_[s] = static_cast<float>(std::cos(omega_[s] * d) * e);
         rotI_[s] = static_cast<float>(std::sin(omega_[s] * d) * e);
     }
+    // The energy cascade's changes: this block's, the part rendered so far (all of it at a
+    // control point, where they belong to the block that ends there), and the gains of the
+    // earlier blocks of the segment.
+    if (blkGainOn_ || oscGainOn_ || injOn_)
+    {
+        const double w = j == 0 ? 1.0 : static_cast<double>(j) / static_cast<double>(K_);
+        for (int a = 0; a < nAct_; ++a)
+        {
+            const size_t s = size_t(actIdx_[size_t(a)]);
+            const double g = oscG_[s] * (1.0 + (static_cast<double>(blkG_[s]) - 1.0) * w);
+            rotR_[s] = static_cast<float>(rotR_[s] * g);
+            rotI_[s] = static_cast<float>(rotI_[s] * g);
+        }
+        if (injOn_ && cascComp_ >= 0 && components_[size_t(cascComp_)].cascade)
+        {
+            Component& c = components_[size_t(cascComp_)];
+            const float wf = static_cast<float>(w);
+            for (int k = 0; k < n_; ++k)
+            {
+                c.Br[size_t(k)] += injR_[size_t(k)] * wf;
+                c.Bi[size_t(k)] += injI_[size_t(k)] * wf;
+            }
+        }
+        clearBlockGains();
+    }
     std::fill(sumR_.begin(), sumR_.end(), 0.0f);
     std::fill(sumI_.begin(), sumI_.end(), 0.0f);
     const v4f fr = splat(frac);
@@ -1503,6 +1563,7 @@ void FastEngine::mergeComponents(Component& into, Component& from, bool dropEnve
     if (eInto + eFrom > 0.0)
         into.eps = (eInto * into.eps + eFrom * from.eps) / (eInto + eFrom);
     into.order = std::max(into.order, from.order);
+    into.cascade = false;
     if (dropEnvelopes)
     {
         into.onsetOn = into.rampOn = into.envOn = false;
@@ -1835,6 +1896,372 @@ void FastEngine::updateGainBounds() noexcept
     }
 }
 
+// Energy cascade settings (docs/TUNING.md), from a tuning: amount 0 switches it off.
+void FastEngine::setCascade(const CymbalTuning& c) noexcept
+{
+    cascAmount_ = std::min(std::max(c.cascadeAmount, 0.0), 1.0);
+    cascThrDb_ = c.cascadeThresholdDb;
+    cascSpeedS_ = std::max(c.cascadeSpeedMs, 0.1) * 1e-3;
+    cascReleaseS_ = std::max(c.cascadeReleaseMs, 0.1) * 1e-3;
+    cascSpread_ = static_cast<int>(std::min<long>(std::max<long>(std::lround(c.cascadeSpread), 1), kCascadeMaxSpread));
+    cascLo_ = static_cast<int>(std::min<long>(std::max<long>(std::lround(c.cascadeLowBand), 0), kExcitationBands - 1));
+    cascHi_ = static_cast<int>(std::min<long>(std::max<long>(std::lround(c.cascadeHighBand), 0), kExcitationBands - 1));
+    updateCascade();
+}
+
+// The cascade's coefficients at the prepared rate and control block, and its threshold.
+void FastEngine::updateCascade() noexcept
+{
+    cascOn_ = cascAmount_ > 0.0;
+    if (! cascOn_)
+        cascAct_.fill(0.0);
+    if (sr_ <= 0.0)
+        return;
+    const double dt = static_cast<double>(K_) / sr_;
+    cascAtk_ = 1.0 - std::exp(-dt / cascSpeedS_);
+    cascRel_ = 1.0 - std::exp(-dt / cascReleaseS_);
+    if (cascOn_)
+        computeCascadeRef();
+}
+
+// The threshold's reference: each band's energy after a velocity-1 strike of the BOW
+// articulation at its position, as that strike's contact leaves it (|coupling x H|^2 summed
+// over the band's modes), with the articulation's calibration, level and band gains as they
+// are now. Does not allocate.
+void FastEngine::computeCascadeRef() noexcept
+{
+    const BakeData& b = *bake_;
+    const size_t slot = size_t(cascSlot_);
+    const SlotData& s = b.slots[slot];
+    const size_t n = size_t(n_);
+    if (s.hasBowVp)
+        velocityParticipation(s.bowVp, 1.0, scratchVel_.data());
+    else
+        hertzVelocity(1.0, scratchVel_.data());
+    // The strike's position weights and velocity blend (as strike() at velocity 1).
+    const double pos = clamp01(s.position);
+    const double edgeFrac = clamp01(1.0 - pos / 0.5);
+    for (size_t i = 0; i < n; ++i)
+        scratchPosW_[i] = pos <= 0.5 ? b.edgeWeight[i] + (pos / 0.5) * (1.0 - b.edgeWeight[i])
+                                     : (1.0 - clamp01((pos - 0.5) / 0.5)) + clamp01((pos - 0.5) / 0.5) * b.bellWeight[i];
+    if (pos > 0.5 && s.hasBellVp)
+    {
+        const double bellFracV = clamp01((pos - 0.5) / 0.5);
+        velocityParticipation(s.bellVp, 1.0, scratchBellVel_.data());
+        for (size_t i = 0; i < n; ++i)
+            scratchVel_[i] = (1.0 - bellFracV) * scratchVel_[i] + bellFracV * scratchBellVel_[i];
+    }
+    const double boost = s.edgeLevelBoost > 1.0 && edgeFrac > 0.0 ? 1.0 + (s.edgeLevelBoost - 1.0) * edgeFrac : 1.0;
+    const double calib = s.calibScalar * slotTrim_[slot] * boost; // the velocity curve is 0 dB at 1
+    const float* exc = excGainOn_[slot] != 0 ? excGain_.data() + slot * n : nullptr;
+    const bool contact = params_.contactPermode && Hr_.size() == n;
+    cascRef_.fill(0.0);
+    for (size_t i = 0; i < n; ++i)
+    {
+        double m = b.excNorm[i] * numpyScalarPower(scratchVel_[i], s.velGainPower) * scratchPosW_[i] * calib;
+        if (exc != nullptr)
+            m *= static_cast<double>(exc[i]);
+        const double h2 = contact ? Hr_[i] * Hr_[i] + Hi_[i] * Hi_[i] : 1.0;
+        cascRef_[modeBand_[i]] += m * m * h2;
+    }
+    const double thr = std::pow(10.0, cascThrDb_ / 10.0);
+    for (int j = 0; j < kExcitationBands; ++j)
+        cascThr_[size_t(j)] = cascRef_[size_t(j)] * thr;
+}
+
+// Energy cascade, at a control point, once the components are summed: A1 holds each mode's
+// amplitude at the block's end relative to the shared oscillator, Y the oscillator there.
+//
+//   - Each band's ringing energy (all strikes, before the cymbal-wide LF/MF scales) is
+//     sum |Y A1|^2 over its ringing modes. Its activation follows 1 while it is above its
+//     threshold and 0 below it, one-pole with the attack time (SPEED) or the release time.
+//   - A band between the lowest and highest band gives the fraction
+//     1 - exp(-amount x activation x block / SPEED) of its energy to the bands up to SPREAD
+//     above it (within the highest band, ringing): halving per band, normalised. Its modes
+//     are scaled by sqrt(1 - fraction) through the shared oscillator's gain at the block's
+//     end, so every strike in them alike.
+//   - A target band's energy goes to its ringing modes in proportion to exc_norm, into the
+//     cascade component: added in phase with what that component already holds in the
+//     mode (a new mode takes a phase from the engine's random sequence), so the moved energy
+//     arrives exactly. It decays with the mode's T60. Its interference with what else rings
+//     in the mode averages out over a band's modes, as when strikes add.
+//
+// Both reach their value at the block's end (this block's end amplitude carries them; the
+// next control point puts them into the state), so nothing steps. Without a free component
+// for the moved energy nothing moves in this block. Does not allocate.
+void FastEngine::cascadeBlock() noexcept
+{
+    const int na = nAct_;
+    const int* idx = actIdx_.data();
+    const double dt = static_cast<double>(K_) / sr_;
+    std::array<double, kExcitationBands> energy {}, weight {}, out {}, in {};
+    for (int a = 0; a < na; ++a)
+    {
+        const size_t s = size_t(a), k = size_t(idx[a]);
+        const double ar = A1r_[k], ai = A1i_[k];
+        energy[modeBand_[k]] += (Yr_[s] * Yr_[s] + Yi_[s] * Yi_[s]) * (ar * ar + ai * ai);
+        weight[modeBand_[k]] += static_cast<double>(cascW_[k]);
+    }
+    bool moves = false;
+    for (int j = cascLo_; j <= cascHi_; ++j)
+    {
+        const size_t b = size_t(j);
+        const double target = energy[b] > cascThr_[b] ? 1.0 : 0.0;
+        double& act = cascAct_[b];
+        act += (target - act) * (target > act ? cascAtk_ : cascRel_);
+        if (act < 1e-9)
+        {
+            act = 0.0;
+            continue;
+        }
+        if (! (energy[b] > 0.0))
+            continue;
+        double shares = 0.0;
+        for (int d = 1; d <= cascSpread_ && j + d <= cascHi_; ++d)
+            if (weight[size_t(j + d)] > 0.0)
+                shares += kCascadeShare[d];
+        if (! (shares > 0.0))
+            continue;
+        const double f = 1.0 - std::exp(-cascAmount_ * act * dt / cascSpeedS_);
+        const double moved = f * energy[b];
+        out[b] = f;
+        for (int d = 1; d <= cascSpread_ && j + d <= cascHi_; ++d)
+            if (weight[size_t(j + d)] > 0.0)
+                in[size_t(j + d)] += moved * kCascadeShare[d] / shares;
+        moves = true;
+    }
+    if (! moves)
+        return;
+    Component* casc = cascadeComponent();
+    if (casc == nullptr)
+        return;
+
+    // Sources: the shared oscillator's gain at the block's end (and this block's end amplitude).
+    for (int a = 0; a < na; ++a)
+    {
+        const size_t s = size_t(a), k = size_t(idx[a]);
+        const double f = out[modeBand_[k]];
+        if (f <= 0.0)
+            continue;
+        const double g = std::sqrt(1.0 - f);
+        Yr_[s] *= g;
+        Yi_[s] *= g;
+        A1r_[k] = static_cast<float>(A1r_[k] * g);
+        A1i_[k] = static_cast<float>(A1i_[k] * g);
+        blkG_[k] = static_cast<float>(blkG_[k] * g);
+        blkGainOn_ = true;
+    }
+    // Component-modes rendered per sample in this block (onset ramps) end with that gain.
+    for (int q = 0; q < nKinks_; ++q)
+    {
+        KinkMode& km = kinks_[size_t(q)];
+        const double f = out[modeBand_[size_t(idx[km.sa])]];
+        if (f > 0.0)
+            km.g1 *= std::sqrt(1.0 - f);
+    }
+    // Targets: the cascade component's amplitude in each mode, raised by the mode's share.
+    const double twoPi = bake_->twoPi;
+    for (int a = 0; a < na; ++a)
+    {
+        const size_t s = size_t(a), k = size_t(idx[a]);
+        const size_t band = modeBand_[k];
+        if (! (in[band] > 0.0) || cascW_[k] <= 0.0f)
+            continue;
+        const double y2 = Yr_[s] * Yr_[s] + Yi_[s] * Yi_[s];
+        const double d = casc->D[k];
+        if (! (y2 > 0.0) || ! (d > 0.0))
+            continue;
+        const double add = in[band] * static_cast<double>(cascW_[k]) / weight[band] / y2; // relative to the oscillator
+        const double br = casc->Br[k], bi = casc->Bi[k];
+        const double m2 = (br * br + bi * bi) * d * d;
+        double dr, di;
+        if (m2 > 0.0)
+        {
+            const double r = std::sqrt(1.0 + add / m2) - 1.0;
+            dr = br * r;
+            di = bi * r;
+        }
+        else
+        {
+            const double phi = rng_.uniform(0.0, twoPi);
+            const double m = std::sqrt(add) / d;
+            dr = m * std::cos(phi);
+            di = m * std::sin(phi);
+        }
+        injR_[k] = static_cast<float>(injR_[k] + dr);
+        injI_[k] = static_cast<float>(injI_[k] + di);
+        injOn_ = true;
+        const double g = blkG_[k]; // this block's end amplitude is at the end gain
+        A1r_[k] = static_cast<float>(A1r_[k] + g * dr * d);
+        A1i_[k] = static_cast<float>(A1i_[k] + g * di * d);
+    }
+}
+
+// The cascade component, or a new one (empty, decaying with each mode's T60). Without a free
+// slot two settled strikes merge (as allocateComponent does at a strike), their own decay
+// taken into their amplitudes first so that both refer to the next control point. nullptr
+// when none can be freed. Does not allocate.
+FastEngine::Component* FastEngine::cascadeComponent() noexcept
+{
+    if (cascComp_ >= 0)
+    {
+        Component& c = components_[size_t(cascComp_)];
+        if (c.used && c.cascade)
+            return &c;
+        cascComp_ = -1;
+    }
+    Component* slot = nullptr;
+    for (auto& c : components_)
+        if (! c.used)
+        {
+            slot = &c;
+            break;
+        }
+    if (slot == nullptr)
+    {
+        Component* a = nullptr;
+        Component* b = nullptr;
+        double best = 1e300;
+        for (auto& x : components_)
+            for (auto& y : components_)
+                if (&x < &y && x.settled && y.settled && ! x.pending && ! y.pending && std::fabs(x.eps - y.eps) < best)
+                {
+                    best = std::fabs(x.eps - y.eps);
+                    a = &x;
+                    b = &y;
+                }
+        if (a == nullptr)
+            return nullptr;
+        for (Component* x : {a, b})
+            for (int o = 0; o < nPad_; o += 4)
+            {
+                const v4f dk = ld(x->D.data() + o);
+                st(x->Br.data() + o, ld(x->Br.data() + o) * dk);
+                st(x->Bi.data() + o, ld(x->Bi.data() + o) * dk);
+                st(x->D.data() + o, splat(1.0f));
+            }
+        mergeComponents(*a, *b, false);
+        slot = b;
+    }
+    Component& c = *slot;
+    c.used = true;
+    c.pending = false;
+    c.cascade = true;
+    c.order = ++componentOrder_;
+    c.contactStart = sampleNow_;
+    c.tStrike = timeBase_ + static_cast<double>(sampleNow_) / sr_;
+    c.onsetOn = c.rampOn = c.envOn = c.envShift = false;
+    c.settled = true;
+    c.eps = std::max(1.0 - oscWash_, 0.0); // wash_damp 1: the mode's own T60
+    std::fill(c.epsK.begin(), c.epsK.end(), c.eps);
+    std::fill(c.Br.begin(), c.Br.end(), 0.0f);
+    std::fill(c.Bi.begin(), c.Bi.end(), 0.0f);
+    std::fill(c.D.begin(), c.D.end(), 1.0f);
+    for (int k = 0; k < n_; ++k)
+        setDecay(c, k);
+    cascComp_ = static_cast<int>(slot - components_.data());
+    return slot;
+}
+
+// At a control point: the previous block's cascade changes go into the state. Its gains join
+// the segment's product (which a strike's rebase applies); its additions go into the cascade
+// component.
+void FastEngine::commitBlockGains() noexcept
+{
+    if (blkGainOn_)
+    {
+        for (int k = 0; k < n_; ++k)
+            if (blkG_[size_t(k)] != 1.0f)
+            {
+                oscG_[size_t(k)] *= static_cast<double>(blkG_[size_t(k)]);
+                blkG_[size_t(k)] = 1.0f;
+            }
+        blkGainOn_ = false;
+        oscGainOn_ = true;
+    }
+    if (injOn_)
+    {
+        if (cascComp_ >= 0 && components_[size_t(cascComp_)].used && components_[size_t(cascComp_)].cascade)
+        {
+            Component& c = components_[size_t(cascComp_)];
+            for (int o = 0; o < nPad_; o += 4)
+            {
+                st(c.Br.data() + o, ld(c.Br.data() + o) + ld(injR_.data() + o));
+                st(c.Bi.data() + o, ld(c.Bi.data() + o) + ld(injI_.data() + o));
+            }
+        }
+        std::fill(injR_.begin(), injR_.end(), 0.0f);
+        std::fill(injI_.begin(), injI_.end(), 0.0f);
+        injOn_ = false;
+    }
+}
+
+// Energy cascade: a ringing mode can go on receiving energy while its shared oscillator
+// falls far below 1 (its own decay over a long segment, the cascade's gains), and so can the
+// cascade component's own decay (D). The component's amplitude, relative to both, would then
+// outgrow float. Where the oscillator is below 1e-3 its magnitude moves into every
+// component's amplitude in that mode and the oscillator returns to 1; where the cascade
+// component's D is below 1e-3 it moves into that component's amplitude and D returns to 1.
+// What rings does not change. The segment's gain product follows (a strike's re-anchoring
+// uses it). At a control point, before the block starts.
+void FastEngine::renormOscillators() noexcept
+{
+    Component* casc = cascComp_ >= 0 && components_[size_t(cascComp_)].used && components_[size_t(cascComp_)].cascade
+                          ? &components_[size_t(cascComp_)]
+                          : nullptr;
+    for (int a = 0; a < nAct_; ++a)
+    {
+        const size_t s = size_t(a);
+        if (casc != nullptr)
+        {
+            const size_t k = size_t(actIdx_[s]);
+            const float d = casc->D[k];
+            if (d < 1e-3f)
+            {
+                casc->Br[k] *= d;
+                casc->Bi[k] *= d;
+                casc->D[k] = 1.0f;
+            }
+        }
+        const double y2 = Yr_[s] * Yr_[s] + Yi_[s] * Yi_[s];
+        if (! (y2 < 1e-6) || ! (y2 > 0.0))
+            continue;
+        const double g = std::sqrt(y2);
+        const size_t k = size_t(actIdx_[s]);
+        Yr_[s] /= g;
+        Yi_[s] /= g;
+        oscG_[k] /= g;
+        oscGainOn_ = true;
+        const float gf = static_cast<float>(g);
+        for (auto& c : components_)
+            if (c.used && ! c.pending)
+            {
+                c.Br[k] *= gf;
+                c.Bi[k] *= gf;
+                if (c.envOn)
+                {
+                    c.Er[k] *= gf;
+                    c.Ei[k] *= gf;
+                }
+            }
+    }
+}
+
+// No cascade changes pending and no gains in the segment (a new segment, or silence).
+void FastEngine::clearBlockGains() noexcept
+{
+    if (blkGainOn_)
+        std::fill(blkG_.begin(), blkG_.end(), 1.0f);
+    if (oscGainOn_)
+        std::fill(oscG_.begin(), oscG_.end(), 1.0);
+    if (injOn_)
+    {
+        std::fill(injR_.begin(), injR_.end(), 0.0f);
+        std::fill(injI_.begin(), injI_.end(), 0.0f);
+    }
+    blkGainOn_ = oscGainOn_ = injOn_ = false;
+}
+
 #if CYMBALIS_TUNING
 void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecaySet* decay) noexcept
 {
@@ -1948,6 +2375,10 @@ void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecayS
     }
 
     outGainTarget_ = std::pow(10.0, c.outputGainDb / 20.0);
+
+    // Energy cascade: from the next control point. Its threshold follows the BOW
+    // articulation's values set above.
+    setCascade(c);
 }
 #endif
 
@@ -2029,6 +2460,7 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
         s.calibScalar * slotTrim_[size_t(slotIndex)] * (curveDb != 0.0 ? std::pow(10.0, curveDb / 20.0) : 1.0);
     Component& comp = allocateComponent();
     comp.used = true;
+    comp.cascade = false;
     comp.order = ++componentOrder_;
     comp.contactStart = sampleNow_;
     Contact* contact = nullptr;
@@ -2241,6 +2673,12 @@ void FastEngine::applyDecay() noexcept
         if (c.used && ! c.pending)
             for (int a = 0; a < nAct_; ++a)
                 setDecay(c, actIdx_[size_t(a)]);
+    // The cascade component can take energy in any mode later: all of them.
+    if (cascComp_ >= 0 && components_[size_t(cascComp_)].used && components_[size_t(cascComp_)].cascade)
+        for (int k = 0; k < n_; ++k)
+            setDecay(components_[size_t(cascComp_)], k);
+    if (cascOn_)
+        computeCascadeRef();
     freeStarted_ = false;
     startFreePhase(true);
 }

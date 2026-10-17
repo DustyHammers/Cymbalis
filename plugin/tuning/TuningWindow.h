@@ -30,11 +30,14 @@ private:
     float textSize;
 };
 
-// One value: name, slider with numeric entry, unit, and a reset-to-baked button.
+// One value: name, slider with numeric entry, unit, and a reset-to-baked button. With a
+// step the slider moves in steps; a band value (0 .. 21) shows and takes the band's centre
+// frequency (a number below 50 typed in is a band index).
 class ValueRow final : public juce::Component
 {
 public:
-    ValueRow (const juce::String& name, const juce::String& unit, double lo, double hi, int decimals, bool onRelease);
+    ValueRow (const juce::String& name, const juce::String& unit, double lo, double hi, int decimals, bool onRelease,
+              double step = 0.0, bool band = false);
 
     void setValues (double value, double baked);
     std::function<void (double)> onChange;
@@ -47,6 +50,7 @@ private:
     juce::Slider slider;
     std::unique_ptr<juce::Button> reset;
     juce::String unit;
+    double step = 0.0;
     double baked = 0.0;
     bool updating = false;
 };
