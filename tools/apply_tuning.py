@@ -21,7 +21,8 @@ tuning block it already has). Then:
   * each articulation's onset shift goes into its slot's onset data, slots[].onset_shift
     (band edges, 22 delays in ms and 22 speeds); delay 0 and speed 1 everywhere removes it;
   * every other value that differs from the bake's own value goes into the bake's
-    "tuning" block, which the plugin's bake loader applies. A value equal to the bake's own
+    "tuning" block, which the plugin's bake loader applies; per-band cymbal values
+    (ring_length_bands) as 22 values. A value equal to the bake's own
     drops out of the block, so applying the same file twice gives the same bake.
 
 Nothing else in the bake changes. Running it on resources/presets is a separate task, done
@@ -52,6 +53,10 @@ CYMBAL_KEYS = [
     'edge_band_env_onset_s',
 ]
 RESTART_KEY = 'edge_frame_decay_restart'
+# Per-band cymbal values (22 values, lowest band first): name -> (range, unit, neutral value).
+CYMBAL_BAND_KEYS = {
+    'ring_length_bands': ((0.25, 4.0), 'x', 1.0),
+}
 LEVEL_KEY, VEL06_KEY, VEL03_KEY = 'level_db', 'vel_0.6_db', 'vel_0.3_db'
 # Excitation band gains (plugin/dsp/Tuning.h): 22 one-third-octave bands, edge j at
 # 11404 x 2^((j - 21) / 3) Hz, 89.1 Hz up to 14368 Hz.
@@ -88,6 +93,8 @@ def own_values(bake):
     npz = bake.get('edge_npz')
     own['edge_band_env_onset_s'] = float(npz['onset_s']) if npz else 1.5
     own[RESTART_KEY] = True
+    for key, (_, _, neutral) in CYMBAL_BAND_KEYS.items():
+        own[key] = [neutral] * N_BANDS
     return own
 
 
@@ -180,6 +187,9 @@ def main():
             current[key] = v
         elif key in CYMBAL_KEYS:
             current[key] = finite(key, v)
+        elif key in CYMBAL_BAND_KEYS:
+            (lo, hi), unit, _ = CYMBAL_BAND_KEYS[key]
+            current[key] = band_values(key, v, lo, hi, unit)
         else:
             fail(f'unknown cymbal value {key!r}')
     for key in POSITIVE:
@@ -206,7 +216,8 @@ def main():
                 fail(f'unknown articulation value {aid}.{key}')
 
     # The new tuning block: what differs from the bake's own values.
-    new_cymbal = {k: current[k] for k in CYMBAL_KEYS + [RESTART_KEY] if k in current and current[k] != own.get(k)}
+    new_cymbal = {k: current[k] for k in CYMBAL_KEYS + [RESTART_KEY] + list(CYMBAL_BAND_KEYS)
+                  if k in current and current[k] != own.get(k)}
     new_arts = {}
     for aid, vals in curves.items():
         kept = {k: v for k, v in vals.items() if v != 0.0}

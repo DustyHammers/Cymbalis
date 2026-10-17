@@ -77,7 +77,8 @@ private:
 class BandRow final : public juce::Component
 {
 public:
-    BandRow (const BandField& field, TuningLookAndFeel& small);
+    // `scope` names what FLAT acts on in its tooltip ("this articulation", "the cymbal").
+    BandRow (const BandSpec& field, TuningLookAndFeel& small, const juce::String& scope);
     ~BandRow() override;
 
     void setValues (const std::array<double, kExcitationBands>& values, const std::array<double, kExcitationBands>& baked);
@@ -96,7 +97,7 @@ private:
         juce::Label label;
         std::unique_ptr<juce::Button> reset;
     };
-    const BandField& field;
+    const BandSpec& field;
     juce::Label title;
     juce::TextButton flat { "FLAT" };
     std::array<std::unique_ptr<Column>, kExcitationBands> columns;
@@ -160,6 +161,8 @@ private:
     std::vector<std::function<void()>> refreshers; // one per row: shows its current value
     std::unique_ptr<ToggleRow> restartRow;
     std::unique_ptr<BandEq> bandEq;
+    TuningLookAndFeel bandLook; // the whole-cymbal band rows' numbers and labels
+    std::vector<std::unique_ptr<BandRow>> cymbalBandRows;
     std::unique_ptr<juce::FileChooser> chooser;
 
     CymbalisProcessor::Meters meters;

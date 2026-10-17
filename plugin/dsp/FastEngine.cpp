@@ -200,6 +200,8 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
     onsetShiftOn_.assign(b.slots.size(), 0);
     for (size_t s = 0; s < b.slots.size(); ++s)
         onsetShiftOn_[s] = hasOnsetShift(b.slots[s].articulation) ? 1 : 0;
+    ringBandNow_ = b.tuning.cymbal.ringBand;
+    ringLengthBuilt_ = b.tuning.cymbal.ringLength;
     remapExp_ = b.edgeNpz.remapExponent;
     envWindowS_ = b.edgeNpz.onsetS;
     frameRestart_ = b.edgeNpz.frameDecayRestart;
@@ -237,9 +239,8 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
     cuRr_ = b.pickR;
     cuLi_.assign(n, 0.0);
     cuRi_.assign(n, 0.0);
-    // The shared oscillator's decay: T60 / the smallest wash_damp a strike with a velocity
-    // in 0..1 can have, so every strike's own decay relative to it is >= 0 (it only falls).
-    oscWash_ = std::max(kWashDampFloor, 1.0 + p.velLenTilt * ((p.velLenTilt >= 0.0 ? 0.0 : 1.0) - p.velLenTiltRef));
+    // The shared oscillator's decay (see oscillatorWash).
+    oscWash_ = oscillatorWash(b, p);
 
     // hertz_vel_scale's reference spectrum: 1 / H(f, tau_ref) = sqrt(1 + (pi f tau_ref)^2).
     hertzRef_.resize(n);
@@ -255,8 +256,8 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
     if (envBake_)
     {
         // An envelope strike's level follows its band envelope, not the T60 decay, so the
-        // shared oscillator must not decay: every component carries its whole decay.
-        oscWash_ = 0.0;
+        // shared oscillator must not decay (oscillatorWash): every component carries its
+        // whole decay.
         bandStart_.assign(size_t(z.numBands), 0);
         bandEnd_.assign(size_t(z.numBands), 0);
         for (int k = 0; k < n_; ++k)
@@ -322,107 +323,169 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
     rng_ = b.renderStream; // the strike-phase sequence starts from this preset's seed
 }
 
+// About 2.8 ms between control points at every supported rate. With a band envelope, a
+// whole number of blocks per 20 ms frame of the in-frame decay (line 889), so its restarts
+// fall on control points: 7 x 126 at 44.1 kHz, 8 x 120 at 48 kHz, 7 x 252 at 88.2 kHz, 8 x 240
+// at 96 kHz.
+int FastEngine::controlBlockFor(const BakeData& b, double sampleRate, int* frameBlocks) noexcept
+{
+    int K = sampleRate > 50000.0 ? 256 : 128;
+    if (b.edgeNpz.present && b.edgeNpz.envelopeActive)
+    {
+        const double frame = b.edgeNpz.frameDecayPeriodS * sampleRate;
+        const int blocks = std::max(1, static_cast<int>(std::lround(frame / K)));
+        K = std::min(kMaxControlBlock, std::max(16, static_cast<int>(std::lround(frame / blocks))));
+        if (frameBlocks != nullptr)
+            *frameBlocks = blocks;
+    }
+    return K;
+}
+
+// The shared oscillator's decay: T60 / the smallest wash_damp a strike with a velocity in
+// 0..1 can have, so every strike's own decay relative to it is >= 0 (it only falls). With a
+// band envelope it has none: every strike carries its whole decay.
+double FastEngine::oscillatorWash(const BakeData& b, const EngineParams& p) noexcept
+{
+    if (b.edgeNpz.present && b.edgeNpz.envelopeActive)
+        return 0.0;
+    return std::max(kWashDampFloor, 1.0 + p.velLenTilt * ((p.velLenTilt >= 0.0 ? 0.0 : 1.0) - p.velLenTiltRef));
+}
+
+// Contact force (_apply_strike lines 1073-1091). The taus and sigmas are samples at the
+// bake's rate (44.1 kHz); here they are converted to samples at the host rate, so the
+// contact keeps its duration in seconds. At 44.1 kHz this is Python's matrix. Stored
+// sample-major (len x numModes) so each contact sample reads one contiguous row.
+void FastEngine::contactForce(const BakeData& b, const EngineParams& p, double sampleRate, std::vector<double>& force,
+                              int& len)
+{
+    const size_t n = size_t(b.numModes);
+    const double ratio = sampleRate / b.sampleRate;
+    const double tau0 = p.tipTau0, tauM = p.tipTauMax; // position-independent (checked)
+    const double fMax = *std::max_element(b.freqHz.begin(), b.freqHz.end());
+    std::vector<double> tau(n), sig(n);
+    double sigMax = -1.0;
+    for (size_t i = 0; i < n; ++i)
+    {
+        const double fNorm = std::sqrt(b.freqHz[i] / (fMax + 1e-9));
+        const double t44 = tauM - (tauM - tau0) * fNorm;
+        const double s44 = std::max(t44 * p.sigmaRatio, 1.0);
+        tau[i] = t44 * ratio;
+        sig[i] = s44 * ratio;
+        sigMax = std::max(sigMax, s44);
+    }
+    len = static_cast<int>(tauM * ratio + 3.0 * sigMax * ratio) + 1;
+    const size_t L = size_t(len);
+    force.assign(L * n, 0.0);
+    std::vector<double> row(L);
+    for (size_t i = 0; i < n; ++i)
+    {
+        double sum = 0.0;
+        for (size_t k = 0; k < L; ++k)
+        {
+            const double x = (static_cast<double>(k) - tau[i]) / sig[i];
+            row[k] = std::exp(-0.5 * (x * x));
+            sum += row[k];
+        }
+        const double denom = sum + 1e-9;
+        for (size_t k = 0; k < L; ++k)
+            force[k * n + i] = row[k] / denom;
+    }
+}
+
+// Every decay coefficient of every mode at a rate and control block, from its decay rate
+// -ln(1000) / T60: the undamped per-sample step (contact phase), the shared oscillator's
+// per-sample and per-block steps (decay T60 / oscWash) and the contact's response
+// H = sum_j f_j step^(len - j), the state a unit coupling leaves at the end of a contact.
+// Allocates only when `out` does not have the bake's sizes.
+void FastEngine::computeDecay(const BakeData& b, double sampleRate, int K, double oscWash, const double* negLambda,
+                              const std::vector<double>& force, int contactLen, DecaySet& out)
+{
+    const size_t n = size_t(b.numModes), np = size_t(roundUp(b.numModes, kGroup));
+    for (auto* v : {&out.negLambda, &out.stepR, &out.stepI, &out.oscR, &out.oscI, &out.PKr, &out.PKi, &out.Hr, &out.Hi})
+        if (v->size() != n)
+            v->resize(n);
+    for (auto* v : {&out.H32r, &out.H32i})
+        if (v->size() != np)
+            v->assign(np, 0.0f);
+    out.sampleRate = sampleRate;
+    out.controlBlock = K;
+    for (size_t i = 0; i < n; ++i)
+    {
+        const double omega = b.twoPi * b.freqHz[i];
+        const double c1 = std::cos(omega / sampleRate), s1 = std::sin(omega / sampleRate);
+        const double e = std::exp(negLambda[i] / sampleRate);
+        out.negLambda[i] = negLambda[i];
+        out.stepR[i] = c1 * e;
+        out.stepI[i] = s1 * e;
+        const double eo = std::exp(negLambda[i] * oscWash / sampleRate);
+        out.oscR[i] = c1 * eo;
+        out.oscI[i] = s1 * eo;
+        const double eK = std::exp(negLambda[i] * oscWash * K / sampleRate);
+        out.PKr[i] = std::cos(omega * K / sampleRate) * eK;
+        out.PKi[i] = std::sin(omega * K / sampleRate) * eK;
+        double hr = 0.0, hi = 0.0;
+        for (size_t k = 0; k < size_t(contactLen); ++k)
+        {
+            hr += force[k * n + i];
+            const double t = hr * out.stepR[i] - hi * out.stepI[i];
+            hi = hr * out.stepI[i] + hi * out.stepR[i];
+            hr = t;
+        }
+        out.Hr[i] = hr;
+        out.Hi[i] = hi;
+        out.H32r[i] = static_cast<float>(hr);
+        out.H32i[i] = static_cast<float>(hi);
+    }
+}
+
+// The coefficients of `d` become the engine's (vectors swapped: no allocation); `d` holds
+// the previous ones.
+void FastEngine::takeDecay(DecaySet& d) noexcept
+{
+    std::swap(negLambda_, d.negLambda);
+    std::swap(stepR_, d.stepR);
+    std::swap(stepI_, d.stepI);
+    std::swap(oscR_, d.oscR);
+    std::swap(oscI_, d.oscI);
+    std::swap(PKr_, d.PKr);
+    std::swap(PKi_, d.PKi);
+    std::swap(Hr_, d.Hr);
+    std::swap(Hi_, d.Hi);
+    std::swap(H32r_, d.H32r);
+    std::swap(H32i_, d.H32i);
+}
+
 void FastEngine::prepare(double sampleRate)
 {
     const BakeData& b = *bake_;
     const EngineParams& p = params_;
-    const size_t n = size_t(n_);
     if (sr_ > 0.0)
     {
         timeBase_ += static_cast<double>(clock_) / sr_;
         clock_ = 0;
     }
     sr_ = sampleRate;
-    // About 2.8 ms between control points at every supported rate.
-    K_ = sr_ > 50000.0 ? 256 : 128;
-    if (envBake_)
-    {
-        // A whole number of blocks per 20 ms frame of the in-frame decay (line 889), so its
-        // restarts fall on control points: 7 x 126 at 44.1 kHz, 8 x 120 at 48 kHz, 7 x 252
-        // at 88.2 kHz, 8 x 240 at 96 kHz.
-        const double frame = b.edgeNpz.frameDecayPeriodS * sr_;
-        frameBlocks_ = std::max(1, static_cast<int>(std::lround(frame / K_)));
-        K_ = std::min(kMaxControlBlock, std::max(16, static_cast<int>(std::lround(frame / frameBlocks_))));
-    }
+    K_ = controlBlockFor(b, sr_, &frameBlocks_);
 
-    // Steps at the host rate: undamped per sample (contact phase), and the shared
-    // oscillator's per sample and per control block (decay T60 / oscWash_).
-    stepR_.resize(n);
-    stepI_.resize(n);
-    oscR_.resize(n);
-    oscI_.resize(n);
-    PKr_.resize(n);
-    PKi_.resize(n);
-    for (size_t i = 0; i < n; ++i)
+    // A per-band ring length set live (tuning build) and not yet taken over: its decay rates,
+    // the rest is computed here for this rate.
+    if (decayPending_)
     {
-        const double c1 = std::cos(omega_[i] / sr_), s1 = std::sin(omega_[i] / sr_);
-        const double e = std::exp(negLambda_[i] / sr_);
-        stepR_[i] = c1 * e;
-        stepI_[i] = s1 * e;
-        const double eo = std::exp(negLambda_[i] * oscWash_ / sr_);
-        oscR_[i] = c1 * eo;
-        oscI_[i] = s1 * eo;
-        const double eK = std::exp(negLambda_[i] * oscWash_ * K_ / sr_);
-        PKr_[i] = std::cos(omega_[i] * K_ / sr_) * eK;
-        PKi_[i] = std::sin(omega_[i] * K_ / sr_) * eK;
+        std::copy(pendDecay_.negLambda.begin(), pendDecay_.negLambda.end(), negLambda_.begin());
+        decayPending_ = false;
     }
-
-    // Contact force (_apply_strike lines 1073-1091). The taus and sigmas are samples at the
-    // bake's rate (44.1 kHz); here they are converted to samples at the host rate, so the
-    // contact keeps its duration in seconds. At 44.1 kHz this is Python's matrix.
-    force_.clear();
-    Hr_.assign(n, 0.0);
-    Hi_.assign(n, 0.0);
-    H32r_.assign(size_t(nPad_), 0.0f);
-    H32i_.assign(size_t(nPad_), 0.0f);
-    contactLen_ = 0;
+    // Contact force (_apply_strike lines 1073-1091) and every decay coefficient at the host rate.
     if (p.contactPermode)
+        contactForce(b, p, sr_, force_, contactLen_);
+    else
     {
-        const double ratio = sr_ / b.sampleRate;
-        const double tau0 = p.tipTau0, tauM = p.tipTauMax; // position-independent (checked)
-        const double fMax = *std::max_element(b.freqHz.begin(), b.freqHz.end());
-        std::vector<double> tau(n), sig(n);
-        double sigMax = -1.0;
-        for (size_t i = 0; i < n; ++i)
-        {
-            const double fNorm = std::sqrt(b.freqHz[i] / (fMax + 1e-9));
-            const double t44 = tauM - (tauM - tau0) * fNorm;
-            const double s44 = std::max(t44 * p.sigmaRatio, 1.0);
-            tau[i] = t44 * ratio;
-            sig[i] = s44 * ratio;
-            sigMax = std::max(sigMax, s44);
-        }
-        contactLen_ = static_cast<int>(tauM * ratio + 3.0 * sigMax * ratio) + 1;
-        const size_t len = size_t(contactLen_);
-        // Stored sample-major (len x numModes) so each contact sample reads one contiguous row.
-        force_.assign(len * n, 0.0);
-        std::vector<double> row(len);
-        for (size_t i = 0; i < n; ++i)
-        {
-            double sum = 0.0;
-            for (size_t k = 0; k < len; ++k)
-            {
-                const double x = (static_cast<double>(k) - tau[i]) / sig[i];
-                row[k] = std::exp(-0.5 * (x * x));
-                sum += row[k];
-            }
-            const double denom = sum + 1e-9;
-            // H: the contact's response, accumulated the way the contact phase steps the state.
-            double hr = 0.0, hi = 0.0;
-            for (size_t k = 0; k < len; ++k)
-            {
-                force_[k * n + i] = row[k] / denom;
-                hr += force_[k * n + i];
-                const double t = hr * stepR_[i] - hi * stepI_[i];
-                hi = hr * stepI_[i] + hi * stepR_[i];
-                hr = t;
-            }
-            Hr_[i] = hr;
-            Hi_[i] = hi;
-            H32r_[i] = static_cast<float>(hr);
-            H32i_[i] = static_cast<float>(hi);
-        }
+        force_.clear();
+        contactLen_ = 0;
     }
+    DecaySet d;
+    computeDecay(b, sr_, K_, oscWash_, negLambda_.data(), force_, contactLen_, d);
+    pendDecay_ = d; // preallocated for live changes (the same sizes)
+    takeDecay(d);
 
     butterworthHighPass2(kHpCutoffHz, sr_, hpB0_, hpB1_, hpB2_, hpA1_, hpA2_);
     outGainCoef_ = 1.0 - std::exp(-1.0 / (kOutputGainSmoothS * sr_));
@@ -654,7 +717,11 @@ void FastEngine::renderFree(float* left, float* right, int n) noexcept
     {
         const int j = static_cast<int>(freePos_ % K_);
         if (j == 0)
+        {
+            if (decayPending_)
+                applyDecay();
             beginControlBlock();
+        }
         const int m = std::min(K_ - j, n - pos);
         std::fill(accL_.begin(), accL_.begin() + 4 * m, 0.0f);
         std::fill(accR_.begin(), accR_.begin() + 4 * m, 0.0f);
@@ -1769,7 +1836,7 @@ void FastEngine::updateGainBounds() noexcept
 }
 
 #if CYMBALIS_TUNING
-void FastEngine::setTuning(const Tuning& t, const float* modeGains) noexcept
+void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecaySet* decay) noexcept
 {
     const CymbalTuning& c = t.cymbal;
     const size_t n = size_t(n_);
@@ -1785,6 +1852,45 @@ void FastEngine::setTuning(const Tuning& t, const float* modeGains) noexcept
             excitationModeGains(t.articulations[s], bake_->freqHz.data(), n_, row);
         excGainOn_[s] = hasBandGains(t.articulations[s]) ? 1 : 0;
         onsetShiftOn_[s] = hasOnsetShift(t.articulations[s]) ? 1 : 0;
+    }
+    // Per-band ring lengths: the new coefficients wait for the next control point
+    // (applyDecay). A change of the ring length itself rebuilds the engine (applyTuning), and
+    // the new engine has both.
+    if (c.ringBand != ringBandNow_ && c.ringLength == ringLengthBuilt_)
+    {
+        ringBandNow_ = c.ringBand;
+        // Each mode's decay rate -ln(1000) / T60 with the new factors.
+        auto rates = [&](double* out) {
+            tunedT60(c, bake_->pythonT60S.data(), bake_->freqHz.data(), n_, out);
+            for (size_t i = 0; i < n; ++i)
+                out[i] = -bake_->log1000 / out[i];
+        };
+        if (sr_ <= 0.0)
+            rates(negLambda_.data()); // not prepared: prepare() computes the rest
+        else if (decay != nullptr && decay->sampleRate == sr_ && decay->controlBlock == K_ &&
+                 decay->negLambda.size() == n && decay->H32r.size() == pendDecay_.H32r.size())
+        {
+            auto copy = [](const auto& from, auto& to) { std::copy(from.begin(), from.end(), to.begin()); };
+            copy(decay->negLambda, pendDecay_.negLambda);
+            copy(decay->stepR, pendDecay_.stepR);
+            copy(decay->stepI, pendDecay_.stepI);
+            copy(decay->oscR, pendDecay_.oscR);
+            copy(decay->oscI, pendDecay_.oscI);
+            copy(decay->PKr, pendDecay_.PKr);
+            copy(decay->PKi, pendDecay_.PKi);
+            copy(decay->Hr, pendDecay_.Hr);
+            copy(decay->Hi, pendDecay_.Hi);
+            copy(decay->H32r, pendDecay_.H32r);
+            copy(decay->H32i, pendDecay_.H32i);
+            decayPending_ = true;
+        }
+        else
+        {
+            // Not computed for this rate: here (no allocation, the sizes are prepare()'s).
+            rates(pendDecay_.negLambda.data());
+            computeDecay(*bake_, sr_, K_, oscWash_, pendDecay_.negLambda.data(), force_, contactLen_, pendDecay_);
+            decayPending_ = true;
+        }
     }
     if (c.edgeRemapExponent != remapExp_ && c.edgeRemapExponent > 0.0)
     {
@@ -2120,10 +2226,29 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
         startFreePhase();
 }
 
+// Per-band ring lengths changed (setTuning), at a control point of the free phase: every
+// strike is brought to this sample with the old decay and the segment starts again here, as
+// at a strike without a contact, so the new decay applies from this sample on without a step.
+void FastEngine::applyDecay() noexcept
+{
+    const double t = timeBase_ + static_cast<double>(sampleNow_) / sr_;
+    rebaseComponents();
+    cymbalWideAtStrike(t);
+    takeDecay(pendDecay_);
+    decayPending_ = false;
+    // Each ringing strike's own decay with the new T60 (silent modes hold nothing).
+    for (auto& c : components_)
+        if (c.used && ! c.pending)
+            for (int a = 0; a < nAct_; ++a)
+                setDecay(c, actIdx_[size_t(a)]);
+    freeStarted_ = false;
+    startFreePhase(true);
+}
+
 // Start of the free phase: the components take their amplitudes at this sample (finished
 // contacts become components), the modes at or above the skip threshold (as Engine) get
 // their shared oscillator, and the segment's cymbal-wide factors are set.
-void FastEngine::startFreePhase() noexcept
+void FastEngine::startFreePhase(bool sameGrid) noexcept
 {
     const BakeData& b = *bake_;
     const EngineParams& p = params_;
@@ -2193,7 +2318,7 @@ void FastEngine::startFreePhase() noexcept
             }
         }
         std::fill(c.D.begin(), c.D.end(), 1.0f);
-        if (c.envOn) // the new control grid starts here: find this strike's frame phase on it
+        if (c.envOn && ! sameGrid) // the new control grid starts here: find this strike's frame phase on it
             restartFrames(c, tFree - c.tStrike);
     }
     baseSample_ = sampleNow_;

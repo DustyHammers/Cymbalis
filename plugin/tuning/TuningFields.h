@@ -35,6 +35,20 @@ enum class Needs
 
 bool applies (Needs needs, const BakeData& bake);
 
+// Which articulations a whole-cymbal value acts on: every one, or only those struck at some
+// places. The window names them after the value's label.
+enum class Scope
+{
+    all,
+    edge,         // entries at the edge (position 0.25 or below)
+    bow,          // entries on the bow (between 0.25 and 0.75)
+    bell,         // entries at the bell or centre (0.75 or above)
+    hertz         // entries off the edge without velocity tables (hertz_vel_scale)
+};
+// The ids of the articulations of `bake` in `scope`, in upper case, joined by ", " (empty
+// for Scope::all).
+juce::String scopeNames (Scope scope, const BakeData& bake);
+
 struct Field
 {
     const char* key;   // JSON key (cymbalKeys())
@@ -46,6 +60,7 @@ struct Field
     int decimals;
     double CymbalTuning::*member;
     bool rebuild;      // the cymbal is rebuilt when it changes (ring length)
+    Scope scope = Scope::all;
 };
 
 // Every numeric per-cymbal value, in display order.
@@ -62,19 +77,32 @@ struct ArticulationField
 };
 const std::vector<ArticulationField>& articulationFields();
 
-// The per-band values of an articulation: one value per one-third-octave band each, saved
-// as all 22 (lowest band first) when any differs from the bake.
-struct BandField
+// A per-band value: one value per one-third-octave band, saved as all 22 (lowest band
+// first) when any differs from the bake.
+struct BandSpec
 {
     const char* key;
     const char* title;    // row title in the window
     const char* unit;
     double lo, hi, flat;  // slider range; FLAT sets every band to `flat` (no change)
     int decimals;
+    bool logarithmic;     // the slider is logarithmic (speed, ring length)
+};
+// Per articulation.
+struct BandField
+{
+    BandSpec spec;
     std::array<double, kExcitationBands> ArticulationTuning::*member;
-    bool logarithmic;     // the slider is logarithmic (speed)
 };
 const std::vector<BandField>& bandFields();
+// Per cymbal.
+struct CymbalBandField
+{
+    BandSpec spec;
+    Group group;
+    std::array<double, kExcitationBands> CymbalTuning::*member;
+};
+const std::vector<CymbalBandField>& cymbalBandFields();
 
 constexpr const char* kFormat = "cymbalis-tuning";
 constexpr int kVersion = 1;

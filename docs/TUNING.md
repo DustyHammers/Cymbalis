@@ -28,6 +28,11 @@ On other systems it is kept on top.
 
 It opens below the TUNING box, right-aligned with it, so the box stays clickable; where the screen has no room below, it opens to the left of the box. If you move it, it stays where you put it, unless that would cover the box when it next opens. Its close button hides it, like the second click on TUNING. It closes when the editor closes.
 
+The window has two parts, one below the other, each under a filled title band with a bronze rule:
+
+- **ARTICULATIONS** ("affects only this articulation"): each articulation's level and velocity curve, and the band rows (excitation gain, onset delay and speed) of the articulation chosen in its **Articulation** box. A value here changes only the strikes of that articulation.
+- **WHOLE CYMBAL** ("affects every articulation"): the values of the preset as a whole, by group. Some of them act only on strikes of some articulations, such as the edge wander (edge strikes) or the build-up weights (strikes at one place). Their labels name those articulations, for example "Bow brightness vs velocity (tau_ref): BOW, CENTER" on SMOKE FLAT RIDE.
+
 The window uses plain JUCE controls in the editor's palette and font:
 
 - Each value is a slider with a numeric box. Type a number into the box to enter it exactly.
@@ -45,6 +50,7 @@ Changes apply live:
 - **Build-up (MF/LF) values** move the cymbal's scales from the next control point, through their 20 ms smoothing.
 - **Wander depth and rate** change at the next control point, without a phase jump.
 - **Output gain** is smoothed (20 ms).
+- **Ring length per band** applies at the next control point. Every ringing strike decays at the new rates from there, without a step in level.
 - **Ring length is the exception:** it rebuilds the engine through the preset-switch path. The cymbal stops (30 ms fade) and restarts, and the change applies when the slider is released.
 
 The values travel to the audio thread without locks or allocation.
@@ -108,6 +114,7 @@ In the window, the **BANDS** section below the articulations works like a graphi
 | | Edge capture curve | `edge_velocity_remap_exponent` | 0.25–2.0 | 602, Bettis | Exponent of the NPZ velocity remap (0.5 = sqrt). Each capture still maps to itself; this shapes how the velocities between captures are reached |
 | | Bow brightness vs velocity | `tau_ref_ms` | 0.05–8 ms | 602, Bettis (no velocity tables) | `hertz_vel_scale` contact time at velocity 1 |
 | | Ring length | `ring_length` | 0.5–2.0 × | all | Multiplier of the baked T60 of every mode (t60_scale). Rebuilds the engine |
+| | Ring length per band | `ring_length_bands` | ×0.25–×4 per band | all | 22 values, see below. Default ×1 |
 | Wander | Wander depth | `wander_depth` | 0–4 | all | |
 | | Wander rate | `wander_rate_hz` | 0.05–10 Hz | all | Each mode's LFO keeps its baked ratio (0.7–1.3) to this rate |
 | | Edge wander depth | `edge_wander_depth` | 0–4 | all | Depth scale added by edge strikes (× velocity × edge fraction), per strike |
@@ -126,6 +133,14 @@ In the window, the **BANDS** section below the articulations works like a graphi
 | | 20 ms frame-decay restart | `edge_frame_decay_restart` | on/off | 602, Bettis | On (the bake): the in-frame decay restarts every 20 ms (`docs/PORT_MAP.md`, "The in-frame decay is a 50 Hz sawtooth"). Off: no in-frame decay; the level follows the band envelope alone. Per strike |
 
 A slider's range widens to include a baked or loaded value outside it. Values for other presets are hidden.
+
+#### Ring length per band
+
+Each of the 22 one-third-octave bands of the band gains has a ring-length multiplier, ×0.25 to ×4 (default ×1). It multiplies the T60 of every mode in the band, on top of **Ring length**: T60 = baked T60 × ring length × the band's multiplier. Modes belong to bands by their frequency, as for the band gains. It acts on every articulation: the T60 belongs to the mode, not to the strike.
+
+In the window it is the **RING LENGTH PER BAND** row in the CYMBAL group: 22 vertical sliders on a logarithmic scale with ×1 in the middle, numeric entry, a per-band reset and FLAT (every band to ×1).
+
+A change applies live, at the next control point (about 2.8 ms). The new decay coefficients are computed off the audio thread and handed over; there the ringing state is re-anchored, as a strike does without its contact, and every ringing strike decays at the new rates from that sample. Nothing steps. With every band at ×1 nothing changes and nothing is computed.
 
 ### Meters
 
@@ -148,7 +163,8 @@ A slider's range widens to include a baked or loaded value outside it. Values fo
   "bake_format_version": 1,
   "date": "2026-10-16T14:02:11.000+02:00",
   "producer": "Cymbalis Tuning",
-  "cymbal": { "mf_sens_depth": 0.3, "ring_length": 1.2 },
+  "cymbal": { "mf_sens_depth": 0.3, "ring_length": 1.2,
+              "ring_length_bands": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.7, 0.6, 0.5, 0.5] },
   "articulations": {
     "bow_tip": { "entry": "BOW", "level_db": -1.0, "vel_0.6_db": -2.0 },
     "edge": { "entry": "EDGE", "band_gains_db": [0, 0, 0, -3.5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2.0, 2.0, 0, 0],
@@ -162,7 +178,7 @@ A slider's range widens to include a baked or loaded value outside it. Values fo
 }
 ```
 
-- `cymbal` and `articulations` hold only the values that differ from the bake; loading a file applies these on top of the bake. An articulation's `band_gains_db`, `onset_delay_ms` and `onset_speed` are each written as all 22 bands, lowest first, when any of them differs.
+- `cymbal` and `articulations` hold only the values that differ from the bake; loading a file applies these on top of the bake. A per-band cymbal value (`ring_length_bands`) is written as all 22 bands, lowest first, when any differs. An articulation's `band_gains_db`, `onset_delay_ms` and `onset_speed` are each written as all 22 bands, lowest first, when any of them differs.
 - `effective` is a full copy of every value for reference; nothing reads it.
 - `entry` names the bake entry (slot) of an articulation.
 - `preset` is the preset id (`nova_ride`, `smoke_flat_ride`, `hammered_thin_ride`); `bake_format_version` is the bake's `format_version`.
@@ -181,11 +197,11 @@ A slider's range widens to include a baked or loaded value outside it. Values fo
    - Each articulation's **level** goes into `slots[].level_trim.gain_db` (with a `set_by` note).
    - Each articulation's **band gains** go into its excitation data, `slots[].excitation_band_gains_db`: `{"band_edges_hz": [23 edges], "gains_db": [22 gains], "set_by"}`. An articulation whose bands are all 0 dB has no entry; applying FLAT removes it.
    - Each articulation's **onset shift** goes into its onset data, `slots[].onset_shift`: `{"band_edges_hz": [23 edges], "delay_ms": [22], "speed": [22], "set_by"}`. An articulation with delay 0 and speed 1 in every band has no entry.
-   - **Every other value that differs from the bake's own** (the cymbal values and the velocity curves) goes into the bake's top-level `tuning` block: `{"format": "cymbalis-tuning", "version": 1, "applied_utc", "source", "cymbal": {...}, "articulations": {id: {"vel_0.6_db", "vel_0.3_db"}}}`.
+   - **Every other value that differs from the bake's own** (the cymbal values and the velocity curves) goes into the bake's top-level `tuning` block: `{"format": "cymbalis-tuning", "version": 1, "applied_utc", "source", "cymbal": {...}, "articulations": {id: {"vel_0.6_db", "vel_0.3_db"}}}`. A per-band cymbal value is stored there as its 22 numbers.
    - A value equal to the bake's own drops out of the block, so applying the same file twice gives the same bake. Nothing else in the bake changes.
 3. Rebuild the plugin. Its bake loader (`plugin/dsp/Bake.cpp`, `Tuning.cpp`) applies the block (`applyTuning`):
    - the parameters;
-   - every mode's T60 times `ring_length`;
+   - every mode's T60 times `ring_length` and its band's `ring_length_bands` factor;
    - the LFO rates scaled to `wander_rate_hz`;
    - the LF and MF weights from `lf_cutoff_hz`, `mf_lo_hz` and `mf_hi_hz`;
    - the NPZ settings, the output gain and the velocity curves.

@@ -472,6 +472,18 @@ Kris decided the five questions above as follows. These decisions override anyth
    - **Cost.** Per strike, one division per mode; per control block, two multiplies per envelope band. A shifted bow or bell strike runs the ramp path until its last delayed band peaks. With random shifts on every band of every articulation, NOVA RIDE at 96 kHz goes from about 21 % to 26 % of a core (bench); the 602 and Bettis change little.
    - `Engine` refuses bakes with onset shifts.
 
+### Plugin mechanisms of the whole cymbal (tuning)
+
+These are plugin mechanisms with no Python counterpart. Kris tunes them by ear in Cymbalis Tuning (`docs/TUNING.md`), and `tools/apply_tuning.py` bakes them into the preset's `tuning` block, so the normal build plays them. At their neutral values (×1, amounts 0) each is skipped entirely: no computation, no cost, and every preset plays exactly as before.
+
+9. **Ring length per band** (2026-10-17). Each of the 22 one-third-octave bands of decision 7 has a ring-length multiplier, `ring_length_bands` (×0.25 to ×4). A mode's T60 is baked T60 × `ring_length` × its band's multiplier (`tunedT60`, used by both the bake loader and the live path). It belongs to the mode, so it acts on every strike.
+   - **Baked:** `applyTuning` multiplies `t60S`, and the engine is built with it, like `ring_length`.
+   - **Live (tuning build):** the processor's message thread computes every decay coefficient at the prepared rate (`FastEngine::computeDecay`: decay rate, contact step, shared-oscillator steps, contact response). The coefficients are cached per preset and sent with each tuning message. The audio thread takes them at the next control point of the free phase (`applyDecay`):
+     - it re-anchors the state as a strike does without its contact (`rebaseComponents`, then a new segment on the same control grid), so every ringing strike's amplitude is exact at that sample;
+     - it swaps the arrays in (no allocation) and recomputes each ringing strike's own decay per block.
+     - From there everything decays at the new rates, with no level step; a change during a contact waits for its end.
+     - The overall ring length still rebuilds the engine, and a new cymbal gets the band factors baked in.
+
 ### Implementation notes for these decisions
 
 - **Calibration is applied when the strike is injected.** Python multiplies the whole output by one scalar at the end. With NL off, every remaining mechanism is linear in amplitude, so the two give the same result to within rounding.
