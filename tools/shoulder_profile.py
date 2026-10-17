@@ -5,9 +5,11 @@
     python tools/shoulder_profile.py --check    # fail if the header is not what this computes
 
 The Tuning window's NOVA SHOULDER PROFILE button (docs/TUNING.md) fills a shoulder
-articulation of SMOKE FLAT RIDE or HAMMERED THIN RIDE with these band gains: the bow
-profile for bow and center, the bell profile for bell. They are computed once, here, from
-the Nova bake (resources/presets/nova_ride.bake.json), as the engine plays it:
+articulation of SMOKE FLAT RIDE or HAMMERED THIN RIDE with these band gains, attack gains and
+attack time: the bow profile for bow and center, the bell profile for bell. They are computed
+once, here, from the Nova bake (resources/presets/nova_ride.bake.json), as the engine plays it.
+
+Band gains:
 
   1. Each mode's coupling at velocity 0.9 for the tip and the shoulder articulation at its
      base position (bow: bow_tip and bow_shoulder at 0.5; bell: bell_tip and bell_shoulder
@@ -22,6 +24,13 @@ the Nova bake (resources/presets/nova_ride.bake.json), as the engine plays it:
   5. Smoothed over neighbouring bands: weights 1/4, 1/2, 1/4 over the band and its two
      neighbours, renormalised over those that are not set to 0 dB by step 4.
   6. Clamped to +/-12 dB and rounded to 0.01 dB.
+
+Attack gains and time: the shoulder's onset gains relative to the tip's. Each articulation's
+onset gains (bow_onset_band_gains, 9 octave bands; none = 0 dB) are taken per band of the
+22 as the octave band that contains the band's centre, in dB, as the plugin's loader does;
+the profile is shoulder minus tip, clamped to +/-12 dB and rounded to 0.01 dB. The attack
+time is the shoulder's onset time (bow: bow_shoulder, neutral, 80 ms, against bow_tip's
+80 ms; bell: bell_shoulder 300 ms against bell_tip's 120 ms).
 """
 import argparse
 import json
@@ -112,6 +121,31 @@ def profile(bake, tip_id, shoulder_id, pos):
     return [round(min(max(x, -CLAMP_DB), CLAMP_DB), 2) for x in smooth], count, raw
 
 
+def attack_db(bake, slot):
+    """An articulation's attack gains (dB per band) from its onset gains (plugin/dsp/Tuning.cpp
+    attackFromOnsetGains): each band takes the onset band that contains its centre."""
+    if slot['onset_gains'] is None:
+        return [0.0] * N_BANDS
+    gains = slot['onset_gains']['data']
+    edges = bake['shared']['bow_onset_band_edges_hz']['data']
+    out = []
+    for j in range(N_BANDS):
+        centre = 11404.0 * 2.0 ** ((j - 21 + 0.5) / 3.0)
+        k = 0
+        while k + 1 < len(gains) and centre >= edges[k + 1]:
+            k += 1
+        out.append(20.0 * math.log10(gains[k]))
+    return out
+
+
+def attack_profile(bake, tip_id, shoulder_id):
+    slots = {s['overlay']: s for s in bake['slots'] if s['overlay']}
+    tip, sh = attack_db(bake, slots[tip_id]), attack_db(bake, slots[shoulder_id])
+    gains = [round(min(max(b - a, -CLAMP_DB), CLAMP_DB), 2) for a, b in zip(tip, sh)]
+    ms = round(slots[shoulder_id]['onset_tau_s'] * 1000.0, 6)
+    return gains, ms, round(slots[tip_id]['onset_tau_s'] * 1000.0, 6)
+
+
 def header(profiles):
     lines = [
         '#pragma once',
@@ -125,12 +159,25 @@ def header(profiles):
         '',
         'namespace cymbalis::tuning',
         '{',
+        'struct NovaShoulderProfile',
+        '{',
+        '    const char* name;                                // "bow" or "bell"',
+        '    std::array<double, kExcitationBands> bandDb;     // band gains, lowest band first',
+        '    std::array<double, kExcitationBands> attackDb;   // attack gains, lowest band first',
+        '    double attackMs;                                 // attack time',
+        '};',
+        '',
     ]
-    for name, values in profiles:
-        lines.append(f'// Nova {name}_shoulder relative to {name}_tip, lowest band first.')
-        lines.append(f'inline constexpr std::array<double, kExcitationBands> kNovaShoulder{name.capitalize()} {{')
-        lines.append('    ' + ', '.join(f'{v:.2f}' for v in values[:11]) + ',')
-        lines.append('    ' + ', '.join(f'{v:.2f}' for v in values[11:]) + ',')
+    def row(values):
+        return ['        ' + ', '.join(f'{v:.2f}' for v in values[:11]) + ',',
+                '        ' + ', '.join(f'{v:.2f}' for v in values[11:]) + ',']
+    for name, values, attack, ms in profiles:
+        lines.append(f'// Nova {name}_shoulder relative to {name}_tip.')
+        lines.append(f'inline constexpr NovaShoulderProfile kNovaShoulder{name.capitalize()} {{')
+        lines.append(f'    "{name}",')
+        lines += ['    {'] + row(values) + ['    },']
+        lines += ['    {'] + row(attack) + ['    },']
+        lines.append(f'    {ms:.1f},')
         lines.append('};')
     lines += ['', '} // namespace cymbalis::tuning', '']
     return '\n'.join(lines)
@@ -145,12 +192,15 @@ def main():
     out = []
     for name, tip, shoulder, pos in PROFILES:
         values, count, raw = profile(bake, tip, shoulder, pos)
-        out.append((name, values))
+        attack, ms, tip_ms = attack_profile(bake, tip, shoulder)
+        out.append((name, values, attack, ms))
         print(f'{name}: shoulder - tip per band (dB), velocity {VELOCITY}, position {pos}')
         for j in range(N_BANDS):
             lo, hi = 11404.0 * 2.0 ** ((j - 21) / 3.0), 11404.0 * 2.0 ** ((j - 20) / 3.0)
             r = '   n/a' if raw[j] is None else f'{raw[j]:+6.2f}'
-            print(f'  band {j:2d} {lo:7.0f}-{hi:7.0f} Hz  modes {count[j]:4d}  raw {r}  profile {values[j]:+6.2f}')
+            print(f'  band {j:2d} {lo:7.0f}-{hi:7.0f} Hz  modes {count[j]:4d}  raw {r}  profile {values[j]:+6.2f}'
+                  f'  attack {attack[j]:+6.2f}')
+        print(f'  attack time {ms:g} ms (the shoulder\'s; tip {tip_ms:g} ms)')
     text = header(out)
     if args.check:
         with open(HEADER) as f:

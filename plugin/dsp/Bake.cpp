@@ -373,11 +373,13 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
             const json::Value& v = sh.at(key);
             if (!v.isNull()) readArray(v, std::string("shared.") + key, {n}, rep);
         }
-        for (const char* key : {"vel_tilt_velocities", "vel_tilt_reference", "bow_onset_band_edges_hz"})
+        for (const char* key : {"vel_tilt_velocities", "vel_tilt_reference"})
         {
             const json::Value& v = sh.at(key);
             if (!v.isNull()) readArray(v, std::string("shared.") + key, {0}, rep);
         }
+        if (const json::Value& v = sh.at("bow_onset_band_edges_hz"); !v.isNull())
+            b.bowOnsetBandEdges = readArray(v, "shared.bow_onset_band_edges_hz", {0}, rep);
         if (!sh.at("vel_tilt_fractions").isNull())
             readArray(sh.at("vel_tilt_fractions"), "shared.vel_tilt_fractions", {0, 0}, rep);
 
@@ -612,6 +614,46 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
                         throw BakeError("slot " + slot.name + ": onset band index out of range");
             }
             slot.onsetTauS = s.at("onset_tau_s").number();
+            // Attack band gains (docs/TUNING.md): the onset gains in one-third-octave bands,
+            // each band the onset band that contains it, with the onset time. Python's time is
+            // bow_onset_tau_ms x 0.001 (line 435), so the whole milliseconds give it back exactly.
+            slot.articulation.attackMs = std::round(slot.onsetTauS * 1e9) / 1e6;
+            if (slot.onsetGainsActive)
+            {
+                if (b.bowOnsetBandEdges.size() != slot.onsetGains.size() + 1)
+                    throw BakeError("slot " + slot.name + ": the onset gains need " +
+                                    std::to_string(slot.onsetGains.size() + 1) + " band edges");
+                attackFromOnsetGains(slot.onsetGains.data(), static_cast<int>(slot.onsetGains.size()),
+                                     b.bowOnsetBandEdges.data(), slot.articulation.attackDb);
+            }
+            // Optional (plugin bake, docs/TUNING.md): the attack band gains and time set by
+            // tools/apply_tuning.py, instead of those from the onset gains.
+            if (const auto* attack = s.find("attack_band_gains"); attack != nullptr && ! attack->isNull())
+            {
+                const auto& edges = attack->at("band_edges_hz").array();
+                const auto& gains = attack->at("gains_db").array();
+                if (edges.size() != size_t(kExcitationBands + 1) || gains.size() != size_t(kExcitationBands))
+                    throw BakeError("slot " + slot.name + ": attack_band_gains needs " +
+                                    std::to_string(kExcitationBands + 1) + " band edges and " +
+                                    std::to_string(kExcitationBands) + " gains");
+                for (int j = 0; j <= kExcitationBands; ++j)
+                    if (std::fabs(edges[size_t(j)].number() - excitationBandEdge(j)) > 0.5)
+                        throw BakeError("slot " + slot.name + ": attack_band_gains band edges differ from the "
+                                        "engine's one-third-octave bands");
+                for (int j = 0; j < kExcitationBands; ++j)
+                {
+                    const double g = gains[size_t(j)].number();
+                    if (! std::isfinite(g) || std::fabs(g) > 60.0)
+                        throw BakeError("slot " + slot.name + ": attack band gains must be finite, within 60 dB");
+                    slot.articulation.attackDb[size_t(j)] = g;
+                }
+                const double ms = attack->at("time_ms").number();
+                if (! std::isfinite(ms) || ms < 1.0 || ms > 10000.0)
+                    throw BakeError("slot " + slot.name + ": attack_band_gains.time_ms must lie in 1 to 10000 ms");
+                slot.articulation.attackMs = ms;
+                slot.attackTuned = true;
+                rep.push_back("attack       slot " + slot.name + ": attack gain per one-third-octave band and time");
+            }
             slot.velGainPower = e.at("vel_gain_power").number();
             slot.edgeLevelBoost = e.at("edge_level_boost").number();
 
@@ -764,6 +806,8 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
             u.articulations[s].bandDb = b.slots[s].articulation.bandDb;
             u.articulations[s].delayMs = b.slots[s].articulation.delayMs;
             u.articulations[s].speed = b.slots[s].articulation.speed;
+            u.articulations[s].attackDb = b.slots[s].articulation.attackDb;
+            u.articulations[s].attackMs = b.slots[s].articulation.attackMs;
         }
         b.pythonT60S = b.t60S;
         b.pythonLfoRateHz = b.lfoRateHz;

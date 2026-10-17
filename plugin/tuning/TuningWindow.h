@@ -134,11 +134,12 @@ public:
     void setArticulations (const juce::StringArray& names);
     int selected() const { return selector.getSelectedItemIndex(); }
     BandRow& row (size_t field) { return *rows[field]; }
+    ValueRow& attackTime() { return *attackTimeRow; } // the attack time, under the attack gains
 
     std::function<void()> onSelect;
 
     void resized() override;
-    static int height() { return kSelectorHeight + (int) bandFields().size() * BandRow::height; }
+    static int height();
 
 private:
     static constexpr int kSelectorHeight = 40;
@@ -146,6 +147,7 @@ private:
     juce::Label title;
     juce::ComboBox selector;
     std::vector<std::unique_ptr<BandRow>> rows;
+    std::unique_ptr<ValueRow> attackTimeRow;
     bool updating = false;
 };
 

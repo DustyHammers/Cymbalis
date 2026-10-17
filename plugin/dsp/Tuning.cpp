@@ -110,6 +110,28 @@ void tunedT60(const CymbalTuning& c, const double* pythonT60, const double* freq
         out[i] = pythonT60[i] * c.ringLength * c.ringBand[size_t(excitationBand(freqHz[i]))];
 }
 
+double brightnessTiltDb(const ArticulationTuning& a, double v) noexcept
+{
+    if (a.brightnessDbOct == 0.0)
+        return 0.0;
+    constexpr double x3 = -1.2039728043259361; // ln 0.3
+    const double x = std::log(std::min(std::max(v, 1e-4), 1.0));
+    return std::min(std::max(a.brightnessDbOct * x / x3, -24.0), 24.0);
+}
+
+void attackFromOnsetGains(const double* gains, int numGains, const double* edgesHz,
+                          std::array<double, kExcitationBands>& outDb) noexcept
+{
+    for (int j = 0; j < kExcitationBands; ++j)
+    {
+        const double centre = excitationBandCentre(j);
+        int k = 0;
+        while (k + 1 < numGains && centre >= edgesHz[k + 1])
+            ++k;
+        outDb[size_t(j)] = 20.0 * std::log10(gains[k]);
+    }
+}
+
 bool hasOnsetShift(const ArticulationTuning& a) noexcept
 {
     for (int j = 0; j < kExcitationBands; ++j)
@@ -307,6 +329,7 @@ Tuning parseTuningBlock(const json::Value& block, const BakeData& b, const Tunin
                     throw std::runtime_error("tuning: " + kv.first + "." + v.first + " is not finite");
                 if (v.first == kVel06Key) t.articulations[size_t(slot)].vel06Db = x;
                 else if (v.first == kVel03Key) t.articulations[size_t(slot)].vel03Db = x;
+                else if (v.first == kBrightnessKey) t.articulations[size_t(slot)].brightnessDbOct = x;
                 else
                     throw std::runtime_error("tuning: unknown articulation value \"" + v.first + "\" (the level is "
                                              "slots[].level_trim.gain_db)");

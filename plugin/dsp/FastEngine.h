@@ -171,7 +171,7 @@ private:
         int64_t contactStart = 0; // engine sample where its contact began
         double eps = 0.0;         // decay relative to the oscillator's (wash_damp - oscWash_), energy-weighted
         double tStrike = 0.0;     // engine time of the strike
-        bool onsetOn = false;     // onset band gains (its slot's overlay, not at the edge)
+        bool onsetOn = false;     // attack band gains (its articulation's; not blended to the edge)
         double onsetTau = 0.08, gm1Max = 0.0;
         bool rampOn = false;      // edge onset ramp
         double ptMax = 0.0;
@@ -259,6 +259,7 @@ private:
     void computeWanderTables() noexcept;
     void computeHertzRef() noexcept;
     void computeRemapTable() noexcept;
+    void computeAttack(size_t slot) noexcept;
     void setMechanisms(const CymbalTuning& c) noexcept;
     void updateMechanisms() noexcept;
     void computeBandRef() noexcept;
@@ -293,6 +294,14 @@ private:
     // shift (slotCurve_[s].delayMs, .speed) is not the identity.
     std::vector<uint8_t> modeBand_;
     std::vector<uint8_t> onsetShiftOn_;
+    // Per slot: its attack band gains (docs/TUNING.md) as gain - 1 per band (0 within 1e-3 of
+    // 0 dB; slot s at s x kExcitationBands), the largest |gain - 1| over the bands that have
+    // modes, whether any is not 0, and the attack time constant (s).
+    std::vector<double> attackGm1_, attackGm1Max_, attackTauS_;
+    std::vector<uint8_t> attackOn_;
+    std::array<bool, kExcitationBands> bandHasModes_ {};
+    // Brightness vs velocity: ln(f / 1 kHz) per mode.
+    std::vector<double> logF1k_;
     double remapExp_ = 0.5;    // NPZ velocity remap exponent (0.5: sqrt, line 1049)
     double envWindowS_ = 1.5;  // NPZ band envelope window after an edge strike
     bool frameRestart_ = true; // the in-frame decay restarts every 20 ms

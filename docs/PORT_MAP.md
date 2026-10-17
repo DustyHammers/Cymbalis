@@ -515,6 +515,15 @@ These are plugin mechanisms; none is a port of Python. Kris tunes them by ear in
    - **NOVA SHOULDER PROFILE.** The tuning button fills such a copy's band gains with Nova's shoulder-minus-tip difference (`docs/TUNING.md`), computed once from the Nova velocity tables by `tools/shoulder_profile.py`.
    - **Bake.** `tools/bake_preset.py` writes the copies (`COPIED_ENTRIES`); a copy named like an existing entry replaces it in place, which is how Nova's EDGE became the copy. The shipped bakes received exactly the re-bake's new entries, checked equal to a re-bake everywhere else, with their sources' trims.
 
+### Per-articulation attack and brightness (tuning)
+
+15. **Attack band gains replace the onset gains' octave bands** (2026-10-17). Every articulation has a gain per one-third-octave band at the strike that fades back to 0 dB with its attack time: gain(t) = 1 + (g − 1) · exp(−t / time). This is exactly how Python's onset band gains work (lines 425–442, 902–913), now with the 22 bands of decision 7 and for every articulation. Values: `attack_band_gains_db` and `attack_time_ms` per articulation (`docs/TUNING.md`, "Attack band gains").
+   - **Nova's onset gains are expressed in this form.** The loader takes each of the 22 bands from the octave band (`bow_onset_band_edges_hz`) that contains the band's centre, in dB, and the time from `onset_tau_s` (Python's `bow_onset_tau_ms × 0.001`, line 435, which the whole milliseconds reproduce exactly). Per mode the engine uses the mode's 22-band (`excitationBand`) instead of its octave band (`bow_onset_mode_band`). For Nova they differ for one mode only, mode 0 at 81 Hz (octave band 0, 50–89 Hz, but 22-band 0, whose centre is in octave band 1). All three Nova onset gain sets have the same gain in octave bands 0 and 1. So every mode keeps its gain, |g − 1| < 0.001 still counts as none, and NOVA RIDE renders bit for bit as before (checked).
+   - **Gate.** As in Python, a strike with edge fraction 0.9 or more (a bow or bell row blended to the edge) gets none. An articulation whose base position is the edge (0.25 or below) gets its attack gains at any position: Python never had onset gains there, so this changes nothing until they are tuned.
+   - **Stored** in the bake with the slot (`slots[].attack_band_gains`) when tuned, else derived from the onset gains. `FastEngine` no longer reads `onset_gains`; `Engine` still does, and refuses a bake with attack data.
+   - **Cost.** Per strike, a table lookup per mode, as before.
+16. **Brightness vs velocity** (2026-10-17). Per articulation, the spectral tilt of a velocity-0.3 strike relative to a velocity-1.0 one, in dB per octave around 1 kHz (`brightness_db_per_oct`, −6 to +6). It is interpolated in log velocity like the velocity curve (0 at 1.0, within ±24 dB per octave), and multiplies each mode's coupling at the strike by (f / 1 kHz)^(tilt · ln 10 / (20 ln 2)), whatever the coupling path. 1 kHz is unchanged. At 0 it is skipped; otherwise it costs one `exp` per mode per strike. It is stored in the tuning block with the velocity curve. Python has nothing like it.
+
 ### Implementation notes for these decisions
 
 - **Calibration is applied when the strike is injected.** Python multiplies the whole output by one scalar at the end. With NL off, every remaining mechanism is linear in amplitude, so the two give the same result to within rounding.
@@ -528,7 +537,7 @@ These are plugin mechanisms; none is a port of Python. Kris tunes them by ear in
 
 Kris's decision, a deliberate departure from Python V19 in `FastEngine` only (`Engine`, the Python-matching path, is unchanged). In Python, several effects follow the latest strike and act on everything that is ringing (f.2, f.3), so a bell hit recolours and shortens the bow ring and vice versa. In the plugin, each strike's own effects apply only to the energy that strike added:
 
-- the onset band gains of its slot's overlay and their tau;
+- the onset band gains of its slot's overlay and their tau (since 2026-10-17 its articulation's attack band gains and time, decision 15);
 - the edge onset ramp, with its velocity tilt;
 - the velocity-dependent decay (`wash_damp` from `vel_len_tilt`).
 

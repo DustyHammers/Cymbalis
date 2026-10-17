@@ -366,6 +366,11 @@ void BandRow::paint (juce::Graphics& g)
 
 BandEq::BandEq (const ui::Assets& a) : small (a, 11.5f)
 {
+    for (const auto& f : articulationFields())
+        if (f.inBands)
+            attackTimeRow = std::make_unique<ValueRow> (f.label, f.unit, f.lo, f.hi, f.decimals, false);
+    if (attackTimeRow != nullptr)
+        addAndMakeVisible (*attackTimeRow);
     title.setText ("Articulation", juce::dontSendNotification);
     addAndMakeVisible (title);
     selector.onChange = [this] {
@@ -394,8 +399,17 @@ void BandEq::resized()
     auto top = r.removeFromTop (kSelectorHeight).reduced (8, 6);
     title.setBounds (top.removeFromLeft (110));
     selector.setBounds (top.removeFromLeft (260));
-    for (auto& row : rows)
-        row->setBounds (r.removeFromTop (BandRow::height));
+    for (size_t i = 0; i < rows.size(); ++i)
+    {
+        rows[i]->setBounds (r.removeFromTop (BandRow::height));
+        if (attackTimeRow != nullptr && juce::String (bandFields()[i].spec.key) == kAttackGainsKey)
+            attackTimeRow->setBounds (r.removeFromTop (kRowHeight).withTrimmedLeft (0));
+    }
+}
+
+int BandEq::height()
+{
+    return kSelectorHeight + (int) bandFields().size() * BandRow::height + kRowHeight;
 }
 
 // =====================================================================================
@@ -480,7 +494,9 @@ void TuningPanel::rebuild()
                        + juce::String (slot.name) + ")");
             for (const auto& f : articulationFields())
             {
-                auto row = std::make_unique<ValueRow> (f.label, "dB", f.lo, f.hi, f.decimals, false);
+                if (f.inBands)
+                    continue;
+                auto row = std::make_unique<ValueRow> (f.label, f.unit, f.lo, f.hi, f.decimals, false);
                 auto* r = row.get();
                 const auto member = f.member;
                 row->onChange = [this, s, member] (double v) { change ([&] (Tuning& t) { t.articulations[s].*member = v; }); };
@@ -494,19 +510,22 @@ void TuningPanel::rebuild()
             // shoulder-minus-tip band gains, on request.
             if (const auto* profile = novaShoulderProfile (*bake, cymbalis::kPresets[(size_t) preset].id, s))
             {
-                const bool bell = profile == &kNovaShoulderBell;
-                auto row = std::make_unique<ButtonRow> (juce::String ("Band gains: Nova's ") + (bell ? "bell" : "bow")
+                auto row = std::make_unique<ButtonRow> (juce::String ("Band gains, attack gains and time: Nova's ") + profile->name
                                                             + " shoulder minus tip",
                                                         "NOVA SHOULDER PROFILE");
                 row->onClick = [this, s, profile] {
-                    change ([&] (Tuning& t) { t.articulations[s].bandDb = *profile; });
+                    change ([&] (Tuning& t) {
+                        t.articulations[s].bandDb = profile->bandDb;
+                        t.articulations[s].attackDb = profile->attackDb;
+                        t.articulations[s].attackMs = profile->attackMs;
+                    });
                 };
                 place (*row);
                 buttonRows.push_back (std::move (row));
             }
         }
         // Per-band values of the chosen articulation: excitation gains and onset shifts.
-        addHeader ("BANDS (one-third octave): EXCITATION GAIN AND ONSET SHIFT");
+        addHeader ("BANDS (one-third octave): EXCITATION GAIN, ATTACK AND ONSET SHIFT");
         bandEq = std::make_unique<BandEq> (assets);
         juce::StringArray names;
         for (const auto& slot : bake->slots)
@@ -531,6 +550,21 @@ void TuningPanel::rebuild()
                 row.setValues (processor.tuning (preset).articulations[s].*(f.member), bake->tuning.articulations[s].*(f.member));
             });
         }
+        // The attack time of the chosen articulation, under its attack gains.
+        for (const auto& f : articulationFields())
+            if (f.inBands)
+            {
+                auto& row = bandEq->attackTime();
+                const auto member = f.member;
+                row.onChange = [this, bandArt, member] (double v) {
+                    const size_t s = bandArt();
+                    change ([&] (Tuning& t) { t.articulations[s].*member = v; });
+                };
+                refreshers.push_back ([this, bandArt, &row, member] {
+                    const size_t s = bandArt();
+                    row.setValues (processor.tuning (preset).articulations[s].*member, bake->tuning.articulations[s].*member);
+                });
+            }
         bandEq->setBounds (0, y, 10, BandEq::height());
         y += BandEq::height();
         list.addAndMakeVisible (*bandEq);

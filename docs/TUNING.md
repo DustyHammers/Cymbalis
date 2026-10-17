@@ -75,9 +75,9 @@ Nova Ride's `edge` replaced the base preset played at the edge (Nova has no edge
 
 #### NOVA SHOULDER PROFILE
 
-Each new shoulder articulation of SMOKE FLAT RIDE and HAMMERED THIN RIDE (`bow_shoulder`, `center_shoulder`, `bell_shoulder`) has a **NOVA SHOULDER PROFILE** button below its values. It sets that articulation's band gains to Nova Ride's shoulder-minus-tip difference: the bow profile for `bow_shoulder` and `center_shoulder`, the bell profile for `bell_shoulder`. It is a starting point to tune from: the button only fills the 22 band gains, which then work as any band gains (reset, FLAT, save).
+Each new shoulder articulation of SMOKE FLAT RIDE and HAMMERED THIN RIDE (`bow_shoulder`, `center_shoulder`, `bell_shoulder`) has a **NOVA SHOULDER PROFILE** button below its values. It sets that articulation's band gains, attack gains and attack time to Nova Ride's shoulder-minus-tip difference: the bow profile for `bow_shoulder` and `center_shoulder`, the bell profile for `bell_shoulder`. It is a starting point to tune from. The button only fills those values, which then work as any others (reset, FLAT, save).
 
-The two profiles are data, computed once by `tools/shoulder_profile.py` from the Nova bake and stored in `plugin/tuning/ShoulderProfiles.h` (`--check` verifies the header):
+The two profiles are data, computed once by `tools/shoulder_profile.py` from the Nova bake and stored in `plugin/tuning/ShoulderProfiles.h` (`--check` verifies the header). The band gains:
 
 1. Each mode's coupling at velocity 0.9 for Nova's tip and shoulder articulation at its base position, as the engine computes it: `exc_norm` × velocity participation ^ `vel_gain_power` × position weight. The bow profile uses `bow_tip` and `bow_shoulder` at 0.5 (bow velocity tables), the bell profile `bell_tip` and `bell_shoulder` at 1.0 (bell velocity tables).
 2. Per band, the energy: the sum of the squared couplings of its modes.
@@ -98,6 +98,25 @@ The two profiles are data, computed once by `tools/shoulder_profile.py` from the
 
 (Each band is named by its lower edge.) Nova's bow shoulder has almost no energy in band 0 (89–112 Hz, 6 modes): −35 dB there before the clamp.
 
+The attack gains and time: the shoulder's onset gains relative to the tip's.
+
+- Each Nova articulation's onset gains (9 octave bands) are taken in the 22 bands, as the plugin does (see "Attack band gains" below); an articulation without onset gains counts as 0 dB.
+- The profile is shoulder minus tip, per band, clamped to ±12 dB, with the shoulder's attack time.
+- Bow: `bow_shoulder` is neutral (0 dB, 80 ms) against `bow_tip`'s onset gains (80 ms), so the profile is the tip's gains inverted, 80 ms.
+- Bell: `bell_shoulder` (300 ms) against `bell_tip` (120 ms), 300 ms. The 1.4–2.9 kHz octave (2.4 against 0.45, +14.5 dB) is clamped to +12 dB.
+
+| Band (Hz) | 89 | 112 | 141 | 178 | 225 | 283 | 356 | 449 | 566 | 713 | 898 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| bow attack (dB) | −1.58 | −1.58 | −1.58 | −0.26 | −0.26 | −0.26 | +0.45 | +0.45 | +0.45 | +0.82 | +0.82 |
+| bell attack (dB) | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+| Band (Hz) | 1131 | 1426 | 1796 | 2263 | 2851 | 3592 | 4526 | 5702 | 7184 | 9051 | 11404 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| bow attack (dB) | +0.82 | +0.92 | +0.92 | +0.92 | +0.92 | +0.92 | +0.92 | −0.67 | −0.67 | −0.67 | −1.58 |
+| bell attack (dB) | 0 | +12.00 | +12.00 | +12.00 | +5.11 | +5.11 | +5.11 | −11.02 | −11.02 | −11.02 | +3.00 |
+
+Attack time: bow 80 ms, bell 300 ms.
+
 | Value | Key | Range | Per strike | Effect |
 |---|---|---|---|---|
 | Level at velocity 1.0 | `level_db` | −40 to +40 dB | yes | The slot's level trim, initialised from the bake (`slots[].level_trim.gain_db`) |
@@ -106,8 +125,13 @@ The two profiles are data, computed once by `tools/shoulder_profile.py` from the
 | Excitation band gains | `band_gains_db` | −24 to +12 dB per band | yes | 22 values, one per one-third-octave band, see below. Default 0 |
 | Onset delay | `onset_delay_ms` | −50 to +200 ms per band | yes | 22 values, see "Onset shift". Default 0 |
 | Onset speed | `onset_speed` | ×0.25 to ×4 per band | yes | 22 values; above 1 is faster. Default 1 |
+| Attack band gains | `attack_band_gains_db` | −12 to +12 dB per band | yes | 22 values, see "Attack band gains". Default: the articulation's onset gains (0 dB without) |
+| Attack time | `attack_time_ms` | 10–1000 ms | yes | How fast the attack gains fade back to 0 dB. Default: the articulation's onset time (80 ms without onset gains) |
+| Brightness vs velocity | `brightness_db_per_oct` | −6 to +6 dB per octave | yes | Tilt of a velocity-0.3 strike relative to velocity 1.0, see below. Default 0 |
 
 The **velocity curve** is a level offset on top of the current level law. It is interpolated in log velocity through three points: 0 dB at velocity 1.0, the 0.6 offset at 0.6, and the 0.3 offset at 0.3. Below 0.3 it continues with the 0.6-to-0.3 slope (clamped to ±60 dB). It changes the level only. The spectral velocity behaviour stays as it is: velocity tables, the Hertz tilt and the NPZ captures. The velocity is the engine's: the MIDI velocity after the Velocity Sensitivity knob.
+
+**Brightness vs velocity** is how much brighter (positive) or darker (negative) a soft strike of the articulation is than a full one. The value is the spectral tilt, in dB per octave, at velocity 0.3 relative to velocity 1.0. It is interpolated in log velocity like the velocity curve: 0 at 1.0, the value at 0.3, and the same slope below 0.3 (within ±24 dB per octave). The tilt pivots at 1 kHz: at the strike, each mode's excitation is scaled by tilt × log2(f / 1 kHz) dB, so the level at 1 kHz is unchanged. It acts on the coupling, like the band gains, whatever path gives it. At 0 it is skipped.
 
 #### Excitation band gains
 
@@ -131,12 +155,20 @@ How they act depends on the onset the strike has. The articulation struck decide
   - the speed has no onset to act on;
   - a negative delay changes nothing.
 
-Nova's onset gains (`bell_shoulder`, `bow_tip`, `bell_tip`) are not shifted. A shifted bow or bell onset costs some CPU while its ramp runs; with every band of every articulation shifted, NOVA RIDE at 96 kHz uses about 26 % of a core instead of 21 %.
+The attack band gains (Nova's onset gains among them) are not shifted: they start at the strike. A shifted bow or bell onset costs some CPU while its ramp runs; with every band of every articulation shifted, NOVA RIDE at 96 kHz uses about 26 % of a core instead of 21 %.
+
+#### Attack band gains
+
+Each articulation has a gain per band at the strike, **ATTACK GAIN** (dB), that fades back to 0 dB with the **ATTACK TIME**: the gain at time t after the strike is 1 + (g − 1) · exp(−t / time), g the band's gain at the strike. It applies to that articulation's strikes only, from the next strike, and changes the onset only; the decay and levels after it are unchanged. It is how Nova's onset band gains (`bow_onset_band_gains`, `bow_onset_tau_ms`) always worked, now for every articulation of every preset.
+
+- **Nova's onset gains are these.** `bell_shoulder`, `bow_tip` and `bell_tip` have onset gains in 9 octave bands (50–89 Hz, 89–178 Hz, … 11404–22050 Hz). Each of the 22 bands takes the value of the octave band that contains its centre, in dB, with the same time (300, 80 and 120 ms). Every Nova mode gets the gain it had: the only mode that falls in a different octave band (81 Hz) has the same gain in both. So NOVA RIDE plays exactly as before. The other articulations start at 0 dB with 80 ms.
+- **Where.** As in Python, the attack gains do not apply to a bow or bell strike blended all the way to the edge (edge fraction 0.9 or more, Blend 2 above 90 %). An edge articulation's apply at the edge.
+- **Gains within 0.01 dB of 0** (|g − 1| below 0.001) count as 0 dB, as Python's do.
 
 In the window, the **BANDS** section below the articulations works like a graphic EQ:
 
 - The **Articulation** box picks the articulation whose bands are shown.
-- It has three rows of sliders: **GAIN** (dB), **ONSET DELAY** (ms) and **ONSET SPEED** (×, on a logarithmic scale with ×1 in the middle).
+- It has four rows of sliders: **GAIN** (dB), **ATTACK GAIN** (dB, with the **ATTACK TIME** under it), **ONSET DELAY** (ms) and **ONSET SPEED** (×, on a logarithmic scale with ×1 in the middle).
 - Each row has one vertical slider per band. The label is the band's centre frequency; hold the pointer over the label to see the band's edges.
 - Type a number into the box under a slider to enter it exactly.
 - The arrow under each band resets it to the baked value.
@@ -280,7 +312,7 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
 }
 ```
 
-- `cymbal` and `articulations` hold only the values that differ from the bake; loading a file applies these on top of the bake. A per-band cymbal value (`ring_length_bands`) is written as all 22 bands, lowest first, when any differs. `rehit_damp_weights` is written with every articulation's weight, by articulation id, when any differs. An articulation's `band_gains_db`, `onset_delay_ms` and `onset_speed` are each written as all 22 bands, lowest first, when any of them differs.
+- `cymbal` and `articulations` hold only the values that differ from the bake; loading a file applies these on top of the bake. A per-band cymbal value (`ring_length_bands`) is written as all 22 bands, lowest first, when any differs. `rehit_damp_weights` is written with every articulation's weight, by articulation id, when any differs. An articulation's `band_gains_db`, `attack_band_gains_db`, `onset_delay_ms` and `onset_speed` are each written as all 22 bands, lowest first, when any of them differs.
 - `effective` is a full copy of every value for reference; nothing reads it.
 - `entry` names the bake entry (slot) of an articulation.
 - `preset` is the preset id (`nova_ride`, `smoke_flat_ride`, `hammered_thin_ride`); `bake_format_version` is the bake's `format_version`.
@@ -299,6 +331,8 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
    - Each articulation's **level** goes into `slots[].level_trim.gain_db` (with a `set_by` note).
    - Each articulation's **band gains** go into its excitation data, `slots[].excitation_band_gains_db`: `{"band_edges_hz": [23 edges], "gains_db": [22 gains], "set_by"}`. An articulation whose bands are all 0 dB has no entry; applying FLAT removes it.
    - Each articulation's **onset shift** goes into its onset data, `slots[].onset_shift`: `{"band_edges_hz": [23 edges], "delay_ms": [22], "speed": [22], "set_by"}`. An articulation with delay 0 and speed 1 in every band has no entry.
+   - Each articulation's **attack band gains and time** go into its attack data, `slots[].attack_band_gains`: `{"band_edges_hz": [23 edges], "gains_db": [22], "time_ms", "set_by"}`. An articulation whose values are those its onset gains give (0 dB and 80 ms without onset gains) has no entry; the loader then takes them from the onset gains.
+   - Each articulation's **brightness vs velocity** goes into the tuning block with its velocity curve.
    - **Every other value that differs from the bake's own** (the cymbal values and the velocity curves) goes into the bake's top-level `tuning` block: `{"format": "cymbalis-tuning", "version": 1, "applied_utc", "source", "cymbal": {...}, "articulations": {id: {"vel_0.6_db", "vel_0.3_db"}}}`. A per-band cymbal value is stored there as its 22 numbers.
    - A value equal to the bake's own drops out of the block, so applying the same file twice gives the same bake. Nothing else in the bake changes.
 3. Rebuild the plugin. Its bake loader (`plugin/dsp/Bake.cpp`, `Tuning.cpp`) applies the block (`applyTuning`):
@@ -309,8 +343,8 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
    - the LF and MF weights from `lf_cutoff_hz`, `mf_lo_hz` and `mf_hi_hz`;
    - the NPZ settings, the output gain and the velocity curves.
 
-   The loader also reads each slot's band gains and turns them into one gain per mode for that articulation (`excitationModeGains`). The engine multiplies each strike's coupling by it (`docs/PORT_MAP.md`, live-engine decision 7). It reads each slot's onset shift, and the engine applies it to that articulation's band envelopes and onset peak times at each strike (decision 8).
+   The loader also reads each slot's band gains and turns them into one gain per mode for that articulation (`excitationModeGains`). The engine multiplies each strike's coupling by it (`docs/PORT_MAP.md`, live-engine decision 7). It reads each slot's onset shift, and the engine applies it to that articulation's band envelopes and onset peak times at each strike (decision 8). It reads each slot's attack band gains (from its attack data, else from its onset gains), which the engine applies at each strike (decision 15), and the brightness from the tuning block.
 
    The tuning build uses the same functions live, so the normal build plays what was tuned.
 
-Re-baking a preset (`tools/bake_preset.py`) drops its trims, its band gains, its onset shifts and its tuning block. `Engine`, the retired Python-matching path, refuses a bake with a tuning block, band gains or onset shifts.
+Re-baking a preset (`tools/bake_preset.py`) drops its trims, its band gains, its onset shifts, its attack data and its tuning block. `Engine`, the retired Python-matching path, refuses a bake with a tuning block, band gains, onset shifts or attack data.

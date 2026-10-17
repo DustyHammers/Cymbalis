@@ -204,6 +204,18 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
     onsetShiftOn_.assign(b.slots.size(), 0);
     for (size_t s = 0; s < b.slots.size(); ++s)
         onsetShiftOn_[s] = hasOnsetShift(b.slots[s].articulation) ? 1 : 0;
+    // Each slot's attack band gains, and each mode's distance from 1 kHz in log frequency.
+    for (size_t i = 0; i < n; ++i)
+        bandHasModes_[modeBand_[i]] = true;
+    attackGm1_.assign(b.slots.size() * size_t(kExcitationBands), 0.0);
+    attackGm1Max_.assign(b.slots.size(), 0.0);
+    attackTauS_.assign(b.slots.size(), 0.08);
+    attackOn_.assign(b.slots.size(), 0);
+    for (size_t s = 0; s < b.slots.size(); ++s)
+        computeAttack(s);
+    logF1k_.resize(n);
+    for (size_t i = 0; i < n; ++i)
+        logF1k_[i] = std::log(b.freqHz[i] / 1000.0);
     ringBandNow_ = b.tuning.cymbal.ringBand;
     ringLengthBuilt_ = b.tuning.cymbal.ringLength;
     remapExp_ = b.edgeNpz.remapExponent;
@@ -2015,6 +2027,26 @@ void FastEngine::updateGainBounds() noexcept
     }
 }
 
+// A slot's attack band gains (docs/TUNING.md), from its articulation's values: per band the
+// gain - 1 (0 within 1e-3 of 0 dB, as Python's onset gains, line 438), the largest |gain - 1|
+// over the bands with modes, and the attack time constant (ms x 0.001, as line 435).
+void FastEngine::computeAttack(size_t slot) noexcept
+{
+    const ArticulationTuning& a = slotCurve_[slot];
+    double* gm1 = attackGm1_.data() + slot * size_t(kExcitationBands);
+    double largest = 0.0;
+    for (int j = 0; j < kExcitationBands; ++j)
+    {
+        const double g = std::pow(10.0, a.attackDb[size_t(j)] / 20.0);
+        gm1[j] = std::fabs(g - 1.0) > 1e-3 ? g - 1.0 : 0.0;
+        if (bandHasModes_[size_t(j)])
+            largest = std::max(largest, std::fabs(gm1[j]));
+    }
+    attackGm1Max_[slot] = largest;
+    attackOn_[slot] = largest > 0.0 ? 1 : 0;
+    attackTauS_[slot] = std::max(a.attackMs, 0.1) * 0.001;
+}
+
 // The whole-cymbal mechanisms' settings (docs/TUNING.md: energy cascade, loud-band damping,
 // re-hit damping), from a tuning: amount 0 switches each off.
 void FastEngine::setMechanisms(const CymbalTuning& c) noexcept
@@ -2494,6 +2526,7 @@ void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecayS
             excitationModeGains(t.articulations[s], bake_->freqHz.data(), n_, row);
         excGainOn_[s] = hasBandGains(t.articulations[s]) ? 1 : 0;
         onsetShiftOn_[s] = hasOnsetShift(t.articulations[s]) ? 1 : 0;
+        computeAttack(s);
     }
     // Per-band ring lengths: the new coefficients wait for the next control point
     // (applyDecay). A change of the ring length itself rebuilds the engine (applyTuning), and
@@ -2718,12 +2751,18 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     // This articulation's excitation band gains (docs/TUNING.md) scale the energy the strike
     // puts into each mode, whatever the coupling path.
     const float* excGain = excGainOn_[size_t(slotIndex)] != 0 ? excGain_.data() + size_t(slotIndex) * n : nullptr;
+    // Brightness vs velocity (docs/TUNING.md): a tilt of tiltDb per octave around 1 kHz,
+    // gain (f / 1 kHz) ^ (tiltDb ln 10 / (20 ln 2)) per mode.
+    const double tiltDb = brightnessTiltDb(slotCurve_[size_t(slotIndex)], velocity);
+    const double tiltExp = tiltDb * 0.16609640474436813; // ln 10 / (20 ln 2)
     for (size_t i = 0; i < n; ++i)
     {
         double m = npzEdge ? scratchBellVel_[i] * npzLevel
                            : (b.excNorm[i] * numpyScalarPower(scratchVel_[i], s.velGainPower)) * scratchPosW_[i];
         if (excGain != nullptr)
             m *= static_cast<double>(excGain[i]);
+        if (tiltDb != 0.0)
+            m *= std::exp(tiltExp * logF1k_[i]);
         const double cr = (m * std::cos(scratchPhase_[i])) * calib;
         const double ci = (m * std::sin(scratchPhase_[i])) * calib;
         comp.Br[i] = static_cast<float>(cr); // the coupling until its contact ends (startFreePhase)
@@ -2759,8 +2798,8 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     const double rawPos = position;
     comp.tStrike = strikeTime;
 
-    // render() lines 621-650 and 905-913: this strike's onset ramp (pk_t blended by
-    // edge_frac, with the velocity tilt) and its slot's onset band gains.
+    // render() lines 621-650: this strike's onset ramp (pk_t blended by edge_frac, with the
+    // velocity tilt); its attack band gains below.
     comp.rampOn = false;
     comp.onsetOn = false;
     comp.ptMax = 0.0;
@@ -2841,17 +2880,22 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
             }
         if (comp.rampOn && !baseRamp && comp.ptMax <= 0.0)
             comp.rampOn = false; // the shift leaves every peak at 0: no ramp
-        comp.onsetOn = s.onsetGainsActive && ef < 0.9;
+    }
+    // Attack band gains (docs/TUNING.md): this articulation's gain per band at the strike,
+    // fading to 0 dB with its attack time (lines 902-913: Nova's onset gains are these). As
+    // in Python they do not apply to a bow or bell strike blended to the edge (edge fraction
+    // 0.9 or more); an edge articulation's apply at the edge.
+    {
+        const size_t slot = size_t(slotIndex);
+        const double ef = clamp01(1.0 - rawPos / 0.5);
+        comp.onsetOn = attackOn_[slot] != 0 && (ef < 0.9 || s.position <= 0.25);
         if (comp.onsetOn)
         {
-            comp.onsetTau = s.onsetTauS;
+            comp.onsetTau = attackTauS_[slot];
+            const double* gm1 = attackGm1_.data() + slot * size_t(kExcitationBands);
             for (size_t i = 0; i < n; ++i)
-            {
-                const double g0 = s.onsetGains[size_t(b.bowOnsetModeBand[i])];
-                const double gm1 = std::fabs(g0 - 1.0) > 1e-3 ? g0 - 1.0 : 0.0;
-                comp.gm1[i] = static_cast<float>(gm1);
-                comp.gm1Max = std::max(comp.gm1Max, std::fabs(gm1));
-            }
+                comp.gm1[i] = static_cast<float>(gm1[modeBand_[i]]);
+            comp.gm1Max = attackGm1Max_[slot];
         }
     }
     comp.settled = !comp.rampOn && !comp.onsetOn && !comp.envOn;

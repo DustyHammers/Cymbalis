@@ -20,6 +20,9 @@ tuning block it already has). Then:
     slots[].excitation_band_gains_db (band edges and 22 gains in dB); all 0 dB removes it;
   * each articulation's onset shift goes into its slot's onset data, slots[].onset_shift
     (band edges, 22 delays in ms and 22 speeds); delay 0 and speed 1 everywhere removes it;
+  * each articulation's attack band gains and attack time go into its slot's attack data,
+    slots[].attack_band_gains (band edges, 22 gains in dB, time in ms); values equal to what
+    the slot's onset gains give (bow_onset_band_gains in 22 bands, onset_tau_s) remove it;
   * every other value that differs from the bake's own value goes into the bake's
     "tuning" block, which the plugin's bake loader applies; per-band cymbal values
     (ring_length_bands) as 22 values. The plugin's own mechanisms (energy cascade
@@ -84,6 +87,7 @@ CYMBAL_BAND_KEYS = {
     'ring_length_bands': ((0.25, 4.0), 'x', 1.0),
 }
 LEVEL_KEY, VEL06_KEY, VEL03_KEY = 'level_db', 'vel_0.6_db', 'vel_0.3_db'
+BRIGHT_KEY = 'brightness_db_per_oct'   # with the velocity curve, in the tuning block
 # Excitation band gains (plugin/dsp/Tuning.h): 22 one-third-octave bands, edge j at
 # 11404 x 2^((j - 21) / 3) Hz, 89.1 Hz up to 14368 Hz.
 BANDS_KEY, SLOT_BANDS_KEY = 'band_gains_db', 'excitation_band_gains_db'
@@ -94,6 +98,10 @@ BAND_EDGES_HZ = [round(11404.0 * 2.0 ** ((j - 21) / 3.0), 3) for j in range(N_BA
 DELAY_KEY, SPEED_KEY, SLOT_SHIFT_KEY = 'onset_delay_ms', 'onset_speed', 'onset_shift'
 DELAY_MIN_MS, DELAY_MAX_MS = -50.0, 200.0
 SPEED_MIN, SPEED_MAX = 0.25, 4.0
+# Attack band gains per band (dB) and attack time (docs/TUNING.md).
+ATTACK_KEY, ATTACK_TIME_KEY, SLOT_ATTACK_KEY = 'attack_band_gains_db', 'attack_time_ms', 'attack_band_gains'
+ATTACK_MIN_DB, ATTACK_MAX_DB = -12.0, 12.0
+ATTACK_MIN_MS, ATTACK_MAX_MS = 10.0, 1000.0
 POSITIVE = ('ring_length', 'edge_velocity_remap_exponent', 'wander_rate_hz')
 
 
@@ -161,6 +169,38 @@ def slot_shift(slot):
             [finite(f'slot {slot["name"]} onset speed', v) for v in speeds])
 
 
+def onset_attack(bake, slot):
+    """The attack gains and time a slot's onset gains give (plugin/dsp/Bake.cpp): each band the
+    onset band that contains its centre, in dB; the time from onset_tau_s."""
+    ms = round(float(slot['onset_tau_s']) * 1e9) / 1e6
+    if not slot['effective'].get('bow_onset_gains_active') or slot.get('onset_gains') is None:
+        return [0.0] * N_BANDS, ms
+    gains = slot['onset_gains']['data']
+    edges = bake['shared']['bow_onset_band_edges_hz']['data']
+    out = []
+    for j in range(N_BANDS):
+        centre = 11404.0 * 2.0 ** ((j - 21 + 0.5) / 3.0)
+        k = 0
+        while k + 1 < len(gains) and centre >= edges[k + 1]:
+            k += 1
+        out.append(20.0 * math.log10(gains[k]))
+    return out, ms
+
+
+def slot_attack(bake, slot):
+    """The slot's current attack gains and time: its attack data, else from its onset gains."""
+    entry = slot.get(SLOT_ATTACK_KEY)
+    if not entry:
+        return onset_attack(bake, slot)
+    edges, gains = entry.get('band_edges_hz'), entry.get('gains_db')
+    if not isinstance(edges, list) or not isinstance(gains, list) \
+            or len(edges) != N_BANDS + 1 or len(gains) != N_BANDS:
+        fail(f'slot {slot["name"]}: {SLOT_ATTACK_KEY} needs {N_BANDS + 1} band edges and {N_BANDS} gains')
+    if any(abs(finite('band edge', e) - want) > 0.5 for e, want in zip(edges, BAND_EDGES_HZ)):
+        fail(f'slot {slot["name"]}: {SLOT_ATTACK_KEY} band edges differ from the engine\'s bands')
+    return [finite(f'slot {slot["name"]} attack gain', g) for g in gains], finite('attack time', entry.get('time_ms'))
+
+
 def band_values(name, v, lo, hi, unit):
     """22 values of a band row from the tuning file, each within lo..hi."""
     if not isinstance(v, list) or len(v) != N_BANDS:
@@ -208,6 +248,7 @@ def main():
     curves = {aid: dict(block.get('articulations', {}).get(aid, {})) for aid in ids}
     bands = {aid: slot_bands(bake['slots'][i]) for aid, i in ids.items()}
     shifts = {aid: slot_shift(bake['slots'][i]) for aid, i in ids.items()}
+    attacks = {aid: slot_attack(bake, bake['slots'][i]) for aid, i in ids.items()}
 
     # The file's changes on top of the bake's current values.
     for key, v in (tun.get('cymbal') or {}).items():
@@ -249,8 +290,15 @@ def main():
                 continue
             if key == LEVEL_KEY:
                 levels[aid] = finite(f'{aid}.{key}', v)
-            elif key in (VEL06_KEY, VEL03_KEY):
+            elif key in (VEL06_KEY, VEL03_KEY, BRIGHT_KEY):
                 curves[aid][key] = finite(f'{aid}.{key}', v)
+            elif key == ATTACK_KEY:
+                attacks[aid] = (band_values(f'{aid}.{key}', v, ATTACK_MIN_DB, ATTACK_MAX_DB, 'dB'), attacks[aid][1])
+            elif key == ATTACK_TIME_KEY:
+                ms = finite(f'{aid}.{key}', v)
+                if not ATTACK_MIN_MS <= ms <= ATTACK_MAX_MS:
+                    fail(f'{aid}.{key} must lie in {ATTACK_MIN_MS:g} to {ATTACK_MAX_MS:g} ms')
+                attacks[aid] = (attacks[aid][0], ms)
             elif key == BANDS_KEY:
                 bands[aid] = band_values(f'{aid}.{key}', v, BAND_MIN_DB, BAND_MAX_DB, 'dB')
             elif key == DELAY_KEY:
@@ -318,6 +366,20 @@ def main():
         else:
             slot.pop(SLOT_SHIFT_KEY, None)
 
+    # Attack band gains: stored with the slot; the loader uses them instead of the ones its
+    # onset gains give.
+    for aid, (gains, ms) in attacks.items():
+        slot = bake['slots'][ids[aid]]
+        if (gains, ms) != onset_attack(bake, slot):
+            slot[SLOT_ATTACK_KEY] = {
+                'band_edges_hz': BAND_EDGES_HZ,
+                'gains_db': [round(g, 3) for g in gains],
+                'time_ms': round(ms, 3),
+                'set_by': f'tools/apply_tuning.py from {os.path.basename(args.tuning)} ({now})',
+            }
+        else:
+            slot.pop(SLOT_ATTACK_KEY, None)
+
     print(f'{os.path.basename(bake_path)}:')
     for aid, i in ids.items():
         lt = bake['slots'][i].get('level_trim') or {}
@@ -325,6 +387,9 @@ def main():
         if SLOT_BANDS_KEY in bake['slots'][i]:
             gains = bake['slots'][i][SLOT_BANDS_KEY]['gains_db']
             print(f'  {"":14s} band gains {" ".join(f"{g:+g}" for g in gains)} dB')
+        if SLOT_ATTACK_KEY in bake['slots'][i]:
+            at = bake['slots'][i][SLOT_ATTACK_KEY]
+            print(f'  {"":14s} attack {" ".join(f"{g:+g}" for g in at["gains_db"])} dB, {at["time_ms"]:g} ms')
         if SLOT_SHIFT_KEY in bake['slots'][i]:
             sh = bake['slots'][i][SLOT_SHIFT_KEY]
             print(f'  {"":14s} onset delay {" ".join(f"{d:+g}" for d in sh["delay_ms"])} ms')
