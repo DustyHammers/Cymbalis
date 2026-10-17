@@ -47,6 +47,11 @@ const std::vector<CymbalKey>& cymbalKeys()
         { "cascade_spread", &CymbalTuning::cascadeSpread },
         { "cascade_low_band", &CymbalTuning::cascadeLowBand },
         { "cascade_high_band", &CymbalTuning::cascadeHighBand },
+        { "loud_damp_amount", &CymbalTuning::loudDampAmount },
+        { "loud_damp_threshold_db", &CymbalTuning::loudDampThresholdDb },
+        { "loud_damp_tilt", &CymbalTuning::loudDampTilt },
+        { "rehit_damp_amount", &CymbalTuning::rehitDampAmount },
+        { "rehit_damp_time_ms", &CymbalTuning::rehitDampTimeMs },
     };
     return keys;
 }
@@ -252,6 +257,23 @@ Tuning parseTuningBlock(const json::Value& block, const BakeData& b, const Tunin
                     if (! std::isfinite(x) || ! (x > 0.0))
                         throw std::runtime_error("tuning: ring_length_bands values must be > 0");
                     t.cymbal.ringBand[j] = x;
+                }
+                continue;
+            }
+            if (kv.first == kRehitWeightsKey)
+            {
+                for (const auto& w : kv.second.object())
+                {
+                    int slot = -1;
+                    for (size_t s = 0; s < b.slots.size(); ++s)
+                        if (b.slots[s].id == w.first)
+                            slot = static_cast<int>(s);
+                    if (slot < 0 || slot >= kMaxArticulations)
+                        throw std::runtime_error("tuning: rehit_damp_weights names no articulation \"" + w.first + "\"");
+                    const double x = w.second.number();
+                    if (! std::isfinite(x) || x < 0.0)
+                        throw std::runtime_error("tuning: rehit_damp_weights values must be >= 0");
+                    t.cymbal.rehitWeight[size_t(slot)] = x;
                 }
                 continue;
             }

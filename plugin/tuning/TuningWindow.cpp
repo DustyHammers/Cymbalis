@@ -503,7 +503,8 @@ void TuningPanel::rebuild()
         // Per cymbal, by group. A value that acts on some articulations only names them.
         addPart ("WHOLE CYMBAL", "affects every articulation");
         y += 4;
-        for (auto group : { Group::cymbal, Group::wander, Group::mf, Group::lf, Group::edgeEnvelope, Group::cascade })
+        for (auto group : { Group::cymbal, Group::wander, Group::mf, Group::lf, Group::edgeEnvelope, Group::cascade,
+                            Group::loudDamping, Group::rehitDamping })
         {
             bool any = false;
             for (const auto& f : cymbalFields())
@@ -545,6 +546,20 @@ void TuningPanel::rebuild()
                 list.addAndMakeVisible (*row);
                 cymbalBandRows.push_back (std::move (row));
             }
+            // Re-hit damping: a weight per articulation of the preset.
+            if (group == Group::rehitDamping)
+                for (size_t s = 0; s < bake->slots.size(); ++s)
+                {
+                    auto row = std::make_unique<ValueRow> ("Weight: " + juce::String (bake->slots[s].id).toUpperCase(), "", 0.0,
+                                                           kRehitWeightMax, 2, false);
+                    auto* r = row.get();
+                    row->onChange = [this, s] (double v) { change ([&] (Tuning& t) { t.cymbal.rehitWeight[s] = v; }); };
+                    refreshers.push_back ([this, r, s] {
+                        r->setValues (processor.tuning (preset).cymbal.rehitWeight[s], bake->tuning.cymbal.rehitWeight[s]);
+                    });
+                    place (*row);
+                    rows.push_back (std::move (row));
+                }
             if (group == Group::edgeEnvelope)
             {
                 restartRow = std::make_unique<ToggleRow> ("20 ms frame-decay restart (off: no in-frame decay): "

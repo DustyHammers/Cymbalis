@@ -52,6 +52,8 @@ struct ArticulationTuning
     std::array<double, kExcitationBands> speed = kUnitBands;
 };
 
+constexpr int kMaxArticulations = 8;
+
 // Per cymbal. The defaults are the values of a bake without a tuning block.
 struct CymbalTuning
 {
@@ -78,9 +80,23 @@ struct CymbalTuning
     double cascadeReleaseMs = 150.0;   // how fast the transfer stops below the threshold
     double cascadeSpread = 2.0;        // how many bands up the energy goes (1 .. 6)
     double cascadeLowBand = 0.0, cascadeHighBand = 21.0; // the bands that take part
+    // Loud-band damping (FastEngine): while a band rings above the threshold its modes decay
+    // faster. Amount 0: off.
+    double loudDampAmount = 0.0;        // 0 .. 4: decay rate x (1 + amount x how far above, capped)
+    double loudDampThresholdDb = -12.0; // as the cascade's threshold
+    double loudDampTilt = 0.0;          // -1 .. 1: more effect on the low (-) or high (+) bands
+    // Re-hit damping (FastEngine): a strike first scales down what is already ringing by
+    // amount x velocity x its articulation's weight, over the ramp time. Amount 0: off.
+    double rehitDampAmount = 0.0;       // 0 .. 1
+    double rehitDampTimeMs = 10.0;      // 1 .. 50 ms
+    // Per articulation (bake slot order): its weight, 0 .. 2.
+    std::array<double, kMaxArticulations> rehitWeight = [] {
+        std::array<double, kMaxArticulations> a {};
+        for (auto& x : a)
+            x = 1.0;
+        return a;
+    }();
 };
-
-constexpr int kMaxArticulations = 8;
 
 struct Tuning
 {
@@ -98,6 +114,8 @@ struct CymbalKey
 const std::vector<CymbalKey>& cymbalKeys();
 constexpr const char* kFrameDecayRestartKey = "edge_frame_decay_restart";
 constexpr const char* kRingBandsKey = "ring_length_bands";
+constexpr const char* kRehitWeightsKey = "rehit_damp_weights"; // {articulation id: weight}
+constexpr double kRehitWeightMax = 2.0;
 constexpr double kRingBandMin = 0.25, kRingBandMax = 4.0;
 constexpr const char* kLevelKey = "level_db";
 constexpr const char* kVel06Key = "vel_0.6_db";
