@@ -9,6 +9,7 @@ namespace
 {
 constexpr int kRowHeight = 28;
 constexpr int kHeaderHeight = 30;
+constexpr int kLayerBarHeight = 36; // the velocity layer bar above the layered band rows
 constexpr int kMeterHeight = 96;
 constexpr int kTopHeight = 44;
 constexpr float kTextSize = 15.0f;
@@ -364,8 +365,101 @@ void BandRow::paint (juce::Graphics& g)
     }
 }
 
+LayerBar::LayerBar()
+{
+    note.setText ("VELOCITY LAYER of the rows below (each band between them in log velocity)", juce::dontSendNotification);
+    note.setColour (juce::Label::textColourId, ui::palette::secondary);
+    addAndMakeVisible (note);
+    for (auto* b : { &softButton, &hardButton })
+    {
+        b->setClickingTogglesState (true);
+        b->setRadioGroupId (1);
+        b->onClick = [this] {
+            if (onLayer)
+                onLayer();
+        };
+        addAndMakeVisible (*b);
+    }
+    hardButton.setToggleState (true, juce::dontSendNotification);
+    link.setToggleState (true, juce::dontSendNotification);
+    link.setTooltip ("On: an edit, reset or FLAT sets both layers");
+    addAndMakeVisible (link);
+    copy.setTooltip ("The SOFT layer's attack gains, onset delays and onset speeds into the HARD layer");
+    copy.onClick = [this] {
+        if (onCopy)
+            onCopy();
+    };
+    addAndMakeVisible (copy);
+}
+
+void LayerBar::resized()
+{
+    auto r = getLocalBounds().reduced (8, 4);
+    copy.setBounds (r.removeFromRight (170));
+    r.removeFromRight (8);
+    link.setBounds (r.removeFromRight (70));
+    r.removeFromRight (8);
+    hardButton.setBounds (r.removeFromRight (100));
+    softButton.setBounds (r.removeFromRight (100));
+    note.setBounds (r);
+}
+
+void LayerBar::paint (juce::Graphics& g)
+{
+    g.setColour (ui::palette::divider);
+    g.drawHorizontalLine (0, 8.0f, (float) getWidth() - 8.0f);
+}
+
+PeakRow::PeakRow (TuningLookAndFeel& small)
+{
+    title.setText ("PEAK of each band, last strike of this articulation (ms after the strike)", juce::dontSendNotification);
+    title.setColour (juce::Label::textColourId, ui::palette::secondary);
+    addAndMakeVisible (title);
+    for (auto& v : values)
+    {
+        v.setJustificationType (juce::Justification::centred);
+        v.setLookAndFeel (&small);
+        v.setColour (juce::Label::textColourId, ui::palette::label);
+        addAndMakeVisible (v);
+    }
+    setPeaks ({}, false);
+}
+
+PeakRow::~PeakRow()
+{
+    for (auto& v : values)
+        v.setLookAndFeel (nullptr);
+}
+
+void PeakRow::setPeaks (const std::array<float, kExcitationBands>& ms, bool valid)
+{
+    if (! first && valid == shownValid && (! valid || ms == shown))
+        return;
+    first = false;
+    shown = ms;
+    shownValid = valid;
+    for (size_t j = 0; j < values.size(); ++j)
+        values[j].setText (! valid || ms[j] < 0.0f ? juce::String ("-")
+                           : ms[j] < 10.0f             ? juce::String (ms[j], 1)
+                                                       : juce::String (juce::roundToInt (ms[j])),
+                           juce::dontSendNotification);
+}
+
+void PeakRow::resized()
+{
+    // The columns of BandRow.
+    auto r = getLocalBounds().reduced (8, 2);
+    title.setBounds (r.removeFromTop (20));
+    const int w = r.getWidth() / kExcitationBands;
+    for (int j = 0; j < kExcitationBands; ++j)
+        values[(size_t) j].setBounds (r.withX (r.getX() + j * w).withWidth (w).withTrimmedLeft (3));
+}
+
 BandEq::BandEq (const ui::Assets& a) : small (a, 11.5f)
 {
+    addAndMakeVisible (layerBar);
+    peakRow = std::make_unique<PeakRow> (small);
+    addAndMakeVisible (*peakRow);
     for (const auto& f : articulationFields())
         if (f.inBands)
             attackTimeRow = std::make_unique<ValueRow> (f.label, f.unit, f.lo, f.hi, f.decimals, false);
@@ -399,17 +493,24 @@ void BandEq::resized()
     auto top = r.removeFromTop (kSelectorHeight).reduced (8, 6);
     title.setBounds (top.removeFromLeft (110));
     selector.setBounds (top.removeFromLeft (260));
+    bool layered = false;
     for (size_t i = 0; i < rows.size(); ++i)
     {
+        if (! layered && bandFields()[i].softMember != nullptr)
+        {
+            layerBar.setBounds (r.removeFromTop (kLayerBarHeight));
+            layered = true;
+        }
         rows[i]->setBounds (r.removeFromTop (BandRow::height));
         if (attackTimeRow != nullptr && juce::String (bandFields()[i].spec.key) == kAttackGainsKey)
             attackTimeRow->setBounds (r.removeFromTop (kRowHeight).withTrimmedLeft (0));
     }
+    peakRow->setBounds (r.removeFromTop (PeakRow::height));
 }
 
 int BandEq::height()
 {
-    return kSelectorHeight + (int) bandFields().size() * BandRow::height + kRowHeight;
+    return kSelectorHeight + (int) bandFields().size() * BandRow::height + kRowHeight + kLayerBarHeight + PeakRow::height;
 }
 
 // =====================================================================================
@@ -518,6 +619,7 @@ void TuningPanel::rebuild()
                     change ([&] (Tuning& t) {
                         t.articulations[s].bandDb = profile->bandDb;
                         t.articulations[s].attackDb = profile->attackDb;
+                        t.articulations[s].attackDbSoft = profile->attackDb;
                         t.articulations[s].attackMs = profile->attackMs;
                     });
                 };
@@ -534,21 +636,46 @@ void TuningPanel::rebuild()
         bandEq->setArticulations (names);
         auto bandArt = [this] { return (size_t) juce::jmax (0, bandEq->selected()); };
         bandEq->onSelect = [this] { showValues(); };
+        // A layered row (attack gain, onset delay, onset speed) shows and edits the layer the
+        // layer bar chooses; with LINK an edit, reset or FLAT sets both layers.
+        auto& layers = bandEq->layers();
+        layers.onLayer = [this] { showValues(); };
+        layers.onCopy = [this, bandArt] {
+            const size_t s = bandArt();
+            change ([&] (Tuning& t) {
+                for (const auto& f : bandFields())
+                    if (f.softMember != nullptr)
+                        t.articulations[s].*(f.member) = t.articulations[s].*(f.softMember);
+            });
+        };
         for (size_t fi = 0; fi < bandFields().size(); ++fi)
         {
             const auto& f = bandFields()[fi]; // static: the lambdas may keep a reference
             auto& row = bandEq->row (fi);
-            row.onBandChange = [this, bandArt, &f] (int band, double v) {
+            auto shown = [this, &f] { return f.softMember != nullptr && bandEq->layers().soft() ? f.softMember : f.member; };
+            auto both = [this, &f] { return f.softMember != nullptr && bandEq->layers().linked(); };
+            row.onBandChange = [this, bandArt, &f, shown, both] (int band, double v) {
                 const size_t s = bandArt();
-                change ([&] (Tuning& t) { (t.articulations[s].*(f.member))[(size_t) band] = v; });
+                change ([&] (Tuning& t) {
+                    (t.articulations[s].*(shown()))[(size_t) band] = v;
+                    if (both())
+                        (t.articulations[s].*(f.member == shown() ? f.softMember : f.member))[(size_t) band] = v;
+                });
             };
-            row.onFlat = [this, bandArt, &f] {
+            row.onFlat = [this, bandArt, &f, shown, both] {
                 const size_t s = bandArt();
-                change ([&] (Tuning& t) { (t.articulations[s].*(f.member)).fill (f.spec.flat); });
+                change ([&] (Tuning& t) {
+                    (t.articulations[s].*(shown())).fill (f.spec.flat);
+                    if (both())
+                    {
+                        (t.articulations[s].*(f.member)).fill (f.spec.flat);
+                        (t.articulations[s].*(f.softMember)).fill (f.spec.flat);
+                    }
+                });
             };
-            refreshers.push_back ([this, bandArt, &row, &f] {
+            refreshers.push_back ([this, bandArt, &row, shown] {
                 const size_t s = bandArt();
-                row.setValues (processor.tuning (preset).articulations[s].*(f.member), bake->tuning.articulations[s].*(f.member));
+                row.setValues (processor.tuning (preset).articulations[s].*(shown()), bake->tuning.articulations[s].*(shown()));
             });
         }
         // The attack time of the chosen articulation, under its attack gains.
@@ -753,6 +880,13 @@ void TuningPanel::timerCallback()
         heldAt = now;
     }
     repaint (0, kTopHeight, getWidth(), kMeterHeight);
+    // When each band of the selected articulation's last strike peaked.
+    if (bandEq != nullptr && bake != nullptr)
+    {
+        std::array<float, kExcitationBands> ms {};
+        const bool struck = processor.onsetPeaks (preset, juce::jmax (0, bandEq->selected()), ms);
+        bandEq->peaks().setPeaks (ms, struck);
+    }
 }
 
 void TuningPanel::save()
