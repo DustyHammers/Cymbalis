@@ -9,10 +9,12 @@
 // path and the plugin wrapper exactly as a host's would. After each step it reads the
 // plugin's saved state through the host API and checks the result:
 //
+//   edge      nothing: the EDGE note of a new instance                -> note_EDGE 64
 //   channel   click the MIDI CHANNEL box, then channel 5 in the grid  -> midiChannel 5
 //   drag      drag the BOW note box up by 40 design units             -> note_BOW 67
 //   reset     click the BOW note box, then RESET DEFAULT              -> note_BOW 62
 //   none      click the BELL note box, then NONE                      -> note_BELL -1
+//   edgereset click the EDGE note box, NONE, then again, RESET DEFAULT -> note_EDGE 64
 //   list      click the BELL2 note box, then the note row below C#3   -> note_BELL2 62
 //   stick     click the BELL stick box, then TIP                      -> stick_BELL TIP
 //   preset    click the CYMBAL box, then HAMMERED THIN RIDE            -> preset hammered_thin_ride
@@ -198,7 +200,13 @@ private:
     {
         Step s { name, {}, {}, {}, {} };
         auto wait = [] {};
-        if (name == "channel")
+        if (name == "edge")
+        {
+            s.actions = { wait };
+            s.key = "note_EDGE";
+            s.expected = "64";
+        }
+        else if (name == "channel")
         {
             // Grid popup: 4 x 61 wide plus 2 x 8, centred over the box, above it; 4 rows of 40.
             s.actions = { click (770.0f, 967.0f), wait, click (770.0f - 130.0f + 8.0f + 30.0f, 756.0f + 8.0f + 40.0f + 20.0f), wait };
@@ -222,6 +230,13 @@ private:
             s.actions = { click (1457.0f, 152.0f), wait, click (1420.0f, menuItemY (165.0f, 2)), wait };
             s.key = "note_BELL";
             s.expected = "-1";
+        }
+        else if (name == "edgereset")
+        {
+            s.actions = { click (1457.0f, 312.0f), wait, click (1420.0f, menuItemY (325.0f, 2)), wait,
+                          click (1457.0f, 312.0f), wait, click (1420.0f, menuItemY (325.0f, 1)), wait };
+            s.key = "note_EDGE";
+            s.expected = "64";
         }
         else if (name == "list")
         {

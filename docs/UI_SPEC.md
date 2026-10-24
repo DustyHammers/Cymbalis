@@ -105,13 +105,15 @@ Hover, open and selected states use only colours from this table.
 | MIDI channel | 16 |
 | BELL | SHOULDER, C3 (60) |
 | BOW | TIP, D3 (62) |
-| EDGE | SHOULDER (fixed), unassigned |
+| EDGE | SHOULDER (fixed), E3 (64) |
 | BELL2 | TIP, C#3 (61) |
 | BOW2 | SHOULDER, D#3 (63) |
 | Blend Position 1 | Full BELL |
 | Blend Position 2 | Full BOW |
 
 Note naming uses the Logic/Ableton convention (60 = C3). The note number is always shown alongside the name.
+
+The default notes are the same in every preset (section 8). A new instance starts with them, and RESET DEFAULT in a note box's menu returns that row to its default. A saved session keeps the notes it stored: an EDGE saved unassigned, as every session from before 2026-10-24 has it unless a note was given, stays unassigned.
 
 **Blend knobs have no MIDI notes of their own.** They change the character of the existing slots:
 - Blend 1 moves the BELL notes from full bell toward a bell/bow mix.
@@ -129,7 +131,7 @@ A preset can name a row: SMOKE FLAT RIDE labels its bell rows CENTER and CENTER2
 |---|---|---|---|
 | BELL | 1.0 | Blend 1: 1.0 → 0.5 | C3 (60) |
 | BOW | 0.5 | Blend 2: 0.5 → 0.0 | D3 (62) |
-| EDGE | 0.0 | — | unassigned |
+| EDGE | 0.0 | — | E3 (64) |
 | BELL2 | 1.0 | Blend 1: 1.0 → 0.5 | C#3 (61) |
 | BOW2 | 0.5 | Blend 2: 0.5 → 0.0 | D#3 (63) |
 
@@ -195,4 +197,4 @@ Placeholder ranges until Kris revises them. At the defaults the plugin sounds th
 
 EDGE always strikes at position 0.0. All four are automatable. No other parameters. Their host-visible names and value texts are the same in every preset; on SMOKE FLAT RIDE, Blend Position 1 still reads BELL → BOW in the host, although its knob labels read CENTER · BOW.
 
-Non-automatable state saved with the session: MIDI channel, note per slot, stick per slot and preset (rows with a choice), current preset, editor size. NOVA RIDE's sticks keep the session keys they had before the other presets offered a choice (`stick_BELL`, …); the other presets' keys name the preset (`stick_smoke_flat_ride_BELL`, `stick_hammered_thin_ride_BOW2`, `stick_swish_BOW`, …). A session without a key gives the row its default stick.
+Non-automatable state saved with the session: MIDI channel, note per slot, stick per slot and preset (rows with a choice), current preset, editor size. A session without a row's note key gives the row its default note. NOVA RIDE's sticks keep the session keys they had before the other presets offered a choice (`stick_BELL`, …); the other presets' keys name the preset (`stick_smoke_flat_ride_BELL`, `stick_hammered_thin_ride_BOW2`, `stick_swish_BOW`, …). A session without a key gives the row its default stick.

@@ -143,16 +143,16 @@ jobs:
             echo "Rosetta not installed on this runner; skipping x86_64 auval"
           fi
 
-      # Real mouse events through the AU and VST3 wrappers: change the MIDI channel, the slot
-      # notes (drag, menu, note list), a stick, the preset and a stick of that preset, then
-      # SWISH, in the editor, and check the plugin's saved state; then click TUNING: the
-      # Tuning window must be visible, in front of the editor and attached to it, and hidden
-      # after a second click (tools/cymbalis_uitest).
+      # Real mouse events through the AU and VST3 wrappers: EDGE's default note (64), then change
+      # the MIDI channel, the slot notes (drag, menu, RESET DEFAULT, note list), a stick, the
+      # preset and a stick of that preset, then SWISH, in the editor, and check the plugin's
+      # saved state; then click TUNING: the Tuning window must be visible, in front of the
+      # editor and attached to it, and hidden after a second click (tools/cymbalis_uitest).
       - name: Editor mouse test (AU and VST3)
         timeout-minutes: 5
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
-          STEPS="channel drag reset none list stick preset shoulder swish tuning tuningclose"
+          STEPS="edge channel drag reset none edgereset list stick preset shoulder swish tuning tuningclose"
           echo "--- VST3 ---"
           "$UITEST" "$PWD/$VST3" $STEPS
           echo "--- AU ---"
