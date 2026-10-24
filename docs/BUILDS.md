@@ -8,7 +8,7 @@ Every push to `main` runs **Actions → Build macOS (VST3 + AU)**. It builds one
 - JUCE 7.0.12, built with Xcode 15
 - The Intel slice capped at SSE4.1, and the build fails if any AVX instructions appear
 - Validation with pluginval (VST3) and auval (AU, native and under Rosetta)
-- An editor mouse test in an AU and a VST3 host (`tools/cymbalis_uitest`): real mouse events change the MIDI channel, notes, a stick, the preset and a stick of that preset, checked in the plugin's saved state; then a real click on TUNING must show the Tuning window, visible and in front of the editor and attached to its window, and a second click must hide it
+- An editor mouse test in an AU and a VST3 host (`tools/cymbalis_uitest`): real mouse events change the MIDI channel, notes, a stick, the preset and a stick of that preset, checked in the plugin's saved state, and the scroll wheel over the knobs and boxes must change nothing; then a real click on TUNING must show the Tuning window, visible and in front of the editor and attached to its window, the wheel over its sliders and numeric boxes must change nothing, and a second click must hide it
 - Ad-hoc code signing
 
 The run's **Artifacts** section has one artifact, `Cymbalis-macOS-<shortsha>`, with two zips and nothing else: `Cymbalis-VST3-macOS-<shortsha>.zip` and `Cymbalis-AU-macOS-<shortsha>.zip`.

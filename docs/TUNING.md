@@ -30,6 +30,7 @@ The window has two parts, one below the other, each under a filled title band wi
 The window uses plain JUCE controls in the editor's palette and font:
 
 - Each value is a slider with a numeric box. Type a number into the box to enter it exactly.
+- The mouse wheel and trackpad scrolling change no value. Over a slider or a numeric box, the band sliders included, they scroll the window's list instead. A value changes only by a click and drag, a typed number or a button (reset, FLAT, RESET ALL, LOAD...).
 - The arrow button at the right of a row resets that value to the baked one.
 - A changed value has a bronze bar at the left of its row.
 - **MODIFIED** next to the preset name means some value differs from the bake.

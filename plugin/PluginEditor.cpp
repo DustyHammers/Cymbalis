@@ -107,7 +107,7 @@ Knob::Knob (const Assets& a) : assets (a)
     setSliderStyle (juce::Slider::RotaryVerticalDrag);
     setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     setMouseDragSensitivity (300);
-    setScrollWheelEnabled (true);
+    setScrollWheelEnabled (false); // only a drag (or double-click, or the host) changes a value
 }
 
 void Knob::paint (juce::Graphics& g)

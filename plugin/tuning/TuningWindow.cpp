@@ -110,6 +110,25 @@ juce::Font TuningLookAndFeel::getAlertWindowTitleFont() { return font (kTextSize
 // =====================================================================================
 namespace
 {
+// The wheel over a slider or its numeric box never changes the value: it scrolls the list
+// (docs/TUNING.md). With its wheel off a slider passes the wheel on to its parent; its text box
+// (JUCE's) swallows it, so a listener on the slider passes that on to the slider.
+struct PassWheelOn final : public juce::MouseListener
+{
+    void mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override
+    {
+        if (auto* slider = dynamic_cast<juce::Slider*> (e.eventComponent->getParentComponent()))
+            slider->mouseWheelMove (e.getEventRelativeTo (slider), wheel);
+    }
+};
+
+void wheelScrollsList (juce::Slider& slider)
+{
+    static PassWheelOn passWheelOn;
+    slider.setScrollWheelEnabled (false);
+    slider.addMouseListener (&passWheelOn, true);
+}
+
 // A small reset button: a circular arrow, drawn.
 class Reset final : public juce::Button
 {
@@ -138,6 +157,7 @@ ValueRow::ValueRow (const juce::String& n, const juce::String& u, double lo, dou
     slider.setSliderStyle (juce::Slider::LinearHorizontal);
     slider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 90, kRowHeight - 6);
     slider.setTextBoxIsEditable (true);
+    wheelScrollsList (slider);
     if (band)
     {
         slider.textFromValueFunction = [] (double v) {
@@ -276,6 +296,7 @@ BandRow::BandRow (const BandSpec& f, TuningLookAndFeel& small, const juce::Strin
         c->slider.setSliderStyle (juce::Slider::LinearVertical);
         c->slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 40, 18);
         c->slider.setTextBoxIsEditable (true);
+        wheelScrollsList (c->slider);
         c->slider.setRange (field.lo, field.hi, 0.0);
         if (field.logarithmic)
             c->slider.setSkewFactorFromMidPoint (field.flat);

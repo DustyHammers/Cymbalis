@@ -2,6 +2,8 @@
 
 #import <AppKit/AppKit.h>
 
+#include <cmath>
+
 namespace cymbalis::uitest
 {
 namespace
@@ -16,6 +18,49 @@ NSPoint windowPoint (juce::Component& target, juce::Point<float> p, NSWindow*& w
     // JUCE views are flipped (origin top-left).
     const NSPoint inView = NSMakePoint (inPeer.x, inPeer.y);
     return [view convertPoint: inView toView: nil];
+}
+
+NSWindow* tuningWindow (juce::Component& editor)
+{
+    auto* peer = editor.getPeer();
+    NSWindow* host = peer != nullptr ? [(NSView*) peer->getNativeHandle() window] : nil;
+    NSWindow* tuning = nil;
+    for (NSWindow* w in [NSApp windows])
+        if (w != host && [[w title] rangeOfString: @"Tuning"].location != NSNotFound)
+            tuning = w;
+    return tuning;
+}
+
+// Scroll-wheel events at `location` (window base coordinates) of `window`, sent to the view
+// under it, which must be a JUCE view (the plugin's editor or Tuning window). There is no
+// NSEvent constructor for scroll events, so they come from CGEvents. Such an event has no
+// window and gives its location in screen coordinates (origin at the bottom left of the
+// main screen); it is placed so that the view reads it as `location`, as JUCE does
+// ([view convertPoint: [event locationInWindow] fromView: nil]).
+juce::String wheelAt (NSWindow* window, NSPoint location)
+{
+    if (window == nil)
+        return "no window";
+    NSView* content = [window contentView];
+    NSView* view = [content hitTest: [[content superview] convertPoint: location fromView: nil]];
+    if (view == nil)
+        return "no view under the point";
+    if (! [NSStringFromClass ([view class]) hasPrefix: @"JUCEView"])
+        return juce::String ("not a JUCE view: ") + [NSStringFromClass ([view class]) UTF8String];
+    const CGFloat mainHeight = NSMaxY ([[[NSScreen screens] firstObject] frame]);
+    for (int lines : { -1, -1, 1 })
+    {
+        CGEventRef cg = CGEventCreateScrollWheelEvent (nullptr, kCGScrollEventUnitLine, 1, lines);
+        CGEventSetLocation (cg, CGPointMake (location.x, mainHeight - location.y));
+        NSEvent* e = [NSEvent eventWithCGEvent: cg];
+        CFRelease (cg);
+        const NSPoint at = [e locationInWindow];
+        if ([e type] != NSEventTypeScrollWheel || [e window] != nil || std::abs (at.x - location.x) > 0.5
+            || std::abs (at.y - location.y) > 0.5 || [e deltaY] == 0.0)
+            return "unexpected scroll event";
+        [view scrollWheel: e];
+    }
+    return {};
 }
 
 void post (NSWindow* window, NSEventType type, NSPoint location)
@@ -44,14 +89,27 @@ void click (juce::Component& target, juce::Point<float> p)
     post (window, NSEventTypeLeftMouseUp, loc);
 }
 
+juce::String wheel (juce::Component& target, juce::Point<float> p)
+{
+    NSWindow* window = nil;
+    const NSPoint loc = windowPoint (target, p, window);
+    return wheelAt (window, loc);
+}
+
+juce::String wheelTuning (juce::Component& editor, float fx, float fy)
+{
+    NSWindow* tuning = tuningWindow (editor);
+    if (tuning == nil || ! [tuning isVisible])
+        return "no Tuning window";
+    const NSRect r = [[tuning contentView] frame];
+    return wheelAt (tuning, NSMakePoint (NSMinX (r) + fx * NSWidth (r), NSMaxY (r) - fy * NSHeight (r)));
+}
+
 juce::String tuningWindowState (juce::Component& editor)
 {
     auto* peer = editor.getPeer();
     NSWindow* host = peer != nullptr ? [(NSView*) peer->getNativeHandle() window] : nil;
-    NSWindow* tuning = nil;
-    for (NSWindow* w in [NSApp windows])
-        if (w != host && [[w title] rangeOfString: @"Tuning"].location != NSNotFound)
-            tuning = w;
+    NSWindow* tuning = tuningWindow (editor);
     if (tuning == nil)
         return "none";
     if (! [tuning isVisible])

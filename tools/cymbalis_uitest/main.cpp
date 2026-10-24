@@ -20,11 +20,18 @@
 //   preset    click the CYMBAL box, then HAMMERED THIN RIDE            -> preset hammered_thin_ride
 //   shoulder  (after preset) click the BELL stick box, then SHOULDER  -> stick_hammered_thin_ride_BELL SHOULDER
 //   swish     click the CYMBAL box, then SWISH (the fourth)          -> preset swish
+//   wheel     the scroll wheel over the four knobs, a note box, a stick box, the CYMBAL and
+//             MIDI CHANNEL boxes                                     -> state and parameters unchanged
 //
 // The Tuning window (docs/TUNING.md); these read the windows, not the saved state:
 //
 //   tuning       click TUNING        -> the Tuning window is visible and in front of the editor
 //   tuningclose  click TUNING again  -> the Tuning window is hidden
+//
+// and, with the Tuning window open, this one reads the saved state again:
+//
+//   wheeltuning  the scroll wheel over the Tuning window's sliders and numeric boxes, down
+//                its list (the wheel scrolls the list)               -> state and parameters unchanged
 //
 // Exit code 0 when every step passed.
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -50,9 +57,15 @@ juce::String findSession (const juce::MemoryBlock& data, int depth = 0)
     const char* start = std::search (begin, end, tag, tag + sizeof (tag) - 1);
     if (start != end)
     {
-        const char close[] = "/>";
-        const char* stop = std::search (start, end, close, close + 2);
-        return stop != end ? juce::String::fromUTF8 (start, (int) (stop + 2 - start)) : juce::String();
+        // The whole element: <Session .../>, or <Session ...> with its Tuning children.
+        const char* tagEnd = std::find (start, end, '>');
+        if (tagEnd == end)
+            return {};
+        if (tagEnd[-1] == '/')
+            return juce::String::fromUTF8 (start, (int) (tagEnd + 1 - start));
+        const char close[] = "</Session>";
+        const char* stop = std::search (tagEnd, end, close, close + sizeof (close) - 1);
+        return stop != end ? juce::String::fromUTF8 (start, (int) (stop + sizeof (close) - 1 - start)) : juce::String();
     }
     if (depth > 3)
         return {};
@@ -196,6 +209,26 @@ private:
         return [this, x, y] { cymbalis::uitest::click (*editor, at (x, y)); };
     }
 
+    // The saved session settings and every parameter's value, through the host API.
+    juce::String snapshot()
+    {
+        juce::MemoryBlock state;
+        plugin->getStateInformation (state);
+        auto s = findSession (state);
+        for (auto* p : plugin->getParameters())
+            s << " | " << p->getName (64) << " " << juce::String (p->getValue(), 9);
+        return s;
+    }
+
+    // Unchanged since `before`, or what changed and what failed while turning the wheel.
+    juce::String unchanged()
+    {
+        const auto now = snapshot();
+        if (wheelError.isNotEmpty())
+            return "wheel failed: " + wheelError;
+        return now == before ? juce::String ("unchanged") : "changed: " + now + "\n      was:     " + before;
+    }
+
     void addStep (const juce::String& name)
     {
         Step s { name, {}, {}, {}, {} };
@@ -265,6 +298,44 @@ private:
             s.expected = name == "tuning" ? "visible-front" : "hidden";
             s.probe = [this] { return cymbalis::uitest::tuningWindowState (*editor); };
         }
+        else if (name == "wheel")
+        {
+            // The four knobs (UI_SPEC section 3), the BOW note box, the BELL stick box, the
+            // CYMBAL and MIDI CHANNEL boxes.
+            s.actions = { [this] {
+                             before = snapshot();
+                             wheelError = {};
+                             const juce::Point<float> points[] = { { 201.0f, 641.0f }, { 199.0f, 881.0f }, { 1349.0f, 642.0f },
+                                                                   { 1350.0f, 881.0f }, { 1457.0f, 232.0f }, { 1314.0f, 152.0f },
+                                                                   { 199.0f, 402.0f },  { 770.0f, 967.0f } };
+                             for (auto p : points)
+                                 wheelError += cymbalis::uitest::wheel (*editor, at (p.x, p.y));
+                         },
+                          wait };
+            s.key = "after the wheel";
+            s.expected = "unchanged";
+            s.probe = [this] { return unchanged(); };
+        }
+        else if (name == "wheeltuning")
+        {
+            // Down the window in steps, over the value rows' names (30 % of the width), sliders
+            // (55 %) and numeric boxes (91 %); the band rows' sliders span the width. Each turn
+            // scrolls the list on, so the rows under the pointer change.
+            s.actions.push_back ([this] {
+                before = snapshot();
+                wheelError = {};
+            });
+            for (int i = 0; i < 16; ++i)
+                s.actions.push_back ([this, i] {
+                    for (float fx : { 0.3f, 0.55f, 0.91f })
+                        for (float fy = 0.2f + 0.01f * (float) i; fy < 0.97f; fy += 0.16f)
+                            wheelError += cymbalis::uitest::wheelTuning (*editor, fx, fy);
+                });
+            s.actions.push_back (wait);
+            s.key = "after the wheel";
+            s.expected = "unchanged";
+            s.probe = [this] { return unchanged(); };
+        }
         else if (name == "preset")
         {
             // List below the CYMBAL box (61, 371, 277 x 62): 4 units down, inset 8, rows of 40.
@@ -329,6 +400,7 @@ private:
     std::unique_ptr<Window> window;
     std::vector<Step> steps;
     int stepIndex = 0, actionIndex = 0, passed = 0;
+    juce::String before, wheelError; // the wheel steps
 };
 
 START_JUCE_APPLICATION (UiTestApp)
