@@ -1,4 +1,4 @@
-// Tuning build only (docs/TUNING.md): the processor's tuning state, its hand-over to the
+// Tuning code only (CYMBALIS_WITH_TUNING, docs/TUNING.md): the processor's tuning state, its hand-over to the
 // audio thread, the meters and the session state.
 #include "PluginProcessor.h"
 #include "TuningFields.h"

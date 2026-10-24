@@ -221,7 +221,7 @@ private:
 
     DropdownBox presetBox, channelBox;
 #if CYMBALIS_TUNING
-    // Tuning build: the TUNING button (top right) opens and closes the Tuning window.
+    // The TUNING button (top right) opens and closes the Tuning window.
     class TuningButton;
     std::unique_ptr<TuningButton> tuningButton;
     void toggleTuningWindow (bool open);
@@ -241,7 +241,7 @@ private:
     int shownLearn = -1;
     double learnStartMs = 0.0;
 #if CYMBALIS_TUNING
-    std::unique_ptr<tuning::TuningWindow> tuningWindow; // tuning build: TUNING button, or Cmd-click on the logo
+    std::unique_ptr<tuning::TuningWindow> tuningWindow; // TUNING button, or Cmd-click on the logo
 #endif
 };
 

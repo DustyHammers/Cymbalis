@@ -1,6 +1,6 @@
 #pragma once
 
-// Tuning build only (docs/TUNING.md): what the tuning window shows for each value, and the
+// Tuning code only (CYMBALIS_WITH_TUNING, docs/TUNING.md): what the tuning window shows for each value, and the
 // tuning file format.
 
 #include <juce_core/juce_core.h>

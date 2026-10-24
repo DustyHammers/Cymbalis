@@ -1,10 +1,10 @@
 // Tuning.h — the values Kris tunes by ear (docs/TUNING.md), as plain data.
 //
 // A bake may carry a "tuning" block (written by tools/apply_tuning.py from a tuning file of
-// the Cymbalis Tuning build). loadBake() applies it with applyTuning(), so BakeData holds
-// the tuned values and BakeData::tuning records them. The tuning build changes the same
-// values live (FastEngine::setTuning) and rebuilds the engine for the ring length, with the
-// same functions, so what it plays is what the normal build plays from the tuned bake.
+// the Tuning window). loadBake() applies it with applyTuning(), so BakeData holds the tuned
+// values and BakeData::tuning records them. The Tuning window changes the same values live
+// (FastEngine::setTuning) and rebuilds the engine for the ring length, with the same
+// functions, so what it plays is what the plugin plays from the tuned bake.
 #pragma once
 
 #include "Json.h"

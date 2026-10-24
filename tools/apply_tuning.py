@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write a tuning file of the Cymbalis Tuning build into its preset's bake.
+"""Write a tuning file of Cymbalis's Tuning window into its preset's bake.
 
     python tools/apply_tuning.py nova_ride.tuning.json
     python tools/apply_tuning.py nova_ride.tuning.json --bake resources/presets/nova_ride.bake.json --dry-run

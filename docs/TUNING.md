@@ -1,22 +1,16 @@
-# Tuning by ear: the Cymbalis Tuning build
+# Tuning by ear: the Tuning window
 
-Kris tunes each cymbal by ear in a hidden Tuning window, saves the settings as a tuning file (JSON), and brings the file to the project session. There, `tools/apply_tuning.py` writes it into the preset's bake in `resources/presets/`, and the normal plugin plays the tuned values. This document is the approved spec, 2026-10-16. The tuning adds no host parameters; the four plugin parameters (`docs/UI_SPEC.md` section 9) stay as they are.
+Kris tunes each cymbal by ear in Cymbalis's Tuning window, saves the settings as a tuning file (JSON), and brings the file to the project session. There, `tools/apply_tuning.py` writes it into the preset's bake in `resources/presets/`, and the plugin plays the tuned values from the bake. This document is the approved spec, 2026-10-16. The tuning adds no host parameters; the four plugin parameters (`docs/UI_SPEC.md` section 9) stay as they are.
 
-## The two builds
+## One plugin, with the tuning code
 
-| | Cymbalis | Cymbalis Tuning |
-|---|---|---|
-| CMake | default (`CYMBALIS_TUNING` OFF) | `-DCYMBALIS_TUNING=ON` |
-| Product name | Cymbalis | Cymbalis Tuning |
-| Plugin code | `Cymb` | `CymT` |
-| Bundle ID | `com.dhammers.cymbalis` | `com.dhammers.cymbalistuning` |
-| Tuning window, live values, tuning files, tuning in the session | no | yes |
+Cymbalis (plugin code `Cymb`, bundle ID `com.dhammers.cymbalis`) has the TUNING button, the Tuning window, live tuning values, tuning files and tuning in its session state. The CMake option `CYMBALIS_WITH_TUNING` (ON by default) builds this tuning code in; the code tests the macro `CYMBALIS_TUNING`. `-DCYMBALIS_WITH_TUNING=OFF` builds a lean Cymbalis under the same identity, with no button, no window, no live values, no tuning files and no tuning in its session state. Both read a bake's `tuning` block when they load the bake (below), so both play what was tuned. CI builds only the full plugin (`docs/BUILDS.md`).
 
-The two install side by side. The normal build has no tuning window, no live tuning values, no tuning files and no tuning in its session state. Like the tuning build, it reads a bake's `tuning` block when it loads the bake (below), so it plays what was tuned. CI builds both (`docs/BUILDS.md`).
+Cymbalis Tuning (plugin code `CymT`), the separate tuning build of earlier versions, is no longer built. Its tuning files load in Cymbalis (**LOAD...**).
 
 ## Opening the window
 
-In Cymbalis Tuning, click **TUNING**, the box in the editor's top right corner (above the STICK ARTICULATION and MIDI NOTE headers). It opens the Tuning window; a second click closes it. While the window is open the box has the light outline of an open box. **Cmd-click on the CYMBALIS logo** (Ctrl-click on Linux) opens it too. The rest of the editor is unchanged, and the normal build has neither the button nor the window.
+In Cymbalis, click **TUNING**, the box in the editor's top right corner (above the STICK ARTICULATION and MIDI NOTE headers). It opens the Tuning window; a second click closes it. While the window is open the box has the light outline of an open box. **Cmd-click on the CYMBALIS logo** (Ctrl-click on Linux) opens it too. The rest of the editor is unchanged; a lean build (above) has neither the button nor the window.
 
 The Tuning window is attached to the editor's window. On macOS it is a child window of it:
 
@@ -36,6 +30,7 @@ The window has two parts, one below the other, each under a filled title band wi
 The window uses plain JUCE controls in the editor's palette and font:
 
 - Each value is a slider with a numeric box. Type a number into the box to enter it exactly.
+- The mouse wheel and trackpad scrolling change no value. Over a slider or a numeric box, the band sliders included, they scroll the window's list instead. A value changes only by a click and drag, a typed number or a button (reset, FLAT, RESET ALL, LOAD...).
 - The arrow button at the right of a row resets that value to the baked one.
 - A changed value has a bronze bar at the left of its row.
 - **MODIFIED** next to the preset name means some value differs from the bake.
@@ -313,7 +308,7 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
 
 ## Tuning files
 
-**SAVE...** writes the current preset's tuning to a file (default name `<preset>.tuning.json`). **LOAD...** reads one. A file for another preset is refused with a message. So is a file for another bake format, an unknown value, band gains that are not 22 numbers from −24 to +12 dB, or a ring length, edge capture curve, wander rate or `tau_ref_ms` that is not above 0. The tuning build also saves each preset's tuning (if it differs from the bake) in its session state, and restores it with the session.
+**SAVE...** writes the current preset's tuning to a file (default name `<preset>.tuning.json`). **LOAD...** reads one. A file for another preset is refused with a message. So is a file for another bake format, an unknown value, band gains that are not 22 numbers from −24 to +12 dB, or a ring length, edge capture curve, wander rate or `tau_ref_ms` that is not above 0. Cymbalis also saves each preset's tuning (if it differs from the bake) in its session state, and restores it with the session. A session without tuning, such as one saved by Cymbalis before it had the Tuning window, loads with every preset at its bake's values.
 
 ```json
 {
@@ -322,7 +317,7 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
   "preset": "nova_ride",
   "bake_format_version": 1,
   "date": "2026-10-16T14:02:11.000+02:00",
-  "producer": "Cymbalis Tuning",
+  "producer": "Cymbalis",
   "cymbal": { "mf_sens_depth": 0.3, "ring_length": 1.2,
               "ring_length_bands": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.7, 0.6, 0.5, 0.5],
               "cascade_amount": 0.4, "cascade_threshold_db": -18.0, "cascade_spread": 3.0,
@@ -347,7 +342,7 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
 
 ## The round trip
 
-1. Tune in Cymbalis Tuning, **SAVE...** the file, and bring it to the project session.
+1. Tune in the Tuning window, **SAVE...** the file, and bring it to the project session.
 2. When Kris asks (running it is a separate task), apply it:
 
    ```
@@ -373,6 +368,6 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
 
    The loader also reads each slot's band gains and turns them into one gain per mode for that articulation (`excitationModeGains`). The engine multiplies each strike's coupling by it (`docs/PORT_MAP.md`, live-engine decision 7). It reads each slot's onset shift, and the engine applies it to that articulation's band envelopes and onset peak times at each strike (decision 8). It reads each slot's attack band gains (from its attack data, else from its onset gains), which the engine applies at each strike (decision 15), and the brightness from the tuning block.
 
-   The tuning build uses the same functions live, so the normal build plays what was tuned.
+   The Tuning window applies the values live with the same functions, so the tuned bake plays what was heard while tuning.
 
 Re-baking a preset (`tools/bake_preset.py`) drops its trims, its band gains, its onset shifts, its attack data and its tuning block. `Engine`, the retired Python-matching path, refuses a bake with a tuning block, band gains, onset shifts or attack data.

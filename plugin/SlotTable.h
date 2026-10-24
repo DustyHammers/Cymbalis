@@ -40,7 +40,7 @@ constexpr int kNumSlots = 5;
 constexpr std::array<SlotInfo, kNumSlots> kSlots {{
     { "BELL", 60, Blend::bellToBow, 1.0 },
     { "BOW", 62, Blend::bowToEdge, 0.5 },
-    { "EDGE", -1, Blend::none, 0.0 },
+    { "EDGE", 64, Blend::none, 0.0 },
     { "BELL2", 61, Blend::bellToBow, 1.0 },
     { "BOW2", 63, Blend::bowToEdge, 0.5 },
 }};

@@ -110,6 +110,25 @@ juce::Font TuningLookAndFeel::getAlertWindowTitleFont() { return font (kTextSize
 // =====================================================================================
 namespace
 {
+// The wheel over a slider or its numeric box never changes the value: it scrolls the list
+// (docs/TUNING.md). With its wheel off a slider passes the wheel on to its parent; its text box
+// (JUCE's) swallows it, so a listener on the slider passes that on to the slider.
+struct PassWheelOn final : public juce::MouseListener
+{
+    void mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override
+    {
+        if (auto* slider = dynamic_cast<juce::Slider*> (e.eventComponent->getParentComponent()))
+            slider->mouseWheelMove (e.getEventRelativeTo (slider), wheel);
+    }
+};
+
+void wheelScrollsList (juce::Slider& slider)
+{
+    static PassWheelOn passWheelOn;
+    slider.setScrollWheelEnabled (false);
+    slider.addMouseListener (&passWheelOn, true);
+}
+
 // A small reset button: a circular arrow, drawn.
 class Reset final : public juce::Button
 {
@@ -138,6 +157,7 @@ ValueRow::ValueRow (const juce::String& n, const juce::String& u, double lo, dou
     slider.setSliderStyle (juce::Slider::LinearHorizontal);
     slider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 90, kRowHeight - 6);
     slider.setTextBoxIsEditable (true);
+    wheelScrollsList (slider);
     if (band)
     {
         slider.textFromValueFunction = [] (double v) {
@@ -276,6 +296,7 @@ BandRow::BandRow (const BandSpec& f, TuningLookAndFeel& small, const juce::Strin
         c->slider.setSliderStyle (juce::Slider::LinearVertical);
         c->slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 40, 18);
         c->slider.setTextBoxIsEditable (true);
+        wheelScrollsList (c->slider);
         c->slider.setRange (field.lo, field.hi, 0.0);
         if (field.logarithmic)
             c->slider.setSkewFactorFromMidPoint (field.flat);
@@ -517,6 +538,7 @@ int BandEq::height()
 TuningPanel::TuningPanel (CymbalisProcessor& p, const ui::Assets& a)
     : processor (p), assets (a), lookAndFeel (a), bandLook (a, 11.5f)
 {
+    setOpaque (true); // paint() fills it: a repaint goes no further than the panel
     setLookAndFeel (&lookAndFeel);
     saveButton.onClick = [this] { save(); };
     loadButton.onClick = [this] { load(); };
@@ -533,6 +555,7 @@ TuningPanel::TuningPanel (CymbalisProcessor& p, const ui::Assets& a)
     viewport.setScrollBarsShown (true, false);
     addAndMakeVisible (viewport);
     rebuild();
+    shownMeters = meterText();
     startTimerHz (30);
 }
 
@@ -800,7 +823,11 @@ void TuningPanel::resized()
     loadButton.setBounds (top.removeFromRight (90));
     top.removeFromRight (6);
     saveButton.setBounds (top.removeFromRight (90));
-    r.removeFromTop (kMeterHeight);
+    meterFrame = r.removeFromTop (kMeterHeight).reduced (12, 6);
+    auto m = meterFrame;
+    outputLine = m.removeFromTop (m.getHeight() / 3);
+    clipBox = outputLine.withTrimmedLeft (outputLine.getWidth() - 60).reduced (2, 3);
+    hitLines = m;
     viewport.setBounds (r);
     const int w = viewport.getMaximumVisibleWidth();
     list.setSize (w, list.getHeight());
@@ -824,39 +851,44 @@ void TuningPanel::paint (juce::Graphics& g)
                     juce::Justification::centredLeft);
     }
 
-    // Meters.
-    auto m = getLocalBounds().withTop (kTopHeight).withHeight (kMeterHeight).reduced (12, 6);
+    // Meters, as the timer last read them.
     g.setColour (divider);
-    g.drawRect (m.expanded (4, 2), 1);
+    g.drawRect (meterFrame.expanded (4, 2), 1);
     g.setFont (lookAndFeel.font (kTextSize));
-    auto line1 = m.removeFromTop (m.getHeight() / 3);
     g.setColour (label);
-    g.drawText ("OUTPUT (after Volume)   peak " + dbfs (heldPeak) + "   RMS " + dbfs (meters.outRms), line1.withTrimmedRight (70),
-                juce::Justification::centredLeft);
-    clipBox = line1.removeFromRight (60).reduced (2, 3);
-    if (meters.clip)
+    g.drawText (shownMeters.output, outputLine.withTrimmedRight (70), juce::Justification::centredLeft);
+    if (shownMeters.clip)
     {
         g.setColour (bronze);
         g.fillRect (clipBox);
     }
-    g.setColour (meters.clip ? label : boxOutline);
+    g.setColour (shownMeters.clip ? label : boxOutline);
     g.drawRect (clipBox, 1);
     g.drawText ("CLIP", clipBox, juce::Justification::centred);
 
     g.setColour (label);
-    juce::String hit = "LAST HIT (before Volume)   ";
+    auto hit = hitLines;
+    g.drawText (shownMeters.hit, hit.removeFromTop (hit.getHeight() / 2), juce::Justification::centredLeft);
+    g.drawText (shownMeters.hitLevels, hit, juce::Justification::centredLeft);
+}
+
+TuningPanel::MeterText TuningPanel::meterText() const
+{
+    MeterText t;
+    t.output = "OUTPUT (after Volume)   peak " + dbfs (heldPeak) + "   RMS " + dbfs (meters.outRms);
+    t.clip = meters.clip;
+    t.hit = "LAST HIT (before Volume)   ";
     if (meters.hitRow >= 0 && bake != nullptr && meters.hitEntry >= 0 && meters.hitEntry < (int) bake->slots.size())
     {
         const auto& slot = bake->slots[(size_t) meters.hitEntry];
-        hit << rowLabel (preset, meters.hitRow) << " - " << juce::String (slot.id)
-            << "   velocity " << juce::String (meters.hitVelocity, 3);
-        g.drawText (hit, m.removeFromTop (m.getHeight() / 2), juce::Justification::centredLeft);
-        g.drawText ("peak " + juce::String (meters.hitPeak, 3) + " (" + dbfs (meters.hitPeak) + ")   RMS of the first 500 ms "
-                        + dbfs (meters.hitRms) + (meters.hitComplete ? "" : "   (measuring)"),
-                    m, juce::Justification::centredLeft);
+        t.hit << rowLabel (preset, meters.hitRow) << " - " << juce::String (slot.id) << "   velocity "
+              << juce::String (meters.hitVelocity, 3);
+        t.hitLevels = "peak " + juce::String (meters.hitPeak, 3) + " (" + dbfs (meters.hitPeak) + ")   RMS of the first 500 ms "
+                      + dbfs (meters.hitRms) + (meters.hitComplete ? "" : "   (measuring)");
     }
     else
-        g.drawText (hit + "-", m.removeFromTop (m.getHeight() / 2), juce::Justification::centredLeft);
+        t.hit << "-";
+    return t;
 }
 
 void TuningPanel::mouseDown (const juce::MouseEvent& e)
@@ -879,7 +911,14 @@ void TuningPanel::timerCallback()
         heldPeak = meters.outPeak;
         heldAt = now;
     }
-    repaint (0, kTopHeight, getWidth(), kMeterHeight);
+    // Repaint only the meter lines whose text changed: the RMS settles to -inf in silence, and
+    // then nothing is repainted.
+    const auto text = meterText();
+    if (text.output != shownMeters.output || text.clip != shownMeters.clip)
+        repaint (outputLine);
+    if (text.hit != shownMeters.hit || text.hitLevels != shownMeters.hitLevels)
+        repaint (hitLines);
+    shownMeters = text;
     // When each band of the selected articulation's last strike peaked.
     if (bandEq != nullptr && bake != nullptr)
     {

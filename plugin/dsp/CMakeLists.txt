@@ -25,32 +25,20 @@ endif()
 
 # cymbalis_fast — the real-time engine used by the plugin (FastEngine.h). It needs the
 # bake loader from cymbalis_engine but none of its bit-exactness rules, so it is built
-# with FP contraction allowed (FMA on arm64).
+# with FP contraction allowed (FMA on arm64). With CYMBALIS_WITH_TUNING (the default) it
+# has FastEngine::setTuning and the onset peak readout for the Tuning window
+# (CYMBALIS_TUNING, docs/TUNING.md), and so do the plugin and the tools that link it.
 add_library(cymbalis_fast STATIC
     FastEngine.cpp
 )
 target_link_libraries(cymbalis_fast PUBLIC cymbalis_engine)
+if(CYMBALIS_WITH_TUNING)
+    target_compile_definitions(cymbalis_fast PUBLIC CYMBALIS_TUNING=1)
+endif()
 set_target_properties(cymbalis_fast PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(cymbalis_fast PRIVATE -O3 -ffp-contract=fast -fno-fast-math -Wall -Wextra)
 endif()
 if(APPLE)
     target_compile_options(cymbalis_fast PRIVATE "SHELL:-Xarch_x86_64 -msse4.1")
-endif()
-
-# cymbalis_fast_tuning — the same engine with FastEngine::setTuning, for the Cymbalis Tuning
-# build only (CYMBALIS_TUNING, docs/TUNING.md).
-if(CYMBALIS_TUNING)
-    add_library(cymbalis_fast_tuning STATIC
-        FastEngine.cpp
-    )
-    target_link_libraries(cymbalis_fast_tuning PUBLIC cymbalis_engine)
-    target_compile_definitions(cymbalis_fast_tuning PUBLIC CYMBALIS_TUNING=1)
-    set_target_properties(cymbalis_fast_tuning PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-        target_compile_options(cymbalis_fast_tuning PRIVATE -O3 -ffp-contract=fast -fno-fast-math -Wall -Wextra)
-    endif()
-    if(APPLE)
-        target_compile_options(cymbalis_fast_tuning PRIVATE "SHELL:-Xarch_x86_64 -msse4.1")
-    endif()
 endif()

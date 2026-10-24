@@ -86,7 +86,7 @@ public:
     // Per-mode decay coefficients at one sample rate and control block: the decay rate
     // -ln(1000) / T60, the undamped per-sample step (contact phase), the shared oscillator's
     // per-sample and per-block steps (decay T60 / oscWash) and the contact's response H.
-    // prepare() computes them; the tuning build's live per-band ring lengths compute them
+    // prepare() computes them; the live per-band ring lengths (Tuning window) compute them
     // off the audio thread (computeDecay) and hand them to setTuning.
     struct DecaySet
     {
@@ -137,7 +137,7 @@ public:
     bool isSilent() const noexcept;
 
 #if CYMBALIS_TUNING
-    // Tuning build only (docs/TUNING.md): the live tuning values, every one but the ring
+    // Tuning code only (CYMBALIS_TUNING, docs/TUNING.md): the live tuning values, every one but the ring
     // length (which needs a new bake: applyTuning). Per-strike values apply from the next
     // strike; the accumulators' values from the next control point, smoothed; wander depth
     // and rate at the next control point without a phase jump; the output gain smoothed.
@@ -295,7 +295,7 @@ private:
     const int n_;
 
     // Values the plugin tuning can change (docs/TUNING.md): copies of the bake's, which the
-    // engine reads instead of the bake. Only the tuning build changes them (setTuning).
+    // engine reads instead of the bake. Only the live tuning changes them (setTuning).
     EngineParams params_;
     std::vector<double> slotTrim_;              // per slot: level trim (gain)
     std::vector<ArticulationTuning> slotCurve_; // per slot: velocity curve
@@ -395,7 +395,7 @@ private:
     // tuning can switch it): the shared oscillator has no decay (oscWash_ = 0, every strike
     // carries its whole decay), and the control block divides the 20 ms frame of the
     // in-frame decay into frameBlocks_ blocks. envOn_: edge strikes follow the envelope
-    // (edge_npz.envelope_active; EDGE ONSET ENVELOPE in the tuning build).
+    // (edge_npz.envelope_active; EDGE ONSET ENVELOPE in the Tuning window).
     bool envBake_ = false, envOn_ = false;
     int frameBlocks_ = 0;
     std::vector<int> bandStart_, bandEnd_; // mode range of each envelope band
