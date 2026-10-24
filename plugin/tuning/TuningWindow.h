@@ -233,11 +233,20 @@ private:
     std::vector<std::unique_ptr<BandRow>> cymbalBandRows;
     std::unique_ptr<juce::FileChooser> chooser;
 
+    // What the meter strip shows, as drawn: the timer repaints a line only when it changes.
+    struct MeterText
+    {
+        juce::String output, hit, hitLevels;
+        bool clip = false;
+    };
+    MeterText meterText() const;
+
     CymbalisProcessor::Meters meters;
+    MeterText shownMeters;
     float heldPeak = 0.0f;
     double heldAt = 0.0;
     bool modified = false;
-    juce::Rectangle<int> clipBox;
+    juce::Rectangle<int> meterFrame, outputLine, clipBox, hitLines; // set in resized()
 };
 
 // The Tuning window. It is attached to the window that holds `owner` (the editor): on
