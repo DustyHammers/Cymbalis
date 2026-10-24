@@ -282,9 +282,12 @@ void ToggleRow::paint (juce::Graphics& g)
 // =====================================================================================
 BandRow::BandRow (const BandSpec& f, TuningLookAndFeel& small, const juce::String& scope) : field (f)
 {
-    title.setText (juce::String (field.title) + "  (" + field.unit + ")", juce::dontSendNotification);
+    title.setText (juce::String (field.title) + (*field.unit != 0 ? juce::String ("  (") + field.unit + ")" : juce::String()),
+                   juce::dontSendNotification);
     addAndMakeVisible (title);
-    flat.setTooltip ("Every band of " + scope + " to " + juce::String (field.flat, field.decimals) + " " + field.unit);
+    flat.setButtonText (field.flatLabel);
+    flat.setTooltip ("Every band of " + scope + " to "
+                     + (field.pan ? juce::String ("the centre") : juce::String (field.flat, field.decimals) + " " + field.unit));
     flat.onClick = [this] {
         if (onFlat)
             onFlat();
@@ -301,6 +304,19 @@ BandRow::BandRow (const BandSpec& f, TuningLookAndFeel& small, const juce::Strin
         if (field.logarithmic)
             c->slider.setSkewFactorFromMidPoint (field.flat);
         c->slider.setNumDecimalPlacesToDisplay (field.decimals);
+        if (field.pan)
+        {
+            // L100 .. C .. R100; a typed L or R, or a signed number (- is left).
+            c->slider.textFromValueFunction = [] (double v) {
+                const int x = juce::roundToInt (v);
+                return x < 0 ? "L" + juce::String (-x) : x > 0 ? "R" + juce::String (x) : juce::String ("C");
+            };
+            c->slider.valueFromTextFunction = [] (const juce::String& text) {
+                const auto s = text.trim().toUpperCase();
+                const double x = s.retainCharacters ("0123456789.").getDoubleValue();
+                return s.startsWith ("L") ? -x : s.startsWith ("R") ? x : s.getDoubleValue();
+            };
+        }
         c->slider.setLookAndFeel (&small);
         c->slider.onValueChange = [this, j] {
             if (! updating && onBandChange)
@@ -585,6 +601,7 @@ void TuningPanel::rebuild()
     refreshers.clear();
     restartRow.reset();
     envelopeRow.reset();
+    highPassRow.reset();
     bandEq.reset();
     cymbalBandRows.clear();
     list.removeAllChildren();
@@ -722,8 +739,8 @@ void TuningPanel::rebuild()
         // Per cymbal, by group. A value that acts on some articulations only names them.
         addPart ("WHOLE CYMBAL", "affects every articulation");
         y += 4;
-        for (auto group : { Group::cymbal, Group::wander, Group::mf, Group::lf, Group::edgeEnvelope, Group::cascade,
-                            Group::loudDamping, Group::rehitDamping })
+        for (auto group : { Group::cymbal, Group::stereo, Group::wander, Group::mf, Group::lf, Group::edgeEnvelope,
+                            Group::cascade, Group::loudDamping, Group::rehitDamping })
         {
             bool any = false;
             for (const auto& f : cymbalFields())
@@ -740,10 +757,39 @@ void TuningPanel::rebuild()
                 envelopeRow->onChange = [this] (bool v) { change ([&] (Tuning& t) { t.cymbal.edgeEnvelope = v; }); };
                 place (*envelopeRow);
             }
+            auto addBandRows = [&] {
+                for (const auto& f : cymbalBandFields())
+                {
+                    if (f.group != group)
+                        continue;
+                    auto row = std::make_unique<BandRow> (f.spec, bandLook, "the cymbal");
+                    auto* r = row.get();
+                    row->onBandChange = [this, &f] (int band, double v) {
+                        change ([&] (Tuning& t) { (t.cymbal.*(f.member))[(size_t) band] = v; });
+                    };
+                    row->onFlat = [this, &f] { change ([&] (Tuning& t) { (t.cymbal.*(f.member)).fill (f.spec.flat); }); };
+                    refreshers.push_back ([this, r, &f] {
+                        r->setValues (processor.tuning (preset).cymbal.*(f.member), bake->tuning.cymbal.*(f.member));
+                    });
+                    row->setBounds (0, y, 10, BandRow::height);
+                    y += BandRow::height;
+                    list.addAndMakeVisible (*row);
+                    cymbalBandRows.push_back (std::move (row));
+                }
+            };
+            // STEREO: the PAN and WIDTH rows first, then the overall width and the high-pass.
+            if (group == Group::stereo)
+                addBandRows();
             for (const auto& f : cymbalFields())
             {
                 if (f.group != group || ! applies (f.needs, *bake))
                     continue;
+                if (f.member == &CymbalTuning::highPassHz)
+                {
+                    highPassRow = std::make_unique<ToggleRow> ("Right-channel high-pass (2nd-order Butterworth)");
+                    highPassRow->onChange = [this] (bool v) { change ([&] (Tuning& t) { t.cymbal.highPassOn = v; }); };
+                    place (*highPassRow);
+                }
                 const auto acts = scopeNames (f.scope, *bake);
                 auto row = std::make_unique<ValueRow> (juce::String (f.label) + (acts.isEmpty() ? "" : ": " + acts), f.unit,
                                                        f.lo, f.hi, f.decimals, f.rebuild, f.step, f.band);
@@ -756,24 +802,8 @@ void TuningPanel::rebuild()
                 place (*row);
                 rows.push_back (std::move (row));
             }
-            for (const auto& f : cymbalBandFields())
-            {
-                if (f.group != group)
-                    continue;
-                auto row = std::make_unique<BandRow> (f.spec, bandLook, "the cymbal");
-                auto* r = row.get();
-                row->onBandChange = [this, &f] (int band, double v) {
-                    change ([&] (Tuning& t) { (t.cymbal.*(f.member))[(size_t) band] = v; });
-                };
-                row->onFlat = [this, &f] { change ([&] (Tuning& t) { (t.cymbal.*(f.member)).fill (f.spec.flat); }); };
-                refreshers.push_back ([this, r, &f] {
-                    r->setValues (processor.tuning (preset).cymbal.*(f.member), bake->tuning.cymbal.*(f.member));
-                });
-                row->setBounds (0, y, 10, BandRow::height);
-                y += BandRow::height;
-                list.addAndMakeVisible (*row);
-                cymbalBandRows.push_back (std::move (row));
-            }
+            if (group != Group::stereo)
+                addBandRows();
             // Re-hit damping: a weight per articulation of the preset.
             if (group == Group::rehitDamping)
                 for (size_t s = 0; s < bake->slots.size(); ++s)
@@ -810,6 +840,8 @@ void TuningPanel::showValues()
         restartRow->setValues (processor.tuning (preset).cymbal.frameDecayRestart, bake->tuning.cymbal.frameDecayRestart);
     if (envelopeRow != nullptr && bake != nullptr)
         envelopeRow->setValues (processor.tuning (preset).cymbal.edgeEnvelope, bake->tuning.cymbal.edgeEnvelope);
+    if (highPassRow != nullptr && bake != nullptr)
+        highPassRow->setValues (processor.tuning (preset).cymbal.highPassOn, bake->tuning.cymbal.highPassOn);
     modified = bake != nullptr && isModified (*bake, processor.tuning (preset));
     repaint (0, 0, getWidth(), kTopHeight);
 }

@@ -33,6 +33,13 @@ constexpr std::array<double, kExcitationBands> kUnitBands = [] {
         x = 1.0;
     return a;
 }();
+// 100 in every band: the baked stereo width (%).
+constexpr std::array<double, kExcitationBands> kFullWidthBands = [] {
+    std::array<double, kExcitationBands> a {};
+    for (auto& x : a)
+        x = 100.0;
+    return a;
+}();
 
 // Per articulation (one bake entry).
 struct ArticulationTuning
@@ -126,6 +133,15 @@ struct CymbalTuning
             x = 1.0;
         return a;
     }();
+    // Stereo (stereoGains): per band the pan of its modes (-100 = L100, 0 = centre,
+    // 100 = R100) and their width (%); the overall width (%) multiplies every band's. At
+    // centre and 100 % every mode keeps its baked left and right gains.
+    std::array<double, kExcitationBands> panBands {};
+    std::array<double, kExcitationBands> widthBands = kFullWidthBands;
+    double stereoWidth = 100.0;
+    // The right channel's high-pass (2nd-order Butterworth): on or off, and its frequency.
+    bool highPassOn = true;
+    double highPassHz = 120.0;
 };
 
 struct Tuning
@@ -145,6 +161,13 @@ const std::vector<CymbalKey>& cymbalKeys();
 constexpr const char* kFrameDecayRestartKey = "edge_frame_decay_restart";
 constexpr const char* kEdgeEnvelopeKey = "edge_band_envelope";
 constexpr const char* kRingBandsKey = "ring_length_bands";
+constexpr const char* kPanBandsKey = "stereo_pan_bands";
+constexpr const char* kWidthBandsKey = "stereo_width_bands";
+constexpr const char* kHighPassKey = "right_highpass"; // on / off; its frequency is right_highpass_hz
+constexpr double kPanMax = 100.0, kWidthMax = 200.0;
+constexpr double kHighPassMinHz = 20.0, kHighPassMaxHz = 300.0;
+// The bake's per-mode stereo gains, written by tools/apply_tuning.py (BakeData::gainL/gainR).
+constexpr const char* kStereoKey = "stereo";
 constexpr const char* kRehitWeightsKey = "rehit_damp_weights"; // {articulation id: weight}
 constexpr double kRehitWeightMax = 2.0;
 constexpr double kRingBandMin = 0.25, kRingBandMax = 4.0;
@@ -216,13 +239,26 @@ void tunedT60(const CymbalTuning& c, const double* pythonT60, const double* freq
 // mode at freqHz[k], k < numModes. Does not allocate.
 void excitationModeGains(const ArticulationTuning& a, const double* freqHz, int numModes, float* out) noexcept;
 
+// Whether the stereo values differ from the baked stereo (centre, 100 %, 100 %).
+bool hasStereo(const CymbalTuning& c) noexcept;
+// Each mode's left and right output gains from its baked gains (the pick vectors) and the
+// stereo values (docs/TUNING.md, STEREO). A mode's baked gains are a level,
+// sqrt(L^2 + R^2), which stays, and a position from -1 (left) to 1 (right),
+// atan2(|R|, |L|) / (pi / 4) - 1. Its new position is pan + position x band width x overall
+// width, clamped to -1 .. 1; its gains are level x cos and level x sin of
+// (position + 1) x pi / 4, with the signs of the baked gains. A band at centre and 100 %
+// (overall width included) keeps the baked gains exactly. Bands as for the band gains.
+// Does not allocate.
+void stereoGains(const CymbalTuning& c, const double* pickL, const double* pickR, const double* freqHz, int numModes,
+                 double* outL, double* outR) noexcept;
+
 // Per-mode weights of the LF and MF scales (multi_strike_engine_v19.py lines 391-405).
 double lfSigmoid(double freqHz, double cutoffHz) noexcept;
 double mfBandpass(double freqHz, double loHz, double hiHz) noexcept;
 
 // Writes `t` into the bake: parameters, the per-mode arrays that follow from them (T60,
-// LFO rates, LF and MF weights), the NPZ edge settings and every slot's values. Arrays are
-// recomputed only where a value differs from the bake's own (Python) value, so the untuned
+// LFO rates, LF and MF weights, stereo gains), the NPZ edge settings and every slot's values.
+// Arrays are recomputed only where a value differs from the bake's own value, so the untuned
 // values stay bit-exact. Allocates.
 void applyTuning(BakeData& bake, const Tuning& t);
 

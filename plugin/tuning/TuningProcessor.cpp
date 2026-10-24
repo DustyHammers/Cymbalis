@@ -9,6 +9,19 @@ namespace
 {
 constexpr double kHitWindowSeconds = 0.5;  // the last hit's peak and RMS are measured over this
 constexpr double kOutputRmsSeconds = 0.3;  // output RMS smoothing
+
+bool sameStereo (const cymbalis::CymbalTuning& a, const cymbalis::CymbalTuning& b)
+{
+    return a.panBands == b.panBands && a.widthBands == b.widthBands && juce::exactlyEqual (a.stereoWidth, b.stereoWidth);
+}
+
+// Every mode's output gains for the stereo values of `t`, from the bake's pick vectors.
+void stereoGainsFor (const cymbalis::BakeData& b, const cymbalis::Tuning& t, std::vector<double>& left, std::vector<double>& right)
+{
+    left.resize ((size_t) b.numModes);
+    right.resize ((size_t) b.numModes);
+    cymbalis::stereoGains (t.cymbal, b.pickL.data(), b.pickR.data(), b.freqHz.data(), b.numModes, left.data(), right.data());
+}
 } // namespace
 
 cymbalis::Tuning CymbalisProcessor::tuning (int preset) const
@@ -34,12 +47,23 @@ void CymbalisProcessor::publishTuning (int preset, const cymbalis::Tuning& t)
     m.preset = preset;
     m.tuning = t;
     m.decayValid = false;
+    m.gainsValid = false;
     if (const auto& bake = presets[(size_t) preset].bake)
     {
         const size_t n = (size_t) bake->numModes;
         m.modeGains.resize (bake->slots.size() * n);
         for (size_t s = 0; s < bake->slots.size(); ++s)
             cymbalis::excitationModeGains (t.articulations[s], bake->freqHz.data(), bake->numModes, m.modeGains.data() + s * n);
+        // Stereo: every mode's output gains, here: the bake's for its own values, else computed.
+        // Always sent, since the cymbal may run on a tuned copy of the bake with other gains.
+        if (sameStereo (t.cymbal, bake->tuning.cymbal))
+        {
+            m.gainL = bake->gainL;
+            m.gainR = bake->gainR;
+        }
+        else
+            stereoGainsFor (*bake, t, m.gainL, m.gainR);
+        m.gainsValid = true;
         // Per-band ring lengths: every decay coefficient at the prepared rate, here, for the
         // cymbal to take at its next control point (computed when they change, then sent
         // with every message).
@@ -90,7 +114,8 @@ void CymbalisProcessor::takeTuning (bool newCymbal) noexcept
     }
     const auto& m = tuningBuffers[(size_t) tuningFront];
     if ((fresh || newCymbal) && current != nullptr && current->engine != nullptr && m.preset == current->preset)
-        current->engine->setTuning (m.tuning, m.modeGains.data(), m.decayValid ? &m.decay : nullptr);
+        current->engine->setTuning (m.tuning, m.modeGains.data(), m.decayValid ? &m.decay : nullptr,
+                                    m.gainsValid ? m.gainL.data() : nullptr, m.gainsValid ? m.gainR.data() : nullptr);
 }
 
 // Loader thread or prepareToPlay: a new cymbal starts with the current values of its preset.
@@ -111,7 +136,11 @@ void CymbalisProcessor::applyTuningToNewCymbal (Cymbal& c)
     }
     else
         c.engine = std::make_unique<cymbalis::FastEngine> (bake);
-    c.engine->setTuning (t, nullptr);
+    // Stereo values other than its bake's: their gains (a tuned copy has them already).
+    std::vector<double> left, right;
+    if (! sameStereo (t.cymbal, c.engine->bake().tuning.cymbal))
+        stereoGainsFor (c.engine->bake(), t, left, right);
+    c.engine->setTuning (t, nullptr, nullptr, left.empty() ? nullptr : left.data(), right.empty() ? nullptr : right.data());
 }
 
 // Audio thread. Before the Volume knob: the last hit's 500 ms. After it: the output meters.

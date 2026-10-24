@@ -52,6 +52,8 @@ const std::vector<CymbalKey>& cymbalKeys()
         { "loud_damp_tilt", &CymbalTuning::loudDampTilt },
         { "rehit_damp_amount", &CymbalTuning::rehitDampAmount },
         { "rehit_damp_time_ms", &CymbalTuning::rehitDampTimeMs },
+        { "stereo_width", &CymbalTuning::stereoWidth },
+        { "right_highpass_hz", &CymbalTuning::highPassHz },
     };
     return keys;
 }
@@ -184,6 +186,41 @@ void excitationModeGains(const ArticulationTuning& a, const double* freqHz, int 
         out[k] = gain[size_t(excitationBand(freqHz[k]))];
 }
 
+bool hasStereo(const CymbalTuning& c) noexcept
+{
+    if (c.stereoWidth != 100.0)
+        return true;
+    for (size_t j = 0; j < size_t(kExcitationBands); ++j)
+        if (c.panBands[j] != 0.0 || c.widthBands[j] != 100.0)
+            return true;
+    return false;
+}
+
+void stereoGains(const CymbalTuning& c, const double* pickL, const double* pickR, const double* freqHz, int numModes,
+                 double* outL, double* outR) noexcept
+{
+    constexpr double quarterPi = 0.78539816339744831;
+    for (int k = 0; k < numModes; ++k)
+    {
+        const size_t j = size_t(excitationBand(freqHz[k]));
+        const double pan = c.panBands[j] / 100.0;
+        const double width = (c.widthBands[j] / 100.0) * (c.stereoWidth / 100.0);
+        const double l = pickL[k], r = pickR[k];
+        if (pan == 0.0 && width == 1.0)
+        {
+            outL[k] = l;
+            outR[k] = r;
+            continue;
+        }
+        const double level = std::sqrt(l * l + r * r);
+        const double position = std::atan2(std::fabs(r), std::fabs(l)) / quarterPi - 1.0;
+        const double moved = std::min(std::max(pan + position * width, -1.0), 1.0);
+        const double angle = (moved + 1.0) * quarterPi;
+        outL[k] = std::copysign(level * std::cos(angle), l);
+        outR[k] = std::copysign(level * std::sin(angle), r);
+    }
+}
+
 double velocityCurveDb(const ArticulationTuning& a, double v) noexcept
 {
     if (a.vel06Db == 0.0 && a.vel03Db == 0.0)
@@ -271,6 +308,15 @@ void applyTuning(BakeData& b, const Tuning& t)
             b.mfBandpass[i] = mfBandpass(b.freqHz[i], c.mfLoHz, c.mfHiHz);
     }
 
+    // Stereo: each mode's output gains from its pick vector entries and the stereo values.
+    if (c.panBands != b.tuning.cymbal.panBands || c.widthBands != b.tuning.cymbal.widthBands
+        || c.stereoWidth != b.tuning.cymbal.stereoWidth || b.gainL.size() != n)
+    {
+        b.gainL.resize(n);
+        b.gainR.resize(n);
+        stereoGains(c, b.pickL.data(), b.pickR.data(), b.freqHz.data(), static_cast<int>(n), b.gainL.data(), b.gainR.data());
+    }
+
     b.outputGainDb = c.outputGainDb;
     b.edgeNpz.remapExponent = c.edgeRemapExponent;
     b.edgeNpz.onsetS = c.edgeEnvWindowS;
@@ -308,6 +354,27 @@ Tuning parseTuningBlock(const json::Value& block, const BakeData& b, const Tunin
             if (kv.first == kEdgeEnvelopeKey)
             {
                 t.cymbal.edgeEnvelope = kv.second.boolean();
+                continue;
+            }
+            if (kv.first == kHighPassKey)
+            {
+                t.cymbal.highPassOn = kv.second.boolean();
+                continue;
+            }
+            if (kv.first == kPanBandsKey || kv.first == kWidthBandsKey)
+            {
+                const bool pan = kv.first == kPanBandsKey;
+                const auto& a = kv.second.array();
+                if (a.size() != size_t(kExcitationBands))
+                    throw std::runtime_error("tuning: " + kv.first + " needs 22 values");
+                for (size_t j = 0; j < a.size(); ++j)
+                {
+                    const double x = a[j].number();
+                    if (! std::isfinite(x) || (pan ? std::fabs(x) > kPanMax : (x < 0.0 || x > kWidthMax)))
+                        throw std::runtime_error("tuning: " + kv.first + (pan ? " values must lie in -100 to 100"
+                                                                               : " values must lie in 0 to 200"));
+                    (pan ? t.cymbal.panBands : t.cymbal.widthBands)[j] = x;
+                }
                 continue;
             }
             if (kv.first == kRingBandsKey)
@@ -384,6 +451,10 @@ Tuning parseTuningBlock(const json::Value& block, const BakeData& b, const Tunin
         }
     if (! (t.cymbal.ringLength > 0.0) || ! (t.cymbal.edgeRemapExponent > 0.0))
         throw std::runtime_error("tuning: ring_length and edge_velocity_remap_exponent must be > 0");
+    if (! (t.cymbal.stereoWidth >= 0.0 && t.cymbal.stereoWidth <= kWidthMax))
+        throw std::runtime_error("tuning: stereo_width must lie in 0 to 200");
+    if (! (t.cymbal.highPassHz >= kHighPassMinHz && t.cymbal.highPassHz <= kHighPassMaxHz))
+        throw std::runtime_error("tuning: right_highpass_hz must lie in 20 to 300");
     return t;
 }
 

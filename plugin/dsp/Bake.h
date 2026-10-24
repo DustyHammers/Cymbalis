@@ -159,6 +159,10 @@ struct BakeData
     // Shared per-mode arrays (identical for every slot).
     std::vector<double> freqHz, t60S, driftHz, excNorm, edgeWeight, bellWeight;
     std::vector<double> pickL, pickR, lfoRateHz, lfoPhase;
+    // Each mode's left and right output gains (docs/TUNING.md, STEREO): the pick vectors, or
+    // the bake's stereo gains (written by tools/apply_tuning.py with its stereo values), or
+    // the gains of the tuning block's stereo values. FastEngine plays these.
+    std::vector<double> gainL, gainR;
 
     double hpSos[6] = {}; // b0 b1 b2 a0 a1 a2, right channel only
 

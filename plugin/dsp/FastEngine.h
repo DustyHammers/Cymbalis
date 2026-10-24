@@ -146,8 +146,14 @@ public:
     // here from the band gains of `t`. A change of the per-band ring lengths takes `decay`,
     // computed off the audio thread for this engine's rate and control block (else it is
     // computed here), and applies it at the next control point: the ringing strikes decay
-    // at the new rates from there, with no step. Does not allocate.
-    void setTuning(const Tuning& t, const float* modeGains, const DecaySet* decay = nullptr) noexcept;
+    // at the new rates from there, with no step. gainL and gainR are every mode's output
+    // gains for the stereo values of `t` (stereoGains), computed off the audio thread;
+    // nullptr: the bake's (BakeData::gainL, gainR). New gains go from one value to the other
+    // over the next control block of the free phase (a change during a contact waits for its
+    // end); while nothing rings they apply at once. The right-channel high-pass moves to new
+    // settings over 20 ms. Does not allocate.
+    void setTuning(const Tuning& t, const float* modeGains, const DecaySet* decay = nullptr,
+                   const double* gainL = nullptr, const double* gainR = nullptr) noexcept;
     // When each one-third-octave band of the slot's last strike peaks, in ms after the strike
     // (-1: the band has no energy in it, or the slot has not been struck): per mode the end of
     // its onset ramp, or with a band envelope when its envelope band peaks (after the onset
@@ -227,6 +233,7 @@ private:
         int sa;         // ringing slot of the mode (its oscillator step)
         double dps;     // the component's own decay per sample
         double pl, pr, gm1, pt, te0, env0, env1;
+        double dpl, dpr; // the output gains' step per sample during a gain ramp, else 0
         double g0, g1;  // cymbal-wide LF/MF gain at the block's ends
     };
 
@@ -242,7 +249,7 @@ private:
     void dropQuietModes() noexcept;
     void renderKinks(float* left, float* right, int j0, int m) noexcept;
     void addKink(const Component& c, int mode, double d0, double te0) noexcept;
-    template <int G>
+    template <int G, bool Ramp>
     void kernel(int m) noexcept;
     void rebaseComponents() noexcept;
     void multiplyAmplitudes(Component& c, const float* ur, const float* ui) noexcept;
@@ -279,6 +286,18 @@ private:
     void renormOscillators() noexcept;
     void applyPendingWander(double t) noexcept;
     void updateGainBounds() noexcept;
+    // The largest output gain of a mode: of the gains in use and, during a ramp, its target.
+    double outputBound(size_t mode) const noexcept;
+    // Output gain ramps (stereo, setTuning): at a control point of the free phase, the end of
+    // the last block's ramp and the start of a pending one; at a strike, the gains where the
+    // ramp is and the rest of it pending.
+    void endGainRamp() noexcept;
+    void startGainRamp() noexcept;
+    void interruptGainRamp() noexcept;
+    // The right-channel high-pass coefficients at a frequency and this rate, and a move to
+    // the current settings (hpOn_, hpHz_) over kHpRampS.
+    void highPassTargets(double hz, double* coef) const noexcept;
+    void startHighPassRamp() noexcept;
     void velocityParticipation(const VelocityTable& t, double v, double* out) const noexcept;
     void hertzVelocity(double velocity, double* out) const noexcept;
     void npzCoupling(double velocity, double* out) const noexcept;
@@ -464,9 +483,16 @@ private:
     std::vector<double> wC_;  // per mode: -drift x wander_depth / lfoUnit (0: no wander)
     std::vector<double> W_, cW_; // per mode: wander phase at the latest strike, and cos of its LFO phase then
     // Contact phase: the cymbal-wide gain x exp(i W) of each mode at the latest strike,
-    // times each pick (off when the bake has no LF/MF accumulator and no wander).
+    // times each output gain (off when the bake has no LF/MF accumulator and no wander).
     bool contactRot_ = false;
     std::vector<double> cuLr_, cuLi_, cuRr_, cuRi_;
+
+    // Output gains per mode (mode order; stereo, docs/TUNING.md): in use (gainL_, gainR_),
+    // waiting for the next control point of the free phase (pend*), and the target of the
+    // current block's ramp (ramp*). The float copies of the ringing modes (pl32_, pr32_)
+    // then move by dpl32_, dpr32_ per sample.
+    std::vector<double> gainL_, gainR_, pendL_, pendR_, rampL_, rampR_;
+    bool gainPending_ = false, gainRamp_ = false;
 
     // Segment state.
     double segThreshold_ = 0.0;
@@ -477,8 +503,9 @@ private:
     int nAct_ = 0;
     std::vector<int> actIdx_; // mode of each ringing slot
     std::vector<int> actPos_; // ringing slot of each mode, -1 when silent
-    // float oscillator and step; complex amplitude and its per-sample increment; pick
-    std::vector<float> yr_, yi_, sr32_, si32_, ar_, ai_, dar_, dai_, pl32_, pr32_;
+    // float oscillator and step; complex amplitude and its per-sample increment; output gains
+    // and their step per sample during a gain ramp
+    std::vector<float> yr_, yi_, sr32_, si32_, ar_, ai_, dar_, dai_, pl32_, pr32_, dpl32_, dpr32_;
     // double control-rate state per active mode
     std::vector<double> Yr_, Yi_;   // oscillator at the next control point (wander included)
     std::vector<double> cr_, ci_;   // LFO phasor at the next control point
@@ -498,8 +525,15 @@ private:
     // Per-sample accumulators of one control block, one 4-lane vector per sample.
     std::vector<float> accL_, accR_;
 
-    // Right-channel high-pass at the host rate (direct form II transposed, double).
-    double hpB0_ = 0.0, hpB1_ = 0.0, hpB2_ = 0.0, hpA1_ = 0.0, hpA2_ = 0.0;
+    // Right-channel high-pass at the host rate (direct form II transposed, double): on or off
+    // and its frequency (the tuning's), its coefficients in use (b0 b1 b2 a1 a2) and how much
+    // of its output is used (1: on, 0: off). A change moves both linearly over hpRampLeft_
+    // samples (hpStep_ per sample) to hpTarget_.
+    bool hpOn_ = true;
+    double hpHz_ = 120.0;
+    double hpCoef_[5] = {}, hpStep_[5] = {}, hpTarget_[5] = {};
+    double hpMix_ = 1.0, hpMixStep_ = 0.0;
+    int hpRampLeft_ = 0;
     double hpZ0_ = 0.0, hpZ1_ = 0.0;
 
     // Stick click voices (startStick): each plays one burst, drawn at its strike into its

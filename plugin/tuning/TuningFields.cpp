@@ -11,6 +11,7 @@ const char* groupName (Group g)
     switch (g)
     {
         case Group::cymbal: return "CYMBAL";
+        case Group::stereo: return "STEREO";
         case Group::wander: return "WANDER";
         case Group::mf: return "MF BUILD-UP";
         case Group::lf: return "LF BUILD-UP";
@@ -63,6 +64,9 @@ const std::vector<Field>& cymbalFields()
         { "edge_velocity_remap_exponent", "Edge capture curve", "", Group::cymbal, Needs::npzEdge, 0.25, 2.0, 2, &C::edgeRemapExponent, false, Scope::edge },
         { "tau_ref_ms", "Bow brightness vs velocity (tau_ref)", "ms", Group::cymbal, Needs::noVelocityTables, 0.05, 8.0, 2, &C::tauRefMs, false, Scope::hertz },
         { "ring_length", "Ring length (x t60_scale)", "x", Group::cymbal, Needs::always, 0.5, 2.0, 2, &C::ringLength, true },
+
+        { "stereo_width", "Overall width (x every band's width)", "%", Group::stereo, Needs::always, 0.0, kWidthMax, 0, &C::stereoWidth, false },
+        { "right_highpass_hz", "Right-channel high-pass frequency", "Hz", Group::stereo, Needs::always, kHighPassMinHz, kHighPassMaxHz, 0, &C::highPassHz, false },
 
         { "wander_depth", "Wander depth", "", Group::wander, Needs::always, 0.0, 4.0, 2, &C::wanderDepth, false },
         { "wander_rate_hz", "Wander rate", "Hz", Group::wander, Needs::always, 0.05, 10.0, 2, &C::wanderRateHz, false },
@@ -146,6 +150,8 @@ const std::vector<CymbalBandField>& cymbalBandFields()
 {
     static const std::vector<CymbalBandField> fields {
         { { kRingBandsKey, "RING LENGTH PER BAND", "x", kRingBandMin, kRingBandMax, 1.0, 2, true }, Group::cymbal, &CymbalTuning::ringBand },
+        { { kPanBandsKey, "PAN", "", -kPanMax, kPanMax, 0.0, 0, false, "CENTRE", true }, Group::stereo, &CymbalTuning::panBands },
+        { { kWidthBandsKey, "WIDTH", "%", 0.0, kWidthMax, 100.0, 0, false }, Group::stereo, &CymbalTuning::widthBands },
     };
     return fields;
 }
@@ -209,6 +215,8 @@ juce::var cymbalObject (const BakeData& b, const Tuning& t, bool onlyChanged)
         o->setProperty (kFrameDecayRestartKey, t.cymbal.frameDecayRestart);
     if (applies (Needs::envelope, b) && (! onlyChanged || t.cymbal.edgeEnvelope != b.tuning.cymbal.edgeEnvelope))
         o->setProperty (kEdgeEnvelopeKey, t.cymbal.edgeEnvelope);
+    if (! onlyChanged || t.cymbal.highPassOn != b.tuning.cymbal.highPassOn)
+        o->setProperty (kHighPassKey, t.cymbal.highPassOn);
     // The per-band values: all 22 when any differs.
     for (const auto& f : cymbalBandFields())
         if (! onlyChanged || t.cymbal.*(f.member) != b.tuning.cymbal.*(f.member))
@@ -330,6 +338,11 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
                 t.cymbal.edgeEnvelope = (bool) p.value;
                 continue;
             }
+            if (key == kHighPassKey)
+            {
+                t.cymbal.highPassOn = (bool) p.value;
+                continue;
+            }
             if (key == kRehitWeightsKey)
             {
                 auto* w = p.value.getDynamicObject();
@@ -424,6 +437,10 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
     if (! (t.cymbal.ringLength > 0.0) || ! (t.cymbal.edgeRemapExponent > 0.0) || ! (t.cymbal.wanderRateHz > 0.0)
         || ! (t.cymbal.tauRefMs > 0.0 || ! applies (Needs::noVelocityTables, b)))
         return "The tuning file has a ring length, edge capture curve, wander rate or tau_ref that is not above 0.";
+    if (! (t.cymbal.stereoWidth >= 0.0 && t.cymbal.stereoWidth <= kWidthMax))
+        return "The tuning file's stereo_width must lie in 0 to 200 %.";
+    if (! (t.cymbal.highPassHz >= kHighPassMinHz && t.cymbal.highPassHz <= kHighPassMaxHz))
+        return "The tuning file's right_highpass_hz must lie in 20 to 300 Hz.";
     out = t;
     return {};
 }
@@ -433,7 +450,8 @@ bool isModified (const BakeData& b, const Tuning& t)
     for (const auto& f : cymbalFields())
         if (! juce::exactlyEqual (t.cymbal.*(f.member), b.tuning.cymbal.*(f.member)))
             return true;
-    if (t.cymbal.frameDecayRestart != b.tuning.cymbal.frameDecayRestart || t.cymbal.edgeEnvelope != b.tuning.cymbal.edgeEnvelope)
+    if (t.cymbal.frameDecayRestart != b.tuning.cymbal.frameDecayRestart || t.cymbal.edgeEnvelope != b.tuning.cymbal.edgeEnvelope
+        || t.cymbal.highPassOn != b.tuning.cymbal.highPassOn)
         return true;
     if (! sameRehitWeights (b, t.cymbal, b.tuning.cymbal))
         return true;
