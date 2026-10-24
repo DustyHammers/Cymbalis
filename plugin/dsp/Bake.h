@@ -209,7 +209,10 @@ struct BakeData
 };
 
 std::shared_ptr<const BakeData> loadBake(const std::string& path);
-// The same from a bake held in memory (the plugin's compiled-in preset). `name` labels errors.
+// The same from a bake held in memory as JSON text. `name` labels errors.
 std::shared_ptr<const BakeData> loadBakeFromText(const std::string& text, const std::string& name);
+// The same from a bake's JSON already parsed, or decoded from the packed form the plugin
+// embeds (plugin/PackedBake.h): the same tree gives the same BakeData.
+std::shared_ptr<const BakeData> loadBakeFromJson(const json::Value& root, const std::string& name);
 
 } // namespace cymbalis

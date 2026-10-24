@@ -44,6 +44,12 @@ public:
     const Value& at(const std::string& key) const;
 
     static Value makeNull() { return Value(); }
+    // Values built from data rather than parsed (the packed bakes, plugin/PackedBake.cpp).
+    static Value makeBool(bool b);
+    static Value makeNumber(double x);
+    static Value makeString(std::string s);
+    static Value makeArray(std::vector<Value> items);
+    static Value makeObject(std::vector<std::pair<std::string, Value>> members);
 
 private:
     friend class Parser;

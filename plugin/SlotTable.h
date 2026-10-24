@@ -68,7 +68,7 @@ struct PresetInfo
 {
     const char* id;        // saved with the session
     const char* name;      // shown in the CYMBAL box
-    const char* bakeFile;  // resources/presets/
+    const char* bakeFile;  // resources/presets/; the plugin embeds its packed form (PackedBake.h)
     const char* photoFile; // resources/ui/
     std::array<PresetSlot, kNumSlots> slots;
     const char* blend1Left = "BELL"; // the left end label of BLEND POSITION 1 (its right end: BOW)

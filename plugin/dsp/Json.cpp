@@ -99,6 +99,46 @@ const std::vector<std::pair<std::string, Value>>& Value::object() const
     return object_;
 }
 
+Value Value::makeBool(bool b)
+{
+    Value v;
+    v.type_ = Type::Bool;
+    v.bool_ = b;
+    return v;
+}
+
+Value Value::makeNumber(double x)
+{
+    Value v;
+    v.type_ = Type::Number;
+    v.number_ = x;
+    return v;
+}
+
+Value Value::makeString(std::string s)
+{
+    Value v;
+    v.type_ = Type::String;
+    v.string_ = std::move(s);
+    return v;
+}
+
+Value Value::makeArray(std::vector<Value> items)
+{
+    Value v;
+    v.type_ = Type::Array;
+    v.array_ = std::move(items);
+    return v;
+}
+
+Value Value::makeObject(std::vector<std::pair<std::string, Value>> members)
+{
+    Value v;
+    v.type_ = Type::Object;
+    v.object_ = std::move(members);
+    return v;
+}
+
 const Value* Value::find(const std::string& key) const
 {
     for (const auto& kv : object())

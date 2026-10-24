@@ -72,15 +72,43 @@ juce_add_plugin(Cymbalis
 )
 
 # ---------------------------------------------------------------------------
-# Compiled-in resources: the baked presets (nl_amount 0, written by tools/bake_preset.py),
-# their photos, and the UI artwork and font. Calibri Light is used when
-# resources/ui/calibril.ttf exists; Carlito Regular stands in until then.
+# Packed presets. The JSON bakes in resources/presets/ (nl_amount 0, written by
+# tools/bake_preset.py) are the source; at build time tools/pack_bake packs each into the
+# compact form the plugin embeds (plugin/PackedBake.h, docs/BUILDS.md).
+# ---------------------------------------------------------------------------
+juce_add_console_app(CymbalisPackBake PRODUCT_NAME "cymbalis_pack_bake")
+target_sources(CymbalisPackBake PRIVATE tools/pack_bake/main.cpp plugin/PackedBake.cpp)
+target_include_directories(CymbalisPackBake PRIVATE plugin)
+target_compile_definitions(CymbalisPackBake PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(CymbalisPackBake
+    PRIVATE
+        cymbalis_engine
+        juce::juce_core
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags
+)
+
+set(CYMBALIS_PACKED_PRESETS)
+foreach(preset nova_ride smoke_flat_ride hammered_thin_ride swish)
+    set(json "${CMAKE_CURRENT_SOURCE_DIR}/resources/presets/${preset}.bake.json")
+    set(packed "${CMAKE_CURRENT_BINARY_DIR}/presets/${preset}.bake.pack")
+    add_custom_command(OUTPUT "${packed}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/presets"
+        COMMAND CymbalisPackBake "${json}" "${packed}"
+        DEPENDS CymbalisPackBake "${json}"
+        COMMENT "Packing ${preset}.bake.json"
+        VERBATIM)
+    list(APPEND CYMBALIS_PACKED_PRESETS "${packed}")
+endforeach()
+
+# ---------------------------------------------------------------------------
+# Compiled-in resources: the packed presets, their photos, and the UI artwork and font.
+# Calibri Light is used when resources/ui/calibril.ttf exists; Carlito Regular stands in
+# until then.
 # ---------------------------------------------------------------------------
 set(CYMBALIS_RESOURCES
-    resources/presets/nova_ride.bake.json
-    resources/presets/smoke_flat_ride.bake.json
-    resources/presets/hammered_thin_ride.bake.json
-    resources/presets/swish.bake.json
+    ${CYMBALIS_PACKED_PRESETS}
     resources/ui/CYMBALIS_Background_logo.png
     resources/ui/Nova.png
     resources/ui/SmokeFlatRide.png
@@ -102,6 +130,7 @@ set_target_properties(CymbalisBinaryData PROPERTIES POSITION_INDEPENDENT_CODE ON
 set(CYMBALIS_PLUGIN_SOURCES
     plugin/PluginProcessor.cpp
     plugin/PluginEditor.cpp
+    plugin/PackedBake.cpp
     plugin/ui/UiAssets.cpp
 )
 set(CYMBALIS_INCLUDE_DIRS plugin)

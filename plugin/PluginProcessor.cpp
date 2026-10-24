@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include "PackedBake.h"
 #include "PluginEditor.h"
 
 #include <BinaryData.h>
@@ -141,11 +142,12 @@ void CymbalisProcessor::parsePresets()
         auto& preset = presets[k];
         try
         {
+            // The bake's packed form (tools/pack_bake), which unpacks to the bake's JSON tree.
             int size = 0;
-            const char* data = findResource (info.bakeFile, size);
+            const char* data = findResource (cymbalis::packed::resourceName (info.bakeFile).toRawUTF8(), size);
             if (data == nullptr)
                 throw cymbalis::BakeError (std::string ("the ") + info.name + " preset is missing from the plugin");
-            auto bake = cymbalis::loadBakeFromText (std::string (data, (size_t) size), info.name);
+            auto bake = cymbalis::loadBakeFromJson (cymbalis::packed::unpack (data, (size_t) size, info.name), info.name);
             auto entryFor = [&] (const char* name) {
                 if (*name == 0)
                     return -1; // a silent row

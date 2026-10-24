@@ -98,7 +98,7 @@ jobs:
           check() {
             local BIN="$1/Contents/MacOS/$2"
             ARCHS=$(lipo -archs "$BIN")
-            echo "$BIN -> $ARCHS"
+            echo "$BIN -> $ARCHS, $(stat -f%z "$BIN") bytes"
             [[ "$ARCHS" == *arm64* && "$ARCHS" == *x86_64* ]] || { echo "::error::$BIN is not universal"; exit 1; }
           }
           check "$VST3" "$PRODUCT"; check "$AU" "$PRODUCT"
