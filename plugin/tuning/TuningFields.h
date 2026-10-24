@@ -17,6 +17,7 @@ namespace cymbalis::tuning
 enum class Group
 {
     cymbal,
+    stereo,
     wander,
     mf,
     lf,
@@ -95,6 +96,8 @@ struct BandSpec
     double lo, hi, flat;  // slider range; FLAT sets every band to `flat` (no change)
     int decimals;
     bool logarithmic;     // the slider is logarithmic (speed, ring length)
+    const char* flatLabel = "FLAT"; // the button that sets every band to `flat`
+    bool pan = false;     // a pan, -100 .. 100, shown and typed as L100 .. C .. R100
 };
 // Per articulation. A layered value (onset delay, onset speed, attack gain) has a SOFT layer
 // (velocity 0.3) besides `member`, its HARD layer (velocity 1.0); a tuning file holds both,

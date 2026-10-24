@@ -206,6 +206,11 @@ In the window, the **BANDS** section below the articulations works like a graphi
 | | Bow brightness vs velocity | `tau_ref_ms` | 0.05–8 ms | 602, Bettis, Swish (no velocity tables) | `hertz_vel_scale` contact time at velocity 1 |
 | | Ring length | `ring_length` | 0.5–2.0 × | all | Multiplier of the baked T60 of every mode (t60_scale). Rebuilds the engine |
 | | Ring length per band | `ring_length_bands` | ×0.25–×4 per band | all | 22 values, see below. Default ×1 |
+| Stereo | Pan per band | `stereo_pan_bands` | L100 to R100 per band | all | 22 values, −100 (L100) to 100 (R100). Default centre (0). See "Stereo" below |
+| | Width per band | `stereo_width_bands` | 0–200 % per band | all | 22 values. Default 100 % |
+| | Overall width | `stereo_width` | 0–200 % | all | Multiplies every band's width. Default 100 % |
+| | Right-channel high-pass | `right_highpass` | on/off | all | The 2nd-order Butterworth high-pass on the right channel (Python's `_hp(out[:,1], 120)`). Default on |
+| | Right-channel high-pass frequency | `right_highpass_hz` | 20–300 Hz | all | Default 120 Hz |
 | Wander | Wander depth | `wander_depth` | 0–4 | all | |
 | | Wander rate | `wander_rate_hz` | 0.05–10 Hz | all | Each mode's LFO keeps its baked ratio (0.7–1.3) to this rate |
 | | Edge wander depth | `edge_wander_depth` | 0–4 | all | Depth scale added by edge strikes (× velocity × edge fraction), per strike |
@@ -245,6 +250,29 @@ Each of the 22 one-third-octave bands of the band gains has a ring-length multip
 In the window it is the **RING LENGTH PER BAND** row in the CYMBAL group: 22 vertical sliders on a logarithmic scale with ×1 in the middle, numeric entry, a per-band reset and FLAT (every band to ×1).
 
 A change applies live, at the next control point (about 2.8 ms). The new decay coefficients are computed off the audio thread and handed over; there the ringing state is re-anchored, as a strike does without its contact, and every ringing strike decays at the new rates from that sample. Nothing steps. With every band at ×1 nothing changes and nothing is computed.
+
+#### Stereo
+
+How stereo works: every mode has a fixed left and right gain from the bake (the pick vectors `pick_l`, `pick_r`, random from the preset's seed, signed), and the right channel has a 120 Hz high-pass. The STEREO values change both.
+
+- **Modes and bands.** Modes belong to the 22 bands by their frequency, as for the band gains.
+- **A mode's baked gains** are a level, sqrt(L² + R²), and a position from −1 (hard left) to +1 (hard right): atan2(|R|, |L|) / (π/4) − 1. The baked positions lie within about L31 to R30.
+- **Its new position** is the band's pan + its baked position × the band's width × the overall width, clamped to hard left / hard right.
+- **Its new gains** are level × cos and level × sin of (new position + 1) × π/4 (constant power: the level stays), each with the sign of its baked gain.
+- **Width 0 %** puts every mode of the band at the pan point; **100 %** at centre pan gives the baked gains exactly (the engine uses them as they are); **200 %** doubles the spread.
+- The width scales each mode's whole baked position, the band's own mean offset with it (a band's mean baked position is near centre but not at it: mostly within L5 to R5, up to 9, and L24 for a band of Hammered Thin Ride that has one mode). So at centre and 100 % nothing changes, at 0 % every mode is at the pan point, and the spread around the band's mean doubles at 200 %.
+
+**Live.** When a value changes, the Tuning window computes every mode's gains (off the audio thread) and sends them with the other values. The engine takes them at the next control point of the free phase and moves every ringing mode's gains to them linearly over that control block (about 3 ms), so nothing steps. A change that arrives while a strike's contact is running (a few ms) waits for its end. If a strike lands inside such a ramp, the gains stay where the ramp got to and the rest of the move follows the contact. While nothing rings, new gains apply at once. Outside a ramp block the engine renders exactly as before: no per-sample cost.
+
+**The right-channel high-pass** can be switched off and moved from 20 to 300 Hz. A change moves the filter's coefficients linearly over 20 ms (a straight line between two stable 2nd-order high-passes stays stable, with its zeros at DC). Switching it on or off crossfades between the filtered and the unfiltered right channel over the same 20 ms. On at 120 Hz, the default, it is the filter as before.
+
+In the window it is the **STEREO** group of WHOLE CYMBAL:
+- a **PAN** row of 22 vertical sliders, L100 to R100. A value is typed as L30, R30, C or a signed number (− is left). It has a per-band reset and **CENTRE** (every band to the centre);
+- a **WIDTH** row of 22 sliders, 0 to 200 %, with a per-band reset and **FLAT** (every band to 100 %);
+- the **Overall width**;
+- the **Right-channel high-pass** switch and its **frequency**.
+
+**In the bake.** `tools/apply_tuning.py` stores the stereo values in the bake's tuning block. It also writes every mode's resulting left and right gains into a `stereo` block (`gain_l`, `gain_r`, checksummed like the other arrays). The plugin plays them at load as they are; a lean build (`CYMBALIS_WITH_TUNING` OFF) too. `pick_l` and `pick_r` stay as baked: the loader still regenerates them from the seed, and it checks that each stored gain pair keeps the level and signs of its pick vector entries. The high-pass settings go into the tuning block.
 
 #### Energy cascade
 
@@ -356,6 +384,7 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
    - Each articulation's **onset shift** goes into its onset data, `slots[].onset_shift`: `{"band_edges_hz": [23 edges], "delay_ms": [22], "speed": [22], "delay_ms_soft": [22], "speed_soft": [22], "set_by"}`, both velocity layers. An articulation with delay 0 and speed 1 in every band of both layers has no entry.
    - Each articulation's **attack band gains and time** go into its attack data, `slots[].attack_band_gains`: `{"band_edges_hz": [23 edges], "gains_db": [22], "gains_db_soft": [22], "time_ms", "set_by"}`. An articulation whose values are those its onset gains give, in both layers (0 dB and 80 ms without onset gains), has no entry; the loader then takes them from the onset gains. A bake entry without the `_soft` arrays (from before the layers) uses its values for both layers.
    - Each articulation's **brightness vs velocity** goes into the tuning block with its velocity curve, and so does its **stick click** where it differs from the slot's own values (its `stick_*` parameters, Python's defaults where it has none).
+   - The **stereo** values go into the tuning block, and every mode's resulting left and right gains into the bake's `stereo` block (`gain_l`, `gain_r`). Centre and 100 % everywhere removes the block. The **right-channel high-pass** (on/off, frequency) goes into the tuning block.
    - **Every other value that differs from the bake's own** (the cymbal values and the velocity curves) goes into the bake's top-level `tuning` block: `{"format": "cymbalis-tuning", "version": 1, "applied_utc", "source", "cymbal": {...}, "articulations": {id: {"vel_0.6_db", "vel_0.3_db"}}}`. A per-band cymbal value is stored there as its 22 numbers.
    - A value equal to the bake's own drops out of the block, so applying the same file twice gives the same bake. Nothing else in the bake changes.
 3. Rebuild the plugin. Its bake loader (`plugin/dsp/Bake.cpp`, `Tuning.cpp`) applies the block (`applyTuning`):

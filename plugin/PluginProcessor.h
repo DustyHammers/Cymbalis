@@ -202,6 +202,10 @@ private:
         // the writer when they changed (decayValid).
         cymbalis::FastEngine::DecaySet decay;
         bool decayValid = false;
+        // Every mode's output gains for its stereo values, from the writer (gainsValid): the
+        // bake's gains for the bake's own values, else computed.
+        std::vector<double> gainL, gainR;
+        bool gainsValid = false;
     };
     // Per preset (message thread): the decay coefficients for its latest per-band ring lengths
     // at the prepared rate, sent with every message once they differ from the bake (so a

@@ -51,6 +51,7 @@ constexpr double kSettled = 1e-6;     // an onset envelope below this (times its
 constexpr double kWashDampFloor = 0.3; // line 1129: wash_damp = max(0.3, ...)
 constexpr double kScaleSmoothS = 0.02;  // one-pole smoothing of the LF and MF scales
 constexpr double kOutputGainSmoothS = 0.02; // one-pole smoothing of the output gain
+constexpr double kHpRampS = 0.02;       // a change of the right-channel high-pass moves over this
 constexpr double kLfoSeriesMax = 0.25;  // cosSinSeries() is exact in double below this (rad)
 constexpr int kCascadeMaxSpread = 6;   // the energy cascade's farthest target band
 // Share of the moved energy of a target band d bands above the source (halving per band),
@@ -290,8 +291,16 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
     computeWanderTables();
     tauRate_ = p.wanderRateHz;
     contactRot_ = lfOn_ || mfOn_ || wanderOn_;
-    cuLr_ = b.pickL;
-    cuRr_ = b.pickR;
+    // Output gains: the bake's (the pick vectors, or its stereo gains).
+    gainL_ = b.gainL.size() == n ? b.gainL : b.pickL;
+    gainR_ = b.gainR.size() == n ? b.gainR : b.pickR;
+    for (auto* v : {&pendL_, &pendR_, &rampL_, &rampR_})
+        v->assign(n, 0.0);
+    hpOn_ = b.tuning.cymbal.highPassOn;
+    hpHz_ = b.tuning.cymbal.highPassHz;
+    hpMix_ = hpOn_ ? 1.0 : 0.0;
+    cuLr_ = gainL_;
+    cuRr_ = gainR_;
     cuLi_.assign(n, 0.0);
     cuRi_.assign(n, 0.0);
     // The shared oscillator's decay (see oscillatorWash).
@@ -363,7 +372,7 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
 
     actIdx_.assign(np, 0);
     actPos_.assign(n, -1);
-    for (auto* v : {&yr_, &yi_, &sr32_, &si32_, &ar_, &ai_, &dar_, &dai_, &pl32_, &pr32_})
+    for (auto* v : {&yr_, &yi_, &sr32_, &si32_, &ar_, &ai_, &dar_, &dai_, &pl32_, &pr32_, &dpl32_, &dpr32_})
         v->assign(np, 0.0f);
     for (auto* v : {&Yr_, &Yi_, &cr_, &ci_, &qr_, &qi_, &phiW0_, &phiW_, &gBound_})
         v->assign(np, 0.0);
@@ -573,7 +582,9 @@ void FastEngine::prepare(double sampleRate)
     rhoAny_ = false;
     updateMechanisms(); // its coefficients at this rate, and its threshold with this H
 
-    butterworthHighPass2(kHpCutoffHz, sr_, hpB0_, hpB1_, hpB2_, hpA1_, hpA2_);
+    highPassTargets(hpHz_, hpCoef_);
+    hpRampLeft_ = 0;
+    hpMix_ = hpOn_ ? 1.0 : 0.0;
     outGainCoef_ = 1.0 - std::exp(-1.0 / (kOutputGainSmoothS * sr_));
     // Stick click: room for the longest burst the tuning allows, per voice.
     stickMaxLen_ = static_cast<int>(kStickLenMaxMs * 0.001 * sr_) + 1;
@@ -592,6 +603,14 @@ void FastEngine::prepare(double sampleRate)
         c.used = false;
     activeContacts_ = 0;
     hpZ0_ = hpZ1_ = 0.0;
+    // Nothing rings: new output gains apply at once.
+    gainRamp_ = false;
+    if (gainPending_)
+    {
+        gainL_ = pendL_;
+        gainR_ = pendR_;
+        gainPending_ = false;
+    }
     sampleNow_ = 0;
     baseSample_ = 0;
     startFreePhase();
@@ -639,18 +658,56 @@ void FastEngine::process(float* left, float* right, int numSamples) noexcept
     if (stickActive_ > 0)
         renderStick(left, right, numSamples);
 
-    // Right-channel high-pass (render() line 703), direct form II transposed, in double.
-    double z0 = hpZ0_, z1 = hpZ1_;
-    for (int j = 0; j < numSamples; ++j)
+    // Right-channel high-pass (render() line 703; its on/off and frequency are tuning values),
+    // direct form II transposed, in double.
+    if (hpRampLeft_ == 0 && hpMix_ == 1.0)
     {
-        const double x = right[j];
-        const double y = hpB0_ * x + z0;
-        z0 = hpB1_ * x - hpA1_ * y + z1;
-        z1 = hpB2_ * x - hpA2_ * y;
-        right[j] = static_cast<float>(y);
+        const double b0 = hpCoef_[0], b1 = hpCoef_[1], b2 = hpCoef_[2], a1 = hpCoef_[3], a2 = hpCoef_[4];
+        double z0 = hpZ0_, z1 = hpZ1_;
+        for (int j = 0; j < numSamples; ++j)
+        {
+            const double x = right[j];
+            const double y = b0 * x + z0;
+            z0 = b1 * x - a1 * y + z1;
+            z1 = b2 * x - a2 * y;
+            right[j] = static_cast<float>(y);
+        }
+        hpZ0_ = z0;
+        hpZ1_ = z1;
     }
-    hpZ0_ = z0;
-    hpZ1_ = z1;
+    else if (hpRampLeft_ > 0 || hpMix_ != 0.0)
+    {
+        // Moving to new settings: the coefficients and the share of the filtered signal
+        // change linearly, sample by sample (a linear path between two stable 2nd-order
+        // high-passes stays stable and keeps the zeros at DC).
+        double z0 = hpZ0_, z1 = hpZ1_;
+        for (int j = 0; j < numSamples; ++j)
+        {
+            if (hpRampLeft_ > 0)
+            {
+                if (--hpRampLeft_ == 0)
+                {
+                    std::copy(hpTarget_, hpTarget_ + 5, hpCoef_);
+                    hpMix_ = hpOn_ ? 1.0 : 0.0;
+                }
+                else
+                {
+                    for (int i = 0; i < 5; ++i)
+                        hpCoef_[i] += hpStep_[i];
+                    hpMix_ += hpMixStep_;
+                }
+            }
+            const double x = right[j];
+            const double y = hpCoef_[0] * x + z0;
+            z0 = hpCoef_[1] * x - hpCoef_[3] * y + z1;
+            z1 = hpCoef_[2] * x - hpCoef_[4] * y;
+            right[j] = static_cast<float>(x + hpMix_ * (y - x));
+        }
+        hpZ0_ = z0;
+        hpZ1_ = z1;
+    }
+    else
+        hpZ0_ = hpZ1_ = 0.0; // off: the right channel as it is; the filter starts clear when switched on
 
     // Output gain of the preset (docs/TUNING.md), smoothed when it changes.
     if (outGain_ != 1.0 || outGainTarget_ != 1.0)
@@ -685,7 +742,6 @@ void FastEngine::process(float* left, float* right, int numSamples) noexcept
 // decision 6).
 void FastEngine::renderContactSample(float* left, float* right) noexcept
 {
-    const BakeData& b = *bake_;
     const int n = n_;
     double* __restrict zr = zr_.data();
     double* __restrict zi = zi_.data();
@@ -708,8 +764,8 @@ void FastEngine::renderContactSample(float* left, float* right) noexcept
         renderContactRotated(left, right);
         return;
     }
-    const double* __restrict pickL = b.pickL.data();
-    const double* __restrict pickR = b.pickR.data();
+    const double* __restrict pickL = gainL_.data();
+    const double* __restrict pickR = gainR_.data();
     const double* __restrict mr = stepR_.data();
     const double* __restrict mi = stepI_.data();
     v2d al0 = {0.0, 0.0}, al1 = {0.0, 0.0}, ar0 = {0.0, 0.0}, ar1 = {0.0, 0.0};
@@ -817,6 +873,8 @@ void FastEngine::renderFree(float* left, float* right, int n) noexcept
         const int j = static_cast<int>(freePos_ % K_);
         if (j == 0)
         {
+            if (gainRamp_)
+                endGainRamp();
             if (decayPending_)
                 applyDecay();
             beginControlBlock();
@@ -825,7 +883,12 @@ void FastEngine::renderFree(float* left, float* right, int n) noexcept
         std::fill(accL_.begin(), accL_.begin() + 4 * m, 0.0f);
         std::fill(accR_.begin(), accR_.begin() + 4 * m, 0.0f);
         if (nAct_ > 0)
-            kernel<kVecPerGroup>(m);
+        {
+            if (gainRamp_)
+                kernel<kVecPerGroup, true>(m);
+            else
+                kernel<kVecPerGroup, false>(m);
+        }
         for (int k = 0; k < m; ++k)
         {
             const float* a = accL_.data() + 4 * k;
@@ -842,9 +905,10 @@ void FastEngine::renderFree(float* left, float* right, int n) noexcept
 }
 
 // m samples of every ringing mode. Lanes are modes; G vectors (4G modes) per group. Per
-// mode and sample: out = Re(y * a);  L += out * pickL;  R += out * pickR;  y *= s;  a += da.
+// mode and sample: out = Re(y * a);  L += out * gainL;  R += out * gainR;  y *= s;  a += da.
 // y is the shared oscillator (frequency, undamped decay, wander), a the components' sum.
-template <int G>
+// With Ramp (a block after new output gains) the gains also move by their step per sample.
+template <int G, bool Ramp>
 void FastEngine::kernel(int m) noexcept
 {
     const int groups = (nAct_ + 4 * G - 1) / (4 * G);
@@ -854,6 +918,7 @@ void FastEngine::kernel(int m) noexcept
     {
         const size_t o = size_t(g) * 4 * G;
         v4f yr[G], yi[G], sr[G], si[G], ar[G], ai[G], dr[G], di[G], pl[G], pr[G];
+        [[maybe_unused]] v4f dpl[G], dpr[G];
         for (int q = 0; q < G; ++q)
         {
             const size_t k = o + size_t(4 * q);
@@ -867,6 +932,11 @@ void FastEngine::kernel(int m) noexcept
             di[q] = ld(&dai_[k]);
             pl[q] = ld(&pl32_[k]);
             pr[q] = ld(&pr32_[k]);
+            if constexpr (Ramp)
+            {
+                dpl[q] = ld(&dpl32_[k]);
+                dpr[q] = ld(&dpr32_[k]);
+            }
         }
         for (int j = 0; j < m; ++j)
         {
@@ -888,6 +958,11 @@ void FastEngine::kernel(int m) noexcept
                 yr[q] = t;
                 ar[q] += dr[q];
                 ai[q] += di[q];
+                if constexpr (Ramp)
+                {
+                    pl[q] += dpl[q];
+                    pr[q] += dpr[q];
+                }
             }
         }
         for (int q = 0; q < G; ++q)
@@ -897,6 +972,11 @@ void FastEngine::kernel(int m) noexcept
             st(&yi_[k], yi[q]);
             st(&ar_[k], ar[q]);
             st(&ai_[k], ai[q]);
+            if constexpr (Ramp)
+            {
+                st(&pl32_[k], pl[q]);
+                st(&pr32_[k], pr[q]);
+            }
         }
     }
 }
@@ -920,6 +1000,8 @@ void FastEngine::addKink(const Component& c, int mode, double d0, double te0) no
     km.dps = 1.0 + (static_cast<double>(c.dmul[k]) - 1.0) / static_cast<double>(K_);
     km.pl = pl32_[sa];
     km.pr = pr32_[sa];
+    km.dpl = gainRamp_ ? dpl32_[sa] : 0.0;
+    km.dpr = gainRamp_ ? dpr32_[sa] : 0.0;
     km.gm1 = c.onsetOn ? c.gm1[k] : 0.0;
     km.pt = c.pt[k];
     km.te0 = te0;
@@ -956,8 +1038,8 @@ void FastEngine::renderKinks(float* left, float* right, int j0, int m) noexcept
             if (km.gm1 != 0.0)
                 g *= 1.0 + km.gm1 * (km.env0 + (km.env1 - km.env0) * (static_cast<double>(jb) * invK));
             g *= km.g0 + (km.g1 - km.g0) * (static_cast<double>(jb) * invK);
-            left[j] += static_cast<float>(yr * km.pl * g);
-            right[j] += static_cast<float>(yr * km.pr * g);
+            left[j] += static_cast<float>(yr * (km.pl + km.dpl * static_cast<double>(jb)) * g);
+            right[j] += static_cast<float>(yr * (km.pr + km.dpr * static_cast<double>(jb)) * g);
             const double t = yr * sr - yi * si;
             yi = yr * si + yi * sr;
             yr = t;
@@ -1071,6 +1153,8 @@ void FastEngine::beginControlBlock() noexcept
         renormOscillators();
     if (blk % kDropEvery == 0)
         dropQuietModes();
+    if (gainPending_)
+        startGainRamp();
     const int na = nAct_;
     const int* idx = actIdx_.data();
 
@@ -1296,10 +1380,10 @@ void FastEngine::cymbalWideAtStrike(double t) noexcept
             const double gain = modeGain(k, lfSm_, mfSm_);
             const double ur = W_[k] != 0.0 ? gain * std::cos(W_[k]) : gain;
             const double ui = W_[k] != 0.0 ? gain * std::sin(W_[k]) : 0.0;
-            cuLr_[k] = ur * b.pickL[k];
-            cuLi_[k] = ui * b.pickL[k];
-            cuRr_[k] = ur * b.pickR[k];
-            cuRi_[k] = ui * b.pickR[k];
+            cuLr_[k] = ur * gainL_[k];
+            cuLi_[k] = ui * gainL_[k];
+            cuRr_[k] = ur * gainR_[k];
+            cuRi_[k] = ui * gainR_[k];
         }
 }
 
@@ -2078,15 +2162,94 @@ void FastEngine::applyPendingWander(double t) noexcept
 // The drop bound of every ringing mode's output gains, for the current LF/MF settings.
 void FastEngine::updateGainBounds() noexcept
 {
-    const BakeData& b = *bake_;
     const double lfHi = std::max({1.0, params_.lfMax, lfSm_});
     const double mfHi = std::max({1.0, params_.mfMax, mfSm_});
     for (int a = 0; a < nAct_; ++a)
     {
         const size_t s = size_t(a), k = size_t(actIdx_[s]);
-        gBound_[s] = modeGain(k, lfHi, mfHi) * std::max(1.0, 1.0 + segGm1Max_) *
-                     std::max(std::fabs(b.pickL[k]), std::fabs(b.pickR[k]));
+        gBound_[s] = modeGain(k, lfHi, mfHi) * std::max(1.0, 1.0 + segGm1Max_) * outputBound(k);
     }
+}
+
+double FastEngine::outputBound(size_t k) const noexcept
+{
+    const double g = std::max(std::fabs(gainL_[k]), std::fabs(gainR_[k]));
+    return gainRamp_ ? std::max({g, std::fabs(rampL_[k]), std::fabs(rampR_[k])}) : g;
+}
+
+// A control point of the free phase after a ramp block: the gains are the ramp's target,
+// exactly (the float copies were stepped towards them).
+void FastEngine::endGainRamp() noexcept
+{
+    std::swap(gainL_, rampL_);
+    std::swap(gainR_, rampR_);
+    gainRamp_ = false;
+    for (int a = 0; a < nAct_; ++a)
+    {
+        const size_t s = size_t(a), k = size_t(actIdx_[s]);
+        pl32_[s] = static_cast<float>(gainL_[k]);
+        pr32_[s] = static_cast<float>(gainR_[k]);
+    }
+    std::fill(dpl32_.begin(), dpl32_.end(), 0.0f);
+    std::fill(dpr32_.begin(), dpr32_.end(), 0.0f);
+    updateGainBounds();
+}
+
+// New output gains at a control point of the free phase: over this block every ringing
+// mode's gains go linearly from the gains in use to the new ones.
+void FastEngine::startGainRamp() noexcept
+{
+    std::swap(rampL_, pendL_);
+    std::swap(rampR_, pendR_);
+    gainPending_ = false;
+    gainRamp_ = true;
+    const float invK = 1.0f / static_cast<float>(K_);
+    for (int a = 0; a < nAct_; ++a)
+    {
+        const size_t s = size_t(a), k = size_t(actIdx_[s]);
+        dpl32_[s] = (static_cast<float>(rampL_[k]) - pl32_[s]) * invK;
+        dpr32_[s] = (static_cast<float>(rampR_[k]) - pr32_[s]) * invK;
+    }
+    updateGainBounds();
+}
+
+// A strike inside a ramp block: the gains stay where the ramp is (the contact phase plays
+// them), and the rest of the change waits for the next control point of the free phase.
+void FastEngine::interruptGainRamp() noexcept
+{
+    // How far the block has gone: all of it when its last sample is rendered (the next
+    // control point is not reached yet).
+    const int64_t j = freePos_ % K_;
+    const double f = j == 0 ? 1.0 : static_cast<double>(j) / static_cast<double>(K_);
+    for (size_t k = 0; k < size_t(n_); ++k)
+    {
+        gainL_[k] += (rampL_[k] - gainL_[k]) * f;
+        gainR_[k] += (rampR_[k] - gainR_[k]) * f;
+    }
+    if (! gainPending_)
+    {
+        std::swap(pendL_, rampL_);
+        std::swap(pendR_, rampR_);
+        gainPending_ = true;
+    }
+    gainRamp_ = false;
+    std::fill(dpl32_.begin(), dpl32_.end(), 0.0f);
+    std::fill(dpr32_.begin(), dpr32_.end(), 0.0f);
+}
+
+void FastEngine::highPassTargets(double hz, double* coef) const noexcept
+{
+    butterworthHighPass2(hz, sr_, coef[0], coef[1], coef[2], coef[3], coef[4]);
+}
+
+void FastEngine::startHighPassRamp() noexcept
+{
+    highPassTargets(hpHz_, hpTarget_);
+    const int n = std::max(1, static_cast<int>(std::lround(kHpRampS * sr_)));
+    for (int i = 0; i < 5; ++i)
+        hpStep_[i] = (hpTarget_[i] - hpCoef_[i]) / n;
+    hpMixStep_ = ((hpOn_ ? 1.0 : 0.0) - hpMix_) / n;
+    hpRampLeft_ = n;
 }
 
 // A slot's attack band gains (docs/TUNING.md), from its articulation's values: per band the
@@ -2572,7 +2735,8 @@ void FastEngine::clearBlockGains() noexcept
 }
 
 #if CYMBALIS_TUNING
-void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecaySet* decay) noexcept
+void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecaySet* decay, const double* gainL,
+                           const double* gainR) noexcept
 {
     const CymbalTuning& c = t.cymbal;
     const size_t n = size_t(n_);
@@ -2689,6 +2853,42 @@ void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecayS
 
     outGainTarget_ = std::pow(10.0, c.outputGainDb / 20.0);
 
+    // Output gains (stereo): new ones go to the next control point of the free phase and are
+    // ramped over its block; while nothing rings they apply at once.
+    {
+        const double* L = gainL != nullptr ? gainL : bake_->gainL.data();
+        const double* R = gainR != nullptr ? gainR : bake_->gainR.data();
+        const auto& toL = gainPending_ ? pendL_ : gainRamp_ ? rampL_ : gainL_;
+        const auto& toR = gainPending_ ? pendR_ : gainRamp_ ? rampR_ : gainR_;
+        if (! std::equal(toL.begin(), toL.end(), L) || ! std::equal(toR.begin(), toR.end(), R))
+        {
+            if (! isPrepared() || isSilent())
+            {
+                std::copy(L, L + n, gainL_.begin());
+                std::copy(R, R + n, gainR_.begin());
+                gainPending_ = gainRamp_ = false;
+                std::fill(dpl32_.begin(), dpl32_.end(), 0.0f);
+                std::fill(dpr32_.begin(), dpr32_.end(), 0.0f);
+            }
+            else
+            {
+                std::copy(L, L + n, pendL_.begin());
+                std::copy(R, R + n, pendR_.begin());
+                gainPending_ = true;
+            }
+        }
+    }
+    // Right-channel high-pass: to the new settings over kHpRampS.
+    if (c.highPassOn != hpOn_ || c.highPassHz != hpHz_)
+    {
+        hpOn_ = c.highPassOn;
+        hpHz_ = c.highPassHz;
+        if (isPrepared())
+            startHighPassRamp();
+        else
+            hpMix_ = hpOn_ ? 1.0 : 0.0; // prepare() computes the coefficients
+    }
+
     // Energy cascade and loud-band damping from the next control point, re-hit damping from
     // the next strike. Their thresholds follow the BOW articulation's values set above.
     setMechanisms(c);
@@ -2723,6 +2923,8 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     const size_t n = size_t(n_);
     sampleNow_ = static_cast<int64_t>(clock_);
 
+    if (gainRamp_)
+        interruptGainRamp();
     if (freeStarted_)
         rebaseComponents();
     const double strikeTime = timeSeconds();
@@ -3338,10 +3540,9 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
         // The shared oscillator starts at the wander phase; the components carry the amplitude.
         Yr_[d] = rotR;
         Yi_[d] = rotI;
-        pl32_[d] = static_cast<float>(b.pickL[k]);
-        pr32_[d] = static_cast<float>(b.pickR[k]);
-        gBound_[d] = modeGain(k, lfHi, mfHi) * std::max(1.0, 1.0 + gm1Max) *
-                     std::max(std::fabs(b.pickL[k]), std::fabs(b.pickR[k]));
+        pl32_[d] = static_cast<float>(gainL_[k]);
+        pr32_[d] = static_cast<float>(gainR_[k]);
+        gBound_[d] = modeGain(k, lfHi, mfHi) * std::max(1.0, 1.0 + gm1Max) * outputBound(k);
         ++a;
     }
     const int end = std::min(nPad_, roundUp(std::max(oldAct, a), kGroup));

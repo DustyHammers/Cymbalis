@@ -30,9 +30,15 @@ tuning block it already has). Then:
   * each articulation's stick click (stick_gain, stick_bp_lo, stick_bp_hi, stick_len_ms,
     stick_decay_ms) goes into the tuning block where it differs from the slot's own value
     (its stick_* parameters, Python's defaults where it has none);
+  * the stereo values (stereo_pan_bands, stereo_width_bands, stereo_width) go into the
+    tuning block, and every mode's resulting left and right gains (from the bake's
+    pick_l / pick_r, docs/TUNING.md "Stereo") into the bake's "stereo" block (gain_l,
+    gain_r), which the plugin plays as they are; centre and 100 % everywhere removes it;
+  * the right-channel high-pass (right_highpass on / off, right_highpass_hz) goes into the
+    tuning block;
   * every other value that differs from the bake's own value goes into the bake's
     "tuning" block, which the plugin's bake loader applies; per-band cymbal values
-    (ring_length_bands) as 22 values. The plugin's own mechanisms (energy cascade
+    (ring_length_bands, stereo_pan_bands, stereo_width_bands) as 22 values. The plugin's own mechanisms (energy cascade
     cascade_*, loud-band damping loud_damp_*, re-hit damping rehit_damp_* with its weights
     per articulation, rehit_damp_weights) have a neutral value as the bake's own (amount 0:
     off; weights 1). A value equal to the bake's own drops out of the block, so applying the
@@ -49,7 +55,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from bake_preset import dump_json  # noqa: E402
+from bake_preset import dump_json, enc  # noqa: E402
 
 FORMAT = 'cymbalis-tuning'
 VERSION = 1
@@ -68,6 +74,7 @@ CYMBAL_KEYS = [
     'cascade_spread', 'cascade_low_band', 'cascade_high_band',
     'loud_damp_amount', 'loud_damp_threshold_db', 'loud_damp_tilt',
     'rehit_damp_amount', 'rehit_damp_time_ms',
+    'stereo_width', 'right_highpass_hz',
 ]
 # The plugin's own whole-cymbal mechanisms (plugin/dsp/Tuning.h): their neutral values (the
 # bake's own) and allowed ranges; (lo, hi, whole) with whole = a whole number.
@@ -84,16 +91,22 @@ PLUGIN_KEYS = {
     'loud_damp_tilt': (0.0, (-1.0, 1.0, False)),
     'rehit_damp_amount': (0.0, (0.0, 1.0, False)),
     'rehit_damp_time_ms': (10.0, (1.0, 50.0, False)),
+    'stereo_width': (100.0, (0.0, 200.0, False)),
+    'right_highpass_hz': (120.0, (20.0, 300.0, False)),
 }
 # Re-hit damping weight of each articulation, {id: weight}; neutral 1.
 WEIGHTS_KEY = 'rehit_damp_weights'
 WEIGHT_MIN, WEIGHT_MAX = 0.0, 2.0
 RESTART_KEY = 'edge_frame_decay_restart'
 ENVELOPE_KEY = 'edge_band_envelope'   # EDGE ONSET ENVELOPE: the bake's edge_npz.envelope_active
+HIGHPASS_KEY = 'right_highpass'       # the right channel's 120 Hz high-pass on (the bake's own) or off
 # Per-band cymbal values (22 values, lowest band first): name -> (range, unit, neutral value).
 CYMBAL_BAND_KEYS = {
     'ring_length_bands': ((0.25, 4.0), 'x', 1.0),
+    'stereo_pan_bands': ((-100.0, 100.0), '(L100 .. R100)', 0.0),
+    'stereo_width_bands': ((0.0, 200.0), '%', 100.0),
 }
+STEREO_KEY = 'stereo'                 # the bake's per-mode stereo gains (gain_l, gain_r)
 LEVEL_KEY, VEL06_KEY, VEL03_KEY = 'level_db', 'vel_0.6_db', 'vel_0.3_db'
 BRIGHT_KEY = 'brightness_db_per_oct'   # with the velocity curve, in the tuning block
 # Excitation band gains (plugin/dsp/Tuning.h): 22 one-third-octave bands, edge j at
@@ -147,6 +160,7 @@ def own_values(bake):
     own['edge_band_env_onset_s'] = float(npz['onset_s']) if npz else 1.5
     own[RESTART_KEY] = True
     own[ENVELOPE_KEY] = bool(npz['envelope_active']) if npz else False
+    own[HIGHPASS_KEY] = True
     for key, (neutral, _) in PLUGIN_KEYS.items():
         own[key] = neutral
     for key, (_, _, neutral) in CYMBAL_BAND_KEYS.items():
@@ -236,6 +250,38 @@ def slot_attack(bake, slot):
             [finite(f'slot {slot["name"]} attack gain', g) for g in gains_soft]]
 
 
+def band_of(freq_hz):
+    """A mode's one-third-octave band, as plugin/dsp/Tuning.cpp excitationBand."""
+    band = 0
+    while band + 1 < N_BANDS and freq_hz >= 11404.0 * 2.0 ** ((band + 1 - 21) / 3.0):
+        band += 1
+    return band
+
+
+def stereo_gains(cymbal, pick_l, pick_r, freq_hz):
+    """Every mode's left and right gains for the stereo values (plugin/dsp/Tuning.cpp
+    stereoGains): the level sqrt(L^2 + R^2) stays; the position atan2(|R|, |L|) / (pi / 4) - 1
+    becomes pan + position x band width x overall width, clamped to -1 .. 1; the signs stay. A
+    band at centre and 100 % keeps the pick vector entries exactly."""
+    quarter_pi = 0.78539816339744831
+    out_l, out_r = [], []
+    for l, r, f in zip(pick_l, pick_r, freq_hz):
+        j = band_of(f)
+        pan = cymbal['stereo_pan_bands'][j] / 100.0
+        width = (cymbal['stereo_width_bands'][j] / 100.0) * (cymbal['stereo_width'] / 100.0)
+        if pan == 0.0 and width == 1.0:
+            out_l.append(l)
+            out_r.append(r)
+            continue
+        level = math.sqrt(l * l + r * r)
+        position = math.atan2(abs(r), abs(l)) / quarter_pi - 1.0
+        moved = min(max(pan + position * width, -1.0), 1.0)
+        angle = (moved + 1.0) * quarter_pi
+        out_l.append(math.copysign(level * math.cos(angle), l))
+        out_r.append(math.copysign(level * math.sin(angle), r))
+    return out_l, out_r
+
+
 def band_values(name, v, lo, hi, unit):
     """22 values of a band row from the tuning file, each within lo..hi."""
     if not isinstance(v, list) or len(v) != N_BANDS:
@@ -287,7 +333,7 @@ def main():
 
     # The file's changes on top of the bake's current values.
     for key, v in (tun.get('cymbal') or {}).items():
-        if key in (RESTART_KEY, ENVELOPE_KEY):
+        if key in (RESTART_KEY, ENVELOPE_KEY, HIGHPASS_KEY):
             if not isinstance(v, bool):
                 fail(f'{key} must be true or false')
             if key == ENVELOPE_KEY and not bake.get('edge_npz'):
@@ -356,7 +402,8 @@ def main():
                 fail(f'unknown articulation value {aid}.{key}')
 
     # The new tuning block: what differs from the bake's own values.
-    new_cymbal = {k: current[k] for k in CYMBAL_KEYS + [RESTART_KEY, ENVELOPE_KEY] + list(CYMBAL_BAND_KEYS) + [WEIGHTS_KEY]
+    new_cymbal = {k: current[k] for k in CYMBAL_KEYS + [RESTART_KEY, ENVELOPE_KEY, HIGHPASS_KEY] + list(CYMBAL_BAND_KEYS)
+                  + [WEIGHTS_KEY]
                   if k in current and current[k] != own.get(k)}
     new_arts = {}
     for aid, vals in curves.items():
@@ -381,6 +428,20 @@ def main():
         }
     else:
         bake.pop('tuning', None)
+
+    # Stereo: every mode's left and right gains for the stereo values, which the plugin plays
+    # as they are (the pick vectors stay as baked; the loader checks the gains against them).
+    if any(current[k] != own[k] for k in ('stereo_pan_bands', 'stereo_width_bands', 'stereo_width')):
+        sh = bake['shared']
+        gl, gr = stereo_gains(current, sh['pick_l']['data'], sh['pick_r']['data'], sh['freq_hz']['data'])
+        bake[STEREO_KEY] = {
+            'gain_l': enc(gl),
+            'gain_r': enc(gr),
+            'set_by': f'tools/apply_tuning.py from {os.path.basename(args.tuning)} ({now}): pick_l / pick_r with '
+                      'the tuning block\'s stereo values',
+        }
+    else:
+        bake.pop(STEREO_KEY, None)
 
     for aid, db in levels.items():
         slot = bake['slots'][ids[aid]]
@@ -454,6 +515,7 @@ def main():
                 print(f'  {"":14s} onset delay soft {" ".join(f"{d:+g}" for d in sh["delay_ms_soft"])} ms')
                 print(f'  {"":14s} onset speed soft {" ".join(f"{v:g}" for v in sh["speed_soft"])}')
     print('  tuning block: ' + (json.dumps(new_cymbal) if new_cymbal else 'no cymbal values'))
+    print('  stereo gains: ' + ('written (gain_l, gain_r)' if STEREO_KEY in bake else 'none (the pick vectors)'))
     if args.dry_run:
         print('  (dry run: nothing written)')
         return

@@ -868,6 +868,8 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
         }
         b.pythonT60S = b.t60S;
         b.pythonLfoRateHz = b.lfoRateHz;
+        b.gainL = b.pickL;
+        b.gainR = b.pickR;
         b.tuning = u;
         try
         {
@@ -881,6 +883,29 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
         catch (const std::exception& e)
         {
             throw BakeError(path + ": " + e.what());
+        }
+        // The stereo gains apply_tuning.py wrote with the tuning block's stereo values: the
+        // engine plays them as they are. Each mode keeps its level and the signs of its pick
+        // vector entries (constant power), which shows they come from them.
+        if (const json::Value* st = root.find(kStereoKey); st != nullptr && ! st->isNull())
+        {
+            const size_t n = b.pickL.size();
+            if (! hasStereo(b.tuning.cymbal))
+                throw BakeError(path + ": stereo gains without stereo values in the tuning block");
+            auto gl = readArray(st->at("gain_l"), "stereo.gain_l", {n}, rep);
+            auto gr = readArray(st->at("gain_r"), "stereo.gain_r", {n}, rep);
+            for (size_t k = 0; k < n; ++k)
+            {
+                const double was = b.pickL[k] * b.pickL[k] + b.pickR[k] * b.pickR[k];
+                const double now = gl[k] * gl[k] + gr[k] * gr[k];
+                if (! std::isfinite(now) || std::fabs(now - was) > 1e-9 * was || std::signbit(gl[k]) != std::signbit(b.pickL[k])
+                    || std::signbit(gr[k]) != std::signbit(b.pickR[k]))
+                    throw BakeError(path + ": stereo gains of mode " + std::to_string(k)
+                                    + " do not keep the level and signs of pick_l / pick_r");
+            }
+            b.gainL = std::move(gl);
+            b.gainR = std::move(gr);
+            rep.push_back("stereo       the bake's stereo gains are used");
         }
         for (const auto& s : b.slots)
             if (! s.hasBowVp && ! (b.params.tauRefMs > 0.0))
