@@ -32,6 +32,8 @@ The plugin plays four presets, baked from the Python engine's data with NL off. 
 | HAMMERED THIN RIDE | `resources/presets/hammered_thin_ride.bake.json` | `presets/bettis/` |
 | SWISH | `resources/presets/swish.bake.json` | `presets/swish/` |
 
+The JSON bakes are the source: `tools/bake_preset.py`, `tools/apply_tuning.py` and the tuning files read and write them. The plugin embeds each bake in a packed form instead (in its binary, through BinaryData): when CMake builds the plugin's binary data, `tools/pack_bake` packs every bake into `<build>/presets/<preset>.bake.pack`. A packed bake (`plugin/PackedBake.h`) is the bake's JSON tree in binary, compressed with zlib: every number as its exact double (or int32 where it is exactly one), so the plugin loads exactly the values the JSON gives. It carries a format version and an FNV-1a checksum; a packed preset that does not match them fails to load with a message, like a bake with another format version. The tool checks each packed bake before writing it: it must unpack to the same JSON, bit for bit, and load as a bake, or the build stops.
+
 After a change to a preset's data, regenerate its bake (`--preset nova`, `602`, `bettis` or `swish`):
 
 ```

@@ -919,4 +919,9 @@ std::shared_ptr<const BakeData> loadBakeFromText(const std::string& text, const 
     return buildBake(root, name);
 }
 
+std::shared_ptr<const BakeData> loadBakeFromJson(const json::Value& root, const std::string& name)
+{
+    return buildBake(root, name);
+}
+
 } // namespace cymbalis
