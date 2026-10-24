@@ -68,7 +68,7 @@ void drawBoxOutline (juce::Graphics& g, juce::Rectangle<int> r, juce::Colour c)
 
 #if CYMBALIS_TUNING
 // =====================================================================================
-// Tuning build: the TUNING button, drawn like the editor's boxes.
+// Tuning code (CYMBALIS_WITH_TUNING): the TUNING button, drawn like the editor's boxes.
 class Content::TuningButton final : public juce::Component
 {
 public:
@@ -666,7 +666,7 @@ void Content::toggleTuningWindow (bool open)
 void Content::mouseDown (const juce::MouseEvent& e)
 {
 #if CYMBALIS_TUNING
-    // Tuning build: Cmd-click on the logo opens the Tuning window too (docs/TUNING.md).
+    // Cmd-click on the logo opens the Tuning window too (docs/TUNING.md).
     if (e.eventComponent == this && e.mods.isCommandDown() && kLogo.contains (e.getPosition()))
     {
         toggleTuningWindow (true);

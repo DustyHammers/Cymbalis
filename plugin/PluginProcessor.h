@@ -89,7 +89,7 @@ public:
     void setEditorSize (int w, int h) noexcept;
 
 #if CYMBALIS_TUNING
-    // ---- tuning build only (docs/TUNING.md), message thread
+    // ---- tuning code only (CYMBALIS_WITH_TUNING, docs/TUNING.md), message thread
     // The bake of a preset (null if it failed to load), its baked tuning values and the
     // current ones. setTuning applies every value live; a new ring length rebuilds the
     // cymbal through the preset-switch path.
@@ -136,7 +136,7 @@ private:
         int preset = 0;
         std::unique_ptr<cymbalis::FastEngine> engine; // null if the engine could not be built
 #if CYMBALIS_TUNING
-        double ring = 1.0; // ring length it was built with (tuning build)
+        double ring = 1.0; // ring length it was built with
 #endif
     };
 

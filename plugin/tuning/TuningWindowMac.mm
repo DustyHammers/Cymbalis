@@ -1,4 +1,4 @@
-// Tuning build only (docs/TUNING.md): the Tuning window as a child window of the editor's
+// Tuning code only (CYMBALIS_WITH_TUNING, docs/TUNING.md): the Tuning window as a child window of the editor's
 // window, so it is always in front of the editor and the host, on the editor's Space, and
 // moves and goes with it.
 #include "TuningWindow.h"

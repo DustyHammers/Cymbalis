@@ -547,7 +547,7 @@ void FastEngine::prepare(double sampleRate)
     sr_ = sampleRate;
     K_ = controlBlockFor(b, sr_, &frameBlocks_);
 
-    // A per-band ring length set live (tuning build) and not yet taken over: its decay rates,
+    // A per-band ring length set live (Tuning window) and not yet taken over: its decay rates,
     // the rest is computed here for this rate.
     if (decayPending_)
     {

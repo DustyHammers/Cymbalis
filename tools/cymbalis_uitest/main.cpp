@@ -2,8 +2,8 @@
 //
 //   CymbalisUiTest PLUGIN STEPS...
 //
-// PLUGIN is a path to Cymbalis.vst3 (or Cymbalis Tuning.vst3), "AU" for the installed
-// Cymbalis Audio Unit, or "AU:CymT" for the one with that plugin code. The tool hosts
+// PLUGIN is a path to Cymbalis.vst3, "AU" for the installed Cymbalis Audio Unit, or
+// "AU:CODE" for an installed Audio Unit with that plugin code. The tool hosts
 // the plugin with JUCE's VST3 or AU hosting code, opens its editor in a window and posts
 // real mouse events (NSEvents) to that window, so they travel through the window server
 // path and the plugin wrapper exactly as a host's would. After each step it reads the
@@ -19,7 +19,7 @@
 //   shoulder  (after preset) click the BELL stick box, then SHOULDER  -> stick_hammered_thin_ride_BELL SHOULDER
 //   swish     click the CYMBAL box, then SWISH (the fourth)          -> preset swish
 //
-// Cymbalis Tuning only (docs/TUNING.md); these read the windows, not the saved state:
+// The Tuning window (docs/TUNING.md); these read the windows, not the saved state:
 //
 //   tuning       click TUNING        -> the Tuning window is visible and in front of the editor
 //   tuningclose  click TUNING again  -> the Tuning window is hidden

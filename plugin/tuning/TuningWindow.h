@@ -1,8 +1,8 @@
 #pragma once
 
-// Tuning build only (docs/TUNING.md): the Tuning window, opened by Cmd-click on the CYMBALIS
-// logo. Plain JUCE controls in the editor's palette and font; every value acts on the
-// current preset, live.
+// Tuning code only (CYMBALIS_WITH_TUNING, docs/TUNING.md): the Tuning window, opened by the
+// TUNING button or Cmd-click on the CYMBALIS logo. Plain JUCE controls in the editor's
+// palette and font; every value acts on the current preset, live.
 
 #include "PluginProcessor.h"
 #include "TuningFields.h"
