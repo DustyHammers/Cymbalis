@@ -77,7 +77,7 @@ Imported 2026-10-14 from `Cymbalis_V8_Package_602_final.zip`, unchanged. SPEAR f
 - 602 has bow and edge only. Its two overlays (`bow.json`, `edge.json`) are empty.
 - Bettis has no articulation overlays. `Bettis_Baseline1.json` sets `nl_amount` 1.0; the plugin bakes every preset with `nl_amount` 0.
 - Bettis data files not referenced by `Bettis_Baseline1.json` (`bettis_band_envelopes.json`, `bettis_bow_vel_tilt.json`, `bettis_clusters_full.json`, `bettis_edge_excitation_ratios_neutral.json`, `bettis_exc_norm_band4.json`) are kept as delivered.
-- Photos: `resources/ui/SmokeFlatRide.png` (714 x 718) and `resources/ui/HammeredThinRide.png` (709 x 713).
+- Photos: `resources/ui/SmokeFlatRide.png` (714 x 718, MD5 `ad32593c8f50eea6c56d5955f481bff6`) and `resources/ui/HammeredThinRide.png` (709 x 713, MD5 `b1b457e6b28daf4247bf2ed476ae734d`). Both were recompressed losslessly on 2026-10-24 (oxipng); their decoded pixels are those of the imported files (MD5 `f40fc5681149ac288d628909a86968be` and `11157eed92bee276283a317f973a77d3`).
 
 # Swish (22" China, medium heavy)
 
@@ -101,4 +101,4 @@ Imported 2026-10-17 from `Cymbalis_V8_Package_602_final.zip`, unchanged. SPEAR f
 - Overlays: `bow_tip.json` sets `stick_gain` 6.0 (stick-click transient); `bow_shoulder.json` sets it to 0.0.
 - The edge NPZ has 20 bands, 100-10000 Hz, six velocities (0.2-1.0) and one velw for all velocities.
 - `Swish_Baseline1.json` sets no `edge_band_env_path`, so in Python V19 the NPZ band envelopes never run for Swish (the session summary's "_eb_band_scale not active").
-- Photo: `resources/ui/Swish.png` (737 x 747).
+- Photo: `resources/ui/Swish.png` (737 x 747, MD5 `ca66de93c2aae1d2808046f235a1661f`). Recompressed losslessly on 2026-10-24 (oxipng); its decoded pixels are those of the imported file (MD5 `e3b7230754d0a940be6c8e697cabb650`).
