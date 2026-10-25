@@ -1274,5 +1274,17 @@
   },
   "notes": [
     "bow_shoulder bow_vp in slots EDGE (a copy of BOW2), BOW2: every V5 column (2, 3, 4) replaced with V4 (column 0), vel_norms kept, so every velocity plays V4 and nothing up to velocity 0.9905 changes; presets/nova/data/nova_vel_participation_shoulder_correct.json is unchanged. Why: above velocity 0.9905 (MIDI 126-127) V5 made the bow shoulder bell-like: it has about half of V4's modes (531 against 1091 above 0.01), its ring at velocity 1.0 is dominated by 647 Hz and 2044 Hz, and it is 5.6 dB quieter than V4 at 0.98."
-  ]
+  ],
+  "tuning": {
+    "format": "cymbalis-tuning",
+    "version": 1,
+    "applied_by": "tools/apply_tuning.py",
+    "applied_utc": "2026-10-25T16:58:23Z",
+    "source": "nova_ride.tuning.json",
+    "source_date": "2026-10-25T00:00:00.000+00:00",
+    "cymbal": {
+      "output_gain_db": -11.0
+    },
+    "articulations": {}
+  }
 }

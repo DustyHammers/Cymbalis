@@ -43,19 +43,30 @@ python tools/bake_preset.py --preset bettis --overrides '{"nl_amount": 0.0}' --o
 python tools/bake_preset.py --preset swish --overrides '{"nl_amount": 0.0}' --out resources/presets/swish.bake.json
 ```
 
-Each bake also holds its slots' level trims, in `slots[].level_trim.gain_db`. The plugin uses only that number; edit it to adjust a slot's level by ear. Re-baking drops the trims. Nova Ride's trims give a velocity-0.9 hit at each slot's base position the same 1-second RMS as one on BOW (tip). The 602, Bettis and Swish trims work at velocity 1.0 over the first 500 ms. BOW, the 602's CENTER (a copy of its BOW) and Swish's BOW_SHOULDER are matched to Nova's BOW (tip); Swish's BELL_SHOULDER takes BELL's SPEAR target. The shoulder copies of the 602 and Bettis, and Nova's EDGE (a copy of BOW2), start with their sources' trims. EDGE and BELL go to the level their SPEAR captures have relative to BOW, capped where one hit would peak above 0.9 before the Volume knob (`docs/PORT_MAP.md`, "602 and Bettis", decision 5). To measure trims again with the plugin's engine and store them:
+Each bake also holds its slots' level trims, in `slots[].level_trim.gain_db`. The plugin uses only that number; edit it to adjust a slot's level by ear. Re-baking drops the trims. Nova Ride's trims give a velocity-0.9 hit at each slot's base position the same 1-second RMS as one on BOW (tip). The 602, Bettis and Swish trims work at velocity 1.0 over the first 500 ms. BOW, the 602's CENTER (a copy of its BOW) and Swish's BOW_SHOULDER are matched to Nova's BOW (tip); Swish's BELL_SHOULDER takes BELL's SPEAR target. The shoulder copies of the 602 and Bettis, and Nova's EDGE (a copy of BOW2), start with their sources' trims. EDGE and BELL go to the level their SPEAR captures have relative to BOW, capped where one hit would peak above 0.9 before the output gain and the Volume knob (`docs/PORT_MAP.md`, "602 and Bettis", decision 5). To measure trims again with the plugin's engine and store them (`--peak-limit 0.25365` is that 0.9 after the −11 dB output gain, see "Headroom" below):
 
 ```
 cmake --build build --target cymbalis_trims
 build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/nova_ride.bake.json --json trims.json
 python tools/set_level_trims.py resources/presets/nova_ride.bake.json trims.json
-build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/smoke_flat_ride.bake.json --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target EDGE=2.8 --peak-limit 0.9 --json trims.json
+build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/smoke_flat_ride.bake.json --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target EDGE=2.8 --peak-limit 0.25365 --json trims.json
 python tools/set_level_trims.py resources/presets/smoke_flat_ride.bake.json trims.json
-build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/hammered_thin_ride.bake.json --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target BELL=2.7 --spear-target EDGE=14.2 --peak-limit 0.9 --json trims.json
+build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/hammered_thin_ride.bake.json --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target BELL=2.7 --spear-target EDGE=14.2 --peak-limit 0.25365 --json trims.json
 python tools/set_level_trims.py resources/presets/hammered_thin_ride.bake.json trims.json
-build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/swish.bake.json --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target BELL=5.3 --spear-target BELL_SHOULDER=5.3 --spear-target EDGE=4.7 --peak-limit 0.9 --json trims.json
+build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/swish.bake.json --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target BELL=5.3 --spear-target BELL_SHOULDER=5.3 --spear-target EDGE=4.7 --peak-limit 0.25365 --json trims.json
 python tools/set_level_trims.py resources/presets/swish.bake.json trims.json
 ```
+
+**Headroom (2026-10-25).** The trims match single hits to Nova's BOW (tip) with no headroom, and hits add up while the cymbal rings, so a host's master clipped in normal playing. Every preset therefore has the same cymbal output gain, −11 dB (`output_gain_db` in its tuning block, set with `tools/apply_tuning.py`); the trims, velocity curves and everything else are unchanged. Measured in memory through the plugin at 44.1 kHz, Volume 0 dB, velocity 1.0, with a stress pattern (8 s of BOW (tip) eighth notes at 120 BPM with EDGE on every beat 1, then 4 s of EDGE alone on every quarter note), first run after loading:
+
+| Preset | Stress peak before | After −11 dB | Worst of 16 phase sequences, after | Loudest single hit (worst of 128), before → after |
+|---|---|---|---|---|
+| NOVA RIDE | −1.2 dBFS | −12.2 dBFS | −12.2 dBFS | +1.6 → −9.4 dBFS (BELL2) |
+| SMOKE FLAT RIDE | +4.2 dBFS | −6.8 dBFS | −6.8 dBFS | +0.2 → −10.8 dBFS (BOW, CENTER and their shoulders) |
+| HAMMERED THIN RIDE | +5.1 dBFS | −6.0 dBFS | −2.2 dBFS | +1.9 → −9.1 dBFS (EDGE) |
+| SWISH | +7.4 dBFS | −3.6 dBFS | −3.0 dBFS | +3.6 → −7.4 dBFS (BOW tip: 1.51 → 0.43) |
+
+−11 dB is the offset that puts the loudest stress peak (Swish, +7.35 dBFS) at −3 dBFS (−10.35 dB), rounded down to a whole dB. Each strike draws its own random phases, so a peak varies from run to run; Hammered Thin Ride's varies most. `tools/cymbalis_trims` measures with the bake's tuning block, output gain included. Its RMS matching is unaffected, since every preset has the same gain, but its peak limit now applies after the −11 dB, hence 0.25365 (0.9 × 10^(−11/20)) in the commands above, which gives the same trims as 0.9 did before.
 
 ## Installing a CI build
 

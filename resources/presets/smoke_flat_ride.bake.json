@@ -1065,5 +1065,17 @@
   },
   "notes": [
     "pk_t data has 2000 entries per array for 900 modes; the first 900 are used, by position, as in Python"
-  ]
+  ],
+  "tuning": {
+    "format": "cymbalis-tuning",
+    "version": 1,
+    "applied_by": "tools/apply_tuning.py",
+    "applied_utc": "2026-10-25T16:58:24Z",
+    "source": "smoke_flat_ride.tuning.json",
+    "source_date": "2026-10-25T00:00:00.000+00:00",
+    "cymbal": {
+      "output_gain_db": -11.0
+    },
+    "articulations": {}
+  }
 }

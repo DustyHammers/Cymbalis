@@ -1274,5 +1274,17 @@
   },
   "notes": [
     "edge_npz.envelope_active is set by the bake: Swish_Baseline1.json sets no edge_band_env_path, so Python never runs the NPZ band envelope; the plugin switches it on (Kris, 2026-10-17), as the 602's trigger file does"
-  ]
+  ],
+  "tuning": {
+    "format": "cymbalis-tuning",
+    "version": 1,
+    "applied_by": "tools/apply_tuning.py",
+    "applied_utc": "2026-10-25T16:58:26Z",
+    "source": "swish.tuning.json",
+    "source_date": "2026-10-25T00:00:00.000+00:00",
+    "cymbal": {
+      "output_gain_db": -11.0
+    },
+    "articulations": {}
+  }
 }
