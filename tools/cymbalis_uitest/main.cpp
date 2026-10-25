@@ -20,7 +20,7 @@
 //   preset    click the CYMBAL box, then HAMMERED THIN RIDE            -> preset hammered_thin_ride
 //   shoulder  (after preset) click the BELL stick box, then SHOULDER  -> stick_hammered_thin_ride_BELL SHOULDER
 //   swish     click the CYMBAL box, then SWISH (the fourth)          -> preset swish
-//   wheel     the scroll wheel over the four knobs, a note box, a stick box, the CYMBAL and
+//   wheel     the scroll wheel over the five knobs, a note box, a stick box, the CYMBAL and
 //             MIDI CHANNEL boxes                                     -> state and parameters unchanged
 //
 // The Tuning window (docs/TUNING.md); these read the windows, not the saved state:
@@ -301,12 +301,12 @@ private:
         }
         else if (name == "wheel")
         {
-            // The four knobs (UI_SPEC section 3), the BOW note box, the BELL stick box, the
+            // The five knobs (UI_SPEC section 3), the BOW note box, the BELL stick box, the
             // CYMBAL and MIDI CHANNEL boxes.
             s.actions = { [this] {
                              before = snapshot();
                              wheelError = {};
-                             const juce::Point<float> points[] = { { 226.0f, 881.0f }, { 600.0f, 881.0f }, { 1349.0f, 642.0f },
+                             const juce::Point<float> points[] = { { 226.0f, 881.0f }, { 600.0f, 881.0f }, { 974.0f, 881.0f }, { 1349.0f, 642.0f },
                                                                    { 1350.0f, 881.0f }, { 1457.0f, 232.0f }, { 1314.0f, 152.0f },
                                                                    { 199.0f, 402.0f },  { 199.0f, 532.0f } };
                              for (auto p : points)

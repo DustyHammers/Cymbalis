@@ -214,9 +214,9 @@ private:
     CymbalisProcessor& processor;
     Assets assets;
 
-    std::array<KnobSpec, 4> knobSpecs;
-    std::array<std::unique_ptr<Knob>, 4> knobs;
-    std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, 4> attachments;
+    std::array<KnobSpec, 5> knobSpecs;
+    std::array<std::unique_ptr<Knob>, 5> knobs;
+    std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, 5> attachments;
     int draggingKnob = -1;
 
     DropdownBox presetBox, channelBox;

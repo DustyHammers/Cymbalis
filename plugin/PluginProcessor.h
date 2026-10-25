@@ -14,7 +14,7 @@
 // compiled in, parsed at load). MIDI note-ons on the selected channel strike the slots whose
 // notes they match, at their exact sample. Choosing a preset loads its bake into the engine:
 // the new engine state is built off the audio thread and handed over without locks.
-// Parameters: exactly the four of docs/UI_SPEC.md section 9; the preset is session state,
+// Parameters: exactly the five of docs/UI_SPEC.md section 9; the preset is session state,
 // like the MIDI channel.
 class CymbalisProcessor final : public juce::AudioProcessor
 {
@@ -97,7 +97,7 @@ public:
     cymbalis::Tuning tuning (int preset) const;
     void setTuning (int preset, const cymbalis::Tuning& t);
 
-    // Meters: the output after the Volume knob (peak since the last read, RMS over about
+    // Meters: the output after the Volume and Pan knobs (peak since the last read, RMS over about
     // 300 ms, clip latched until resetClip), and the last hit before the Volume knob (its row
     // and bake entry, velocity, and peak and RMS over its first 500 ms).
     struct Meters
@@ -119,6 +119,7 @@ public:
     static constexpr const char* paramVolumeDb = "volume_db";
     static constexpr const char* paramBlend1 = "blend_1";
     static constexpr const char* paramBlend2 = "blend_2";
+    static constexpr const char* paramPan = "pan";
 
 private:
     // A baked preset: data, parsed once at plugin load.
@@ -154,6 +155,7 @@ private:
     std::atomic<float>* volumeDb = nullptr;
     std::atomic<float>* blend1 = nullptr;
     std::atomic<float>* blend2 = nullptr;
+    std::atomic<float>* pan = nullptr;
 
     std::array<Preset, cymbalis::kNumPresets> presets;
     std::atomic<int> presetTarget { 0 }; // set by the editor or the session
@@ -184,6 +186,7 @@ private:
     std::atomic<int> editorWidth { 0 }, editorHeight { 0 };
 
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> gain { 1.0f };
+    juce::SmoothedValue<float> panPosition { 0.0f }; // linear: it runs through 0 to negative values
 
 #if CYMBALIS_TUNING
     // Tuning state per preset, owned by the message thread; the loader reads it under the lock.

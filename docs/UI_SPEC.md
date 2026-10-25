@@ -1,6 +1,6 @@
 # UI specification — Cymbalis
 
-Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE added 2026-10-15, SWISH 2026-10-17. Layout v2 (mockup v2: a larger, higher photo area, MIDI CHANNEL under CYMBAL, Velocity Sensitivity and Volume in a bottom row) approved by Kris 2026-10-25. All coordinates are in 1536×1024 design units. `docs/ui/reference_mockup.png` shows the original artwork (layout v1).
+Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE added 2026-10-15, SWISH 2026-10-17. Layout v2 (mockup v2: a larger, higher photo area, MIDI CHANNEL under CYMBAL, Velocity Sensitivity and Volume in a bottom row) approved by Kris 2026-10-25; the Pan parameter and its knob added 2026-10-25 at Kris's request. All coordinates are in 1536×1024 design units. `docs/ui/reference_mockup.png` shows the original artwork (layout v1).
 
 ## 1. Assets (`resources/ui/`)
 
@@ -23,7 +23,7 @@ Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE add
 
 ## 3. Layout
 
-Layout v2, approved by Kris 2026-10-25 (mockup v2). Left column: the CYMBAL and MIDI CHANNEL boxes. Centre: the photo. Bottom row: Velocity Sensitivity and Volume, with a third place kept free. Right column: the rows and the blend knobs, as in layout v1.
+Layout v2, approved by Kris 2026-10-25 (mockup v2). Left column: the CYMBAL and MIDI CHANNEL boxes. Centre: the photo. Bottom row: Velocity Sensitivity, Volume and Pan. Right column: the rows and the blend knobs, as in layout v1.
 
 | Element | Position | Notes |
 |---|---|---|
@@ -33,7 +33,7 @@ Layout v2, approved by Kris 2026-10-25 (mockup v2). Left column: the CYMBAL and 
 | Bottom row | x 39–1161 in thirds (39–413, 413–787, 787–1161), knob centres at y 881 (the height of Blend Position 2) | Each knob is centred in its third |
 | Velocity Sensitivity knob | centre 226,881 (first third) | See section 9. Layout v1: 201,641 |
 | Volume knob | centre 600,881 (second third) | See section 9. Layout v1: 199,881 |
-| Third place of the bottom row | centre 974,881 | Kept free for a PAN knob in a later task. Nothing is drawn there |
+| Pan knob | centre 974,881 (third third) | See section 9. Frame 45 (12 o'clock) at centre, 0 at full left, 90 at full right. End labels L and R (section 4) instead of −/+ marks |
 | Blend Position 1 knob (BELL ↔ BOW) | centre 1349,642 | |
 | Blend Position 2 knob (BOW ↔ EDGE) | centre 1350,881 | |
 | Articulation rows | box tops at y 140 / 220 / 300 / 380 / 460 (BELL, BOW, EDGE, BELL2, BOW2) | Each row has a stick box and a MIDI note box |
@@ -52,7 +52,7 @@ All dropdowns, pop-up menus and value text are drawn by JUCE (custom LookAndFeel
 
 Measured from Kris's original artwork. "Top-left" is the top-left corner of the ink. Sizes and spacing were derived with Carlito (same metrics as Calibri) and should be checked once in JUCE against the original artwork.
 
-Layout v2 (2026-10-25) moved VELOCITY SENSITIVITY, VOLUME and MIDI CHANNEL; their text, font, size, spacing and colour are unchanged. Each is centred horizontally (the editor centres it by its ink width, so it stays centred with Calibri Light too; the left edges given are Carlito's).
+Layout v2 (2026-10-25) moved VELOCITY SENSITIVITY, VOLUME and MIDI CHANNEL; their text, font, size, spacing and colour are unchanged. Each is centred horizontally (the editor centres it by its ink width, so it stays centred with Calibri Light too; the left edges given are Carlito's). PAN, L and R (2026-10-25) are centred the same way; PAN is drawn like VOLUME.
 
 The CYMBALIS logo and "BRONZE MODELING INSTRUMENT" are part of the background image and are not drawn.
 
@@ -61,6 +61,8 @@ The CYMBALIS logo and "BRONZE MODELING INSTRUMENT" are part of the background im
 | CYMBAL | 160, 348 | 17.1 | 3.45 | `#A7A7A4` |
 | VELOCITY SENSITIVITY | centred on x 226 (left 120.1), top 784 | 17.1 | 3.09 | `#A09C99` |
 | VOLUME | centred on x 600 (left 560.8), top 784 | 17.1 | 3.40 | `#A09C99` |
+| PAN | centred on x 974, top 784 | 17.1 | 3.40 | `#A09C99` |
+| L · R (under Pan) | centred on x 901 · 1047, top 958 | 15.6 | — | `#695E52` |
 | MIDI CHANNEL | centred over its box, x 199.5 (left 130.8), top 478 | 17.1 | 3.11 | `#A7A7A4` |
 | STICK ARTICULATION | 1201, 98 | 17.1 | 3.29 | `#A7A7A4` |
 | MIDI NOTE | 1424, 98 | 17.1 | 3.00 | `#A7A7A4` |
@@ -96,12 +98,12 @@ Hover, open and selected states use only colours from this table.
 
 ## 6. Interactions
 - **Knobs:** vertical drag; double-click resets to the default.
-- **No mouse wheel:** the mouse wheel and trackpad scrolling change no value anywhere in the editor: not the knobs, the note boxes or the dropdowns. A value changes only by a deliberate click and drag, a menu choice or MIDI learn (and the host's automation of the four parameters). The wheel still scrolls the note list.
+- **No mouse wheel:** the mouse wheel and trackpad scrolling change no value anywhere in the editor: not the knobs, the note boxes or the dropdowns. A value changes only by a deliberate click and drag, a menu choice or MIDI learn (and the host's automation of the five parameters). The wheel still scrolls the note list.
 - **MIDI note box:** vertical drag changes the note. A click opens a menu: MIDI LEARN, RESET DEFAULT, NONE (unassign) and a scrollable list of every note, C-2 (0) to G8 (127), each with its number; the current note is outlined and in view. No separate Learn button is added.
 - **Stick box:** where the preset has both stick versions, a click opens a TIP / SHOULDER popup. In every preset the bell and bow rows (BELL, BOW, BELL2, BOW2) have both; section 8 lists what each plays. EDGE is SHOULDER only in every preset: its box shows SHOULDER and opens nothing. Which rows offer the choice comes from the slot table (`StickDisplay::choice` in `plugin/SlotTable.h`). Each preset keeps its own choices: picking SHOULDER on a row in one preset leaves the other presets' rows as they are. The choices are saved with the session (section 9); they are not automatable parameters.
 - **Dropdowns:** the preset dropdown is a list of NOVA RIDE, SMOKE FLAT RIDE, HAMMERED THIN RIDE and SWISH; the channel dropdown is a 4×4 grid.
 - **Preset switch:** the chosen preset's data is loaded into the one cymbal engine and plays from the next audio block (PORT_MAP, "602 and Bettis", decision 6). If the old cymbal is still ringing it fades out over 30 ms; it does not carry over. Notes, the MIDI channel and the knobs stay as they are; the rows play the stick choices of the chosen preset.
-- Knob value readout while dragging: Velocity "100%", Volume "+0.0 dB", Blend 1 "BELL 100 · 0 BOW", Blend 2 "BOW 100 · 0 EDGE".
+- Knob value readout while dragging: Velocity "100%", Volume "+0.0 dB", Pan "C" (or "L 35", "R 35"), Blend 1 "BELL 100 · 0 BOW", Blend 2 "BOW 100 · 0 EDGE".
 - MIDI LEARN: the next note-on on the selected channel is assigned; the box pulses "LEARN" until then; clicking elsewhere cancels.
 - Popups: background `#141313`, 2 px border `#534739`; hover outline `#76624C`; open outline `#A5A299`.
 
@@ -191,7 +193,7 @@ Each copy has its own level trim, initialised to its source's. In both presets e
 
 Every row with a choice starts on TIP. bell_shoulder has its own level trim, measured with BELL's target (`docs/PORT_MAP.md`, "Swish").
 
-## 9. Parameters — exactly these four, no others
+## 9. Parameters — exactly these five, no others
 Placeholder ranges until Kris revises them. At the defaults the plugin sounds the same as the Python engine.
 
 | Parameter ID | Knob | Range | Default | Behaviour | Readout |
@@ -200,7 +202,17 @@ Placeholder ranges until Kris revises them. At the defaults the plugin sounds th
 | `volume_db` | Volume | −60 to +6 dB | **0 dB** | Output gain. Knob curve dB = 6 − 66·(1 − p)², p = knob position 0–1, so 0 dB sits at p ≈ 0.70. Smoothed (no zipper noise) | `+0.0 dB` |
 | `blend_1` | Blend Position 1 (BELL → BOW) | 0–1 (shown 0–100%) | **0 (full BELL)** | BELL and BELL2 strike at position 1.0 − 0.5·blend_1 (1.0 = bell, 0.5 = bow). Read at strike time | `BELL 100 · 0 BOW` |
 | `blend_2` | Blend Position 2 (BOW → EDGE) | 0–1 (shown 0–100%) | **0 (full BOW)** | BOW and BOW2 strike at position 0.5 − 0.5·blend_2 (0.5 = bow, 0.0 = edge). Read at strike time. The engine's bow-to-edge excitation switches abruptly near position 0.45 (engine as-is) | `BOW 100 · 0 EDGE` |
+| `pan` | Pan | −1 to +1 | **0 (centre)** | Overall stereo pan of the cymbal, to place it in a mix (added 2026-10-25 at Kris's request). Applied after Volume, as the last stage, smoothed over 20 ms like the volume (linearly: it runs through 0). At centre the output is exactly as without it | `C`; else `L n` / `R n`, n = round(\|p\| × 100), e.g. `L 35` |
 
-EDGE always strikes at position 0.0. All four are automatable. No other parameters. Their host-visible names and value texts are the same in every preset; on SMOKE FLAT RIDE, Blend Position 1 still reads BELL → BOW in the host, although its knob labels read CENTER · BOW.
+**Pan law.** Each input channel is placed at a position and panned at constant power; both move together:
+- p ≤ 0: posL = −1, posR = 1 + 2p; p > 0: posL = −1 + 2p, posR = +1.
+- A channel at pos goes to the left output with cos((pos + 1)·π/4) and to the right with sin((pos + 1)·π/4).
+- outL = L·gL(posL) + R·gL(posR); outR = L·gR(posL) + R·gR(posR).
+
+At p = 0 that is L to L and R to R, unchanged (the stage is skipped). At −1 everything goes to the left output and the right output is 0; at +1 everything goes to the right. A hard-panned output is the sum of both channels, so its peak can be up to twice a channel's. The output meter of the Tuning window reads after Pan.
+
+EDGE always strikes at position 0.0. All five are automatable. No other parameters. Their host-visible names and value texts are the same in every preset; on SMOKE FLAT RIDE, Blend Position 1 still reads BELL → BOW in the host, although its knob labels read CENTER · BOW.
+
+Pan is saved with the session like the other four; a session saved before it existed loads with pan at centre.
 
 Non-automatable state saved with the session: MIDI channel, note per slot, stick per slot and preset (rows with a choice), current preset, editor size. A session without a row's note key gives the row its default note. NOVA RIDE's sticks keep the session keys they had before the other presets offered a choice (`stick_BELL`, …); the other presets' keys name the preset (`stick_smoke_flat_ride_BELL`, `stick_hammered_thin_ride_BOW2`, `stick_swish_BOW`, …). A session without a key gives the row its default stick.
