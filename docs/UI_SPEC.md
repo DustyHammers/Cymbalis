@@ -1,6 +1,6 @@
 # UI specification — Cymbalis
 
-Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE added 2026-10-15, SWISH 2026-10-17. All coordinates are in 1536×1024 design units. `docs/ui/reference_mockup.png` shows the original artwork.
+Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE added 2026-10-15, SWISH 2026-10-17. Layout v2 (mockup v2: a larger, higher photo area, MIDI CHANNEL under CYMBAL, Velocity Sensitivity and Volume in a bottom row) approved by Kris 2026-10-25. All coordinates are in 1536×1024 design units. `docs/ui/reference_mockup.png` shows the original artwork (layout v1).
 
 ## 1. Assets (`resources/ui/`)
 
@@ -23,22 +23,25 @@ Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE add
 
 ## 3. Layout
 
+Layout v2, approved by Kris 2026-10-25 (mockup v2). Left column: the CYMBAL and MIDI CHANNEL boxes. Centre: the photo. Bottom row: Velocity Sensitivity and Volume, with a third place kept free. Right column: the rows and the blend knobs, as in layout v1.
 
 | Element | Position | Notes |
 |---|---|---|
-| Cymbal photo | top-left 434,94, size 707×713 (centre 787,450) | Changes per preset. Each photo is fitted into this area with its aspect ratio kept, centred (Smoke Flat Ride 707×711, Hammered Thin Ride 707×711, Nova exact) |
+| Cymbal photo | top-left 447,50, size 680×680 (centre 787,390) | Changes per preset. Each photo is fitted into this area with its aspect ratio kept, centred (Nova 674×680, Smoke Flat Ride 676×680, Hammered Thin Ride 676×680, Swish 671×680). Layout v1: 434,94, 707×713 |
 | CYMBAL preset dropdown | box 61,371, 277×62 | Shows the preset name, e.g. **NOVA RIDE**. Changing preset changes the name, the photo and the sound. A name too wide to sit centred clear of the arrow is centred between the box's left edge and the arrow, with tighter letter spacing |
-| MIDI CHANNEL dropdown | box 632,936, 277×62 | Channels 1–16 |
-| Velocity Sensitivity knob | centre 201,641 | See section 9 |
-| Volume knob | centre 199,881 | See section 9 |
+| MIDI CHANNEL dropdown | box 61,501, 277×62, under the CYMBAL box | Channels 1–16, in a 4×4 grid that opens above the box, centred on it. Layout v1: 632,936 |
+| Bottom row | x 39–1161 in thirds (39–413, 413–787, 787–1161), knob centres at y 881 (the height of Blend Position 2) | Each knob is centred in its third |
+| Velocity Sensitivity knob | centre 226,881 (first third) | See section 9. Layout v1: 201,641 |
+| Volume knob | centre 600,881 (second third) | See section 9. Layout v1: 199,881 |
+| Third place of the bottom row | centre 974,881 | Kept free for a PAN knob in a later task. Nothing is drawn there |
 | Blend Position 1 knob (BELL ↔ BOW) | centre 1349,642 | |
 | Blend Position 2 knob (BOW ↔ EDGE) | centre 1350,881 | |
 | Articulation rows | box tops at y 140 / 220 / 300 / 380 / 460 (BELL, BOW, EDGE, BELL2, BOW2) | Each row has a stick box and a MIDI note box |
 | Stick box (under STICK ARTICULATION) | x1265, 99×25, 2 px border `#463C30` | Shows **TIP** or **SHOULDER** (section 8); selectable where the preset has both (section 6) |
 | MIDI note box (under MIDI NOTE) | x1424, 66×25, 2 px border `#463C30` | Note name + number, e.g. `C3 60` |
-| Preset and channel boxes | 2 px border `#534739` | Dropdown arrow: 13×9 triangle `#999489` at 306,398 and 877,963 |
-| Divider lines (1 px, `#353231`) | horizontal 338→1161 at y869; short 39→58 at y869; vertical x1188, y110→850 | |
-| −/+ marks (1 px, `#695E52`) | Vel: − at 120,722 (11 px); + centred 274,723 (10×9). Vol: − at 118,962; + centred 272,963 | |
+| Preset and channel boxes | 2 px border `#534739` | Dropdown arrow: 13×9 triangle `#999489` at 306,398 and 306,528 |
+| Divider lines (1 px, `#353231`) | horizontal 39→1161 at y757, above the bottom row; vertical x1188, y110→850 | Layout v1's lines at y869 (338→1161 and the short 39→58) are gone |
+| −/+ marks (1 px, `#695E52`) | Under each bottom-row knob, at fixed offsets from its centre (cx, cy): − at cx−81, cy+81 (11 px); + centred at cx+73, cy+82 (10×9). Vel: − at 145,962; + centred 299,963. Vol: − at 519,962; + centred 673,963 | The offsets are layout v1's |
 
 The artwork had the BELL note box at y138 and the BELL2/BOW2 stick boxes at x1266. These are aligned to y140 and x1265 in the drawn version.
 
@@ -49,14 +52,16 @@ All dropdowns, pop-up menus and value text are drawn by JUCE (custom LookAndFeel
 
 Measured from Kris's original artwork. "Top-left" is the top-left corner of the ink. Sizes and spacing were derived with Carlito (same metrics as Calibri) and should be checked once in JUCE against the original artwork.
 
+Layout v2 (2026-10-25) moved VELOCITY SENSITIVITY, VOLUME and MIDI CHANNEL; their text, font, size, spacing and colour are unchanged. Each is centred horizontally (the editor centres it by its ink width, so it stays centred with Calibri Light too; the left edges given are Carlito's).
+
 The CYMBALIS logo and "BRONZE MODELING INSTRUMENT" are part of the background image and are not drawn.
 
 | Text | Ink top-left | Font size (px) | Letter spacing (px) | Colour |
 |---|---|---|---|---|
 | CYMBAL | 160, 348 | 17.1 | 3.45 | `#A7A7A4` |
-| VELOCITY SENSITIVITY | 99, 544 | 17.1 | 3.09 | `#A09C99` |
-| VOLUME | 164, 784 | 17.1 | 3.40 | `#A09C99` |
-| MIDI CHANNEL | 704, 913 | 17.1 | 3.11 | `#A7A7A4` |
+| VELOCITY SENSITIVITY | centred on x 226 (left 120.1), top 784 | 17.1 | 3.09 | `#A09C99` |
+| VOLUME | centred on x 600 (left 560.8), top 784 | 17.1 | 3.40 | `#A09C99` |
+| MIDI CHANNEL | centred over its box, x 199.5 (left 130.8), top 478 | 17.1 | 3.11 | `#A7A7A4` |
 | STICK ARTICULATION | 1201, 98 | 17.1 | 3.29 | `#A7A7A4` |
 | MIDI NOTE | 1424, 98 | 17.1 | 3.00 | `#A7A7A4` |
 | BELL / BOW / EDGE / BELL2 / BOW2 (rows) | x1201; y 148 / 228 / 307 / 387 / 468 | 15.6 | 3.33 / 2.88 / 2.83 / 3.50 / 3.25 | `#695E52` |
