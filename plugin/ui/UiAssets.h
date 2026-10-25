@@ -28,7 +28,14 @@ const juce::Colour rowOutline { 0xff463c30 };  // row boxes
 const juce::Colour arrow { 0xff999489 };       // dropdown arrow
 const juce::Colour divider { 0xff353231 };
 const juce::Colour popup { 0xff141313 };       // popup background
-const juce::Colour openOutline { 0xffa5a299 }; // outline of a box whose popup is open
+const juce::Colour openOutline { 0xffa5a299 }; // outline of a box whose popup is open; a lit row's label
+// Hit display (UI_SPEC section 10). A lit row's label is openOutline, its boxes bronze.
+const juce::Colour hitCore { 0xffffffff };     // spot centre
+const juce::Colour hitCream { 0xfffff1d6 };    // spot at 12 %; inner edge arc
+const juce::Colour hitGold { 0xffe9c88f };     // spot at 25 %; ripple ring
+const juce::Colour hitBronze { 0xffc29a5b };   // spot from 60 % to its edge
+const juce::Colour hitBellRing { 0xfffff6e6 }; // ring of a hit on the bell
+const juce::Colour hitArc { 0xffe2be85 };      // edge arc
 } // namespace palette
 
 // The images and the typeface, loaded once from BinaryData.

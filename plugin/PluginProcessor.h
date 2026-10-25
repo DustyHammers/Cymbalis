@@ -7,6 +7,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -88,6 +89,21 @@ public:
     juce::Point<int> editorSize() const noexcept { return { editorWidth.load(), editorHeight.load() }; }
     void setEditorSize (int w, int h) noexcept;
 
+    // Hit display (docs/UI_SPEC.md section 10): one event per strike a note-on plays. The
+    // audio thread only writes it into a preallocated single-producer, single-consumer FIFO
+    // (pushHit); when the FIFO is full, as when no editor reads it, the event is dropped.
+    // The editor, the only reader, takes them on its timer.
+    struct HitEvent
+    {
+        std::int8_t slot;   // row, 0..4 (cymbalis::kSlots)
+        std::int8_t stick;  // cymbalis::Stick: TIP or SHOULDER, as the row's stick box shows it
+        float position;     // 0 edge, 0.5 bow, 1 bell, after the blend knobs
+        float velocity;     // engine velocity, after Velocity Sensitivity
+    };
+    static constexpr int hitFifoSize = 64;
+    bool popHit (HitEvent& e) noexcept;
+    void clearHits() noexcept; // the editor, when it opens: drops what waited without one
+
 #if CYMBALIS_TUNING
     // ---- tuning code only (CYMBALIS_WITH_TUNING, docs/TUNING.md), message thread
     // The bake of a preset (null if it failed to load), its baked tuning values and the
@@ -149,6 +165,7 @@ private:
     void loaderTick();
     void strikeSlots (Cymbal& c, int note, double velocity, double b1, double b2, float* left, float* right, int& pos,
                       int at);
+    void pushHit (int slot, cymbalis::Stick stick, double position, double velocity) noexcept; // audio thread
 
     juce::AudioProcessorValueTreeState apvts;
     std::atomic<float>* velocitySensitivity = nullptr;
@@ -187,6 +204,10 @@ private:
 
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> gain { 1.0f };
     juce::SmoothedValue<float> panPosition { 0.0f }; // linear: it runs through 0 to negative values
+
+    // Hit display FIFO: the audio thread writes, the editor reads (lock-free, no allocation).
+    juce::AbstractFifo hitFifo { hitFifoSize + 1 }; // room for hitFifoSize events
+    std::array<HitEvent, hitFifoSize + 1> hitBuffer {};
 
 #if CYMBALIS_TUNING
     // Tuning state per preset, owned by the message thread; the loader reads it under the lock.

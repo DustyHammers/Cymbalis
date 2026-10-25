@@ -500,7 +500,12 @@ void CymbalisProcessor::strikeSlots (Cymbal& c, int note, double velocity, doubl
             c.engine->process (left + pos, right + pos, at - pos);
             pos = at;
         }
-        c.engine->strike (entry, velocity, cymbalis::slotPosition (cymbalis::kSlots[s], b1, b2));
+        const double position = cymbalis::slotPosition (cymbalis::kSlots[s], b1, b2);
+        c.engine->strike (entry, velocity, position);
+        // Hit display: the stick as the row's box shows it, the chosen one or its fixed one.
+        const auto hitStick = choice || info.slots[s].stick != cymbalis::StickDisplay::shoulder ? (cymbalis::Stick) stick
+                                                                                                  : cymbalis::Stick::shoulder;
+        pushHit ((int) s, hitStick, position, velocity);
 #if CYMBALIS_TUNING
         startHitMeter ((int) s, entry, velocity, at);
         if (entry < cymbalis::kMaxArticulations)
@@ -512,6 +517,31 @@ void CymbalisProcessor::strikeSlots (Cymbal& c, int note, double velocity, doubl
         }
 #endif
     }
+}
+
+// Audio thread: the hit display's only work here. One small write into the preallocated
+// FIFO (two atomics, no lock, no allocation, no message); a full FIFO drops the event.
+void CymbalisProcessor::pushHit (int slot, cymbalis::Stick stick, double position, double velocity) noexcept
+{
+    const auto scope = hitFifo.write (1);
+    if (scope.blockSize1 > 0)
+        hitBuffer[(size_t) scope.startIndex1] = { (std::int8_t) slot, (std::int8_t) stick, (float) position, (float) velocity };
+}
+
+// Message thread, the editor only.
+bool CymbalisProcessor::popHit (HitEvent& e) noexcept
+{
+    const auto scope = hitFifo.read (1);
+    if (scope.blockSize1 == 0)
+        return false;
+    e = hitBuffer[(size_t) scope.startIndex1];
+    return true;
+}
+
+void CymbalisProcessor::clearHits() noexcept
+{
+    HitEvent e;
+    while (popHit (e)) {}
 }
 
 void CymbalisProcessor::setPreset (int index) noexcept

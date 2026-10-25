@@ -1,6 +1,6 @@
 # UI specification — Cymbalis
 
-Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE added 2026-10-15, SWISH 2026-10-17. Layout v2 (mockup v2: a larger, higher photo area, MIDI CHANNEL under CYMBAL, Velocity Sensitivity and Volume in a bottom row) approved by Kris 2026-10-25; the Pan parameter and its knob added 2026-10-25 at Kris's request. All coordinates are in 1536×1024 design units. `docs/ui/reference_mockup.png` shows the original artwork (layout v1).
+Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE added 2026-10-15, SWISH 2026-10-17. Layout v2 (mockup v2: a larger, higher photo area, MIDI CHANNEL under CYMBAL, Velocity Sensitivity and Volume in a bottom row) approved by Kris 2026-10-25; the Pan parameter and its knob added 2026-10-25 at Kris's request; the hit display (section 10) approved by Kris 2026-10-25. All coordinates are in 1536×1024 design units. `docs/ui/reference_mockup.png` shows the original artwork (layout v1).
 
 ## 1. Assets (`resources/ui/`)
 
@@ -34,6 +34,7 @@ Layout v2, approved by Kris 2026-10-25 (mockup v2). Left column: the CYMBAL and 
 | Velocity Sensitivity knob | centre 226,881 (first third) | See section 9. Layout v1: 201,641 |
 | Volume knob | centre 600,881 (second third) | See section 9. Layout v1: 199,881 |
 | Pan knob | centre 974,881 (third third) | See section 9. Frame 45 (12 o'clock) at centre, 0 at full left, 90 at full right. End labels L and R (section 4) instead of −/+ marks |
+| Hit display | over the photo, clipped to the cymbal disc, under every control | A mark for each strike and the row that played it lit (section 10) |
 | Blend Position 1 knob (BELL ↔ BOW) | centre 1349,642 | |
 | Blend Position 2 knob (BOW ↔ EDGE) | centre 1350,881 | |
 | Articulation rows | box tops at y 140 / 220 / 300 / 380 / 460 (BELL, BOW, EDGE, BELL2, BOW2) | Each row has a stick box and a MIDI note box |
@@ -93,6 +94,7 @@ CENTER and CENTER2 are drawn like the other row labels but with tighter letter s
 | Title gradient | `#665E53` → `#A5A299` |
 | "BRONZE" subtitle gradient | `#4C433B` → `#76624C` |
 | Subtitle "MODELING INSTRUMENT" | `#5C5F5F` |
+| Hit display (section 10) | spot gradient `#FFFFFF` → `#FFF1D6` → `#E9C88F` → `#C29A5B`; ripple ring `#E9C88F`; bell ring `#FFF6E6`; edge arc `#E2BE85`, its inner arc `#FFF1D6`; a lit row's label `#A5A299`, its stick and note box borders `#76624C` |
 
 Hover, open and selected states use only colours from this table.
 
@@ -216,3 +218,44 @@ EDGE always strikes at position 0.0. All five are automatable. No other paramete
 Pan is saved with the session like the other four; a session saved before it existed loads with pan at centre.
 
 Non-automatable state saved with the session: MIDI channel, note per slot, stick per slot and preset (rows with a choice), current preset, editor size. A session without a row's note key gives the row its default note. NOVA RIDE's sticks keep the session keys they had before the other presets offered a choice (`stick_BELL`, …); the other presets' keys name the preset (`stick_smoke_flat_ride_BELL`, `stick_hammered_thin_ride_BOW2`, `stick_swish_BOW`, …). A session without a key gives the row its default stick.
+
+## 10. Hit display
+
+Approved by Kris, 2026-10-25. UI only: it changes nothing in the sound and adds no parameter. Each strike shows as a short mark on the cymbal photo, where it landed, and the row that played it lights up while its mark lasts.
+
+**From the audio thread to the editor.**
+- At each strike that a note-on plays, the processor writes one event into a lock-free single-producer, single-consumer FIFO, preallocated with room for 64 events: the row, the strike position (0 edge, 0.5 bow, 1 bell, after the blend knobs), the engine velocity (after Velocity Sensitivity) and the stick (TIP or SHOULDER, as the row's stick box shows it). See `CymbalisProcessor::pushHit` and its call in `strikeSlots` (`plugin/PluginProcessor.cpp`).
+- That write is all the audio thread does for the display. It never repaints, triggers an async update, posts a message, locks or allocates. When the FIFO is full the event is dropped. With no editor open nothing reads the FIFO, so it fills and later events are dropped; an editor that opens discards what waited.
+- The editor reads the FIFO on its timer and keeps up to 16 active marks; when full, the oldest is dropped. The hit layer's own timer runs at 30 Hz only while a mark is active and stops when none is. While none is, the editor's existing 30 Hz timer (notes, MIDI learn) reads the FIFO, and a hit starts the layer's timer.
+
+**Where a mark goes.**
+- Each preset has a bell (or centre) zone as a fraction of the photo's radius, `bellRadius` in the slot table (`plugin/SlotTable.h`): NOVA RIDE 0.40, SMOKE FLAT RIDE 0.16 (centre zone), HAMMERED THIN RIDE 0.40, SWISH 0.22. Kris may adjust them.
+- The photo's radius R = 0.495 × the fitted photo's width; the centre is the photo area's centre (787,390).
+- Radius fraction from strike position p, linear between p = 1.0 → 0.6 × bellRadius, p = 0.5 → (bellRadius + 0.95) / 2, and p = 0.0 → 0.97.
+- Angle: 4 to 5 o'clock, 45° clockwise from 3 o'clock plus a random offset uniform in ±12°. The editor draws the random number, never the audio thread.
+
+**How a mark looks** (design units; v = engine velocity 0–1).
+- Duration T = 0.25 + 0.25·v seconds. Intensity over age t: k = (1 − t/T)²; the mark is removed at t ≥ T.
+- **Spot**, where the radius fraction is below 0.9:
+  - Radial gradient: centre `#FFFFFF`, 12 % `#FFF1D6` at 0.95 alpha, 25 % `#E9C88F` at 0.75, 60 % `#C29A5B` at 0.28, edge `#C29A5B` at 0.
+  - Radius r = (24 + 40·v) × (1.3 for SHOULDER, 1.0 for TIP), shrinking to 0.7·r at the end of T. Opacity (0.35 + 0.65·v)·k.
+  - Ripple ring when v > 0.5: a circle around the spot, 2.5 px, `#E9C88F`, slightly soft (1.5 px edges), its radius growing from r to 2.6·r over T, opacity 0.35·v·k.
+  - On the bell (radius fraction below bellRadius) also a crisp ring: 2.2 px, `#FFF6E6`, radius 0.45 × the spot's radius, opacity 0.85·k, so the mark shows on the bright bell.
+- **Edge**, radius fraction 0.9 or more: an arc along the rim at the hit's angle and radius instead of a spot.
+  - Span 20° + 28°·v, stroke 10 + 8·v px, `#E2BE85`, opacity (0.35 + 0.35·v)·k, soft edges of about 4 px.
+  - When v > 0.5 also a 4 px inner arc along its middle, `#FFF1D6`, 0.6 of the span, opacity 0.5·k.
+- Everything is clipped to the cymbal disc (centre, radius R) and drawn over the photo, under every control.
+
+**Row highlight.** While a row's latest mark is active, the row's label is drawn in `#A5A299` and its stick and note box borders in `#76624C` (hover and open outlines still win). When the mark ends they return to their normal colours.
+
+**Drawing cheaply.**
+- No blur, gradient or path is computed per frame. Each mark shape is rendered once into small coloured images, at the current physical scale:
+  - the spot, at radii 7 % apart covering the TIP and SHOULDER sizes;
+  - the ripple ring and the bell ring, also at radii 7 % apart, each kept as the 32 px tiles it passes through;
+  - the edge arc, at velocity 0, 0.2 … 1, with its inner arc.
+- The images are rendered the first time a mark is drawn after the editor opens, is resized or moves to a screen with another scale (the arcs also after a preset change, since they follow R).
+- A frame only places those images, with a position and an opacity:
+  - spots and rings at the nearest radius, unscaled, on whole pixels;
+  - arcs rotated about the disc's centre to the hit's angle and scaled to its radius fraction. The disc's edge is already in an arc's image, so arcs need no clip; spots and rings are clipped to the disc only when one reaches past it.
+- Only the rectangle around each active mark is repainted (the spot and the ripple's current extent, with the previous frame's), plus a lit row's label area when it changes; never the whole editor or the whole photo.
+- The photo area is its own opaque component, cached as an image, so a mark's repaint copies the photo from that image.

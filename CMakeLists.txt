@@ -131,6 +131,7 @@ set(CYMBALIS_PLUGIN_SOURCES
     plugin/PluginProcessor.cpp
     plugin/PluginEditor.cpp
     plugin/PackedBake.cpp
+    plugin/ui/HitDisplay.cpp
     plugin/ui/UiAssets.cpp
 )
 set(CYMBALIS_INCLUDE_DIRS plugin)
@@ -209,22 +210,31 @@ target_link_libraries(CymbalisSnapshot
 # plugin's saved state. CI runs it on both formats.
 # ---------------------------------------------------------------------------
 if(APPLE)
+    # Its "hits" mode times Cymbalis's own processor and editor, so their sources are
+    # compiled in too (as CymbalisSnapshot does).
     juce_add_gui_app(CymbalisUiTest)
     target_sources(CymbalisUiTest PRIVATE
         tools/cymbalis_uitest/main.cpp
         tools/cymbalis_uitest/MacEvents.mm
+        tools/cymbalis_uitest/HitTiming.cpp
+        ${CYMBALIS_PLUGIN_SOURCES}
     )
-    target_include_directories(CymbalisUiTest PRIVATE tools/cymbalis_uitest)
+    target_include_directories(CymbalisUiTest PRIVATE tools/cymbalis_uitest ${CYMBALIS_INCLUDE_DIRS})
     target_compile_definitions(CymbalisUiTest PRIVATE
+        JucePlugin_Name="Cymbalis"
         JUCE_PLUGINHOST_VST3=1
         JUCE_PLUGINHOST_AU=1
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
     )
+    target_compile_options(CymbalisUiTest PRIVATE -Xarch_x86_64 -msse4.1)
     target_link_libraries(CymbalisUiTest
         PRIVATE
+            CymbalisBinaryData
+            cymbalis_fast
             juce::juce_audio_utils
             juce::juce_audio_processors
+            juce::juce_dsp
         PUBLIC
             juce::juce_recommended_config_flags
             juce::juce_recommended_warning_flags

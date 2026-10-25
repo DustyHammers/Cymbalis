@@ -34,6 +34,13 @@
 //                its list (the wheel scrolls the list)               -> state and parameters unchanged
 //
 // Exit code 0 when every step passed.
+//
+//   CymbalisUiTest hits
+//
+// runs no plugin: it times Cymbalis's own processor and editor, compiled into this tool
+// (HitTiming.h): the hit display with 16 marks active for 2 s at 1536 x 1024 (the editor's
+// paint calls), and processBlock for the same MIDI with no editor, with the editor open and
+// with no editor again.
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
 
@@ -41,6 +48,7 @@
 #include <cstdio>
 #include <functional>
 
+#include "HitTiming.h"
 #include "MacEvents.h"
 
 namespace
@@ -119,9 +127,17 @@ public:
     void initialise (const juce::String&) override
     {
         auto args = getCommandLineParameterArray();
+        if (args.size() == 1 && args[0] == "hits")
+        {
+            hitTiming = std::make_unique<HitTiming> ([this] (int code) {
+                setApplicationReturnValue (code);
+                quit();
+            });
+            return;
+        }
         if (args.size() < 2)
         {
-            std::printf ("usage: CymbalisUiTest PLUGIN STEPS...\n");
+            std::printf ("usage: CymbalisUiTest PLUGIN STEPS...  or  CymbalisUiTest hits\n");
             setApplicationReturnValue (2);
             quit();
             return;
@@ -140,6 +156,7 @@ public:
     void shutdown() override
     {
         stopTimer();
+        hitTiming.reset();
         if (plugin != nullptr)
             if (auto* ed = plugin->getActiveEditor())
             {
@@ -396,6 +413,7 @@ private:
         actionIndex = 0;
     }
 
+    std::unique_ptr<HitTiming> hitTiming;
     std::unique_ptr<juce::AudioPluginInstance> plugin;
     juce::AudioProcessorEditor* editor = nullptr;
     std::unique_ptr<Window> window;

@@ -70,6 +70,7 @@ struct PresetInfo
     const char* name;      // shown in the CYMBAL box
     const char* bakeFile;  // resources/presets/; the plugin embeds its packed form (PackedBake.h)
     const char* photoFile; // resources/ui/
+    float bellRadius;      // hit display: the bell (or centre) zone, as a fraction of the photo's radius (UI_SPEC section 10)
     std::array<PresetSlot, kNumSlots> slots;
     const char* blend1Left = "BELL"; // the left end label of BLEND POSITION 1 (its right end: BOW)
 };
@@ -81,7 +82,7 @@ constexpr int kNumPresets = 4;
 constexpr std::array<PresetInfo, kNumPresets> kPresets {{
     // Nova Ride bake entries: BELL bell_shoulder, BOW bow_tip, EDGE edge (a copy of
     // bow_shoulder played at the edge), BELL2 bell_tip, BOW2 bow_shoulder.
-    { "nova_ride", "NOVA RIDE", "nova_ride.bake.json", "Nova.png", {{
+    { "nova_ride", "NOVA RIDE", "nova_ride.bake.json", "Nova.png", 0.40f, {{
         { "BELL2", "BELL", StickDisplay::choice, Stick::shoulder },
         { "BOW", "BOW2", StickDisplay::choice, Stick::tip },
         { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },
@@ -91,7 +92,7 @@ constexpr std::array<PresetInfo, kNumPresets> kPresets {{
     // 602: no bell. The bell rows play center (a copy of the bow, tuned on its own) and are
     // labelled CENTER and CENTER2, tighter than the other labels so that they end clear of
     // the stick box. The shoulder entries are copies of the tip ones, tuned on their own.
-    { "smoke_flat_ride", "SMOKE FLAT RIDE", "smoke_flat_ride.bake.json", "SmokeFlatRide.png", {{
+    { "smoke_flat_ride", "SMOKE FLAT RIDE", "smoke_flat_ride.bake.json", "SmokeFlatRide.png", 0.16f, {{ // centre zone
         { "CENTER", "CENTER_SHOULDER", StickDisplay::choice, Stick::tip, "CENTER", 1.5f },
         { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
         { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },
@@ -99,7 +100,7 @@ constexpr std::array<PresetInfo, kNumPresets> kPresets {{
         { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
     }}, "CENTER" },
     // Bettis: no overlays; one entry per position, and the shoulder copies of the bell and bow.
-    { "hammered_thin_ride", "HAMMERED THIN RIDE", "hammered_thin_ride.bake.json", "HammeredThinRide.png", {{
+    { "hammered_thin_ride", "HAMMERED THIN RIDE", "hammered_thin_ride.bake.json", "HammeredThinRide.png", 0.40f, {{
         { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
         { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
         { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },
@@ -108,7 +109,7 @@ constexpr std::array<PresetInfo, kNumPresets> kPresets {{
     }} },
     // Swish: BELL the base preset at the bell (TIP) and BELL_SHOULDER its copy; BOW and
     // BOW_SHOULDER the bow_tip and bow_shoulder overlays; EDGE the base preset at the edge.
-    { "swish", "SWISH", "swish.bake.json", "Swish.png", {{
+    { "swish", "SWISH", "swish.bake.json", "Swish.png", 0.22f, {{
         { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
         { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
         { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },
