@@ -39,7 +39,8 @@
 //
 // runs no plugin: it times Cymbalis's own processor and editor, compiled into this tool
 // (HitTiming.h): the hit display with 16 marks active for 2 s at 1536 x 1024 (the editor's
-// paint calls), and processBlock for the same MIDI with the editor open and with none.
+// paint calls), and processBlock for the same MIDI with no editor, with the editor open and
+// with no editor again.
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
 

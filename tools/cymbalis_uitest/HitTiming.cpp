@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdio>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace
@@ -27,7 +28,8 @@ constexpr int kVelocity = 114;                    // 0.9
 // the editor is.)
 struct PaintTimer final : public juce::CachedComponentImage
 {
-    PaintTimer (juce::Component& c, const std::atomic<bool>& on, std::vector<double>& out, std::function<void()> each = {})
+    PaintTimer (juce::Component& c, const std::atomic<bool>& on, std::vector<double>& out,
+                std::function<void (juce::Graphics&)> each = {})
         : owner (c), recording (on), times (out), onPaint (std::move (each))
     {
     }
@@ -39,7 +41,7 @@ struct PaintTimer final : public juce::CachedComponentImage
             return;
         times.push_back (juce::Time::getMillisecondCounterHiRes() - t0);
         if (onPaint)
-            onPaint();
+            onPaint (g);
     }
     bool invalidateAll() override { return true; } // true: the repaint goes on up
     bool invalidate (const juce::Rectangle<int>&) override { return true; }
@@ -48,22 +50,28 @@ struct PaintTimer final : public juce::CachedComponentImage
     juce::Component& owner;
     const std::atomic<bool>& recording;
     std::vector<double>& times;
-    std::function<void()> onPaint;
+    std::function<void (juce::Graphics&)> onPaint;
 };
 
 // A window whose content, `holder`, holds the editor; every paint of it is timed, and so is
-// the hit display's part of it.
+// the hit display's part of it. The area each paint covers (its clip's bounding box) and the
+// physical pixel scale are kept too.
 struct PaintClock final : public juce::DocumentWindow
 {
-    PaintClock() : DocumentWindow ("CymbalisUiTest hits", juce::Colours::black, 0)
+    // Only the run with the editor puts its window on the desktop.
+    explicit PaintClock (bool onDesktop) : DocumentWindow ("CymbalisUiTest hits", juce::Colours::black, 0, onDesktop)
     {
         setUsingNativeTitleBar (true);
-        holder.setCachedComponentImage (new PaintTimer (holder, recording, times, [this] {
+        holder.setCachedComponentImage (new PaintTimer (holder, recording, times, [this] (juce::Graphics& g) {
             if (hits != nullptr)
             {
                 marksMin = std::min (marksMin, hits->numActive());
                 marksSum += hits->numActive();
             }
+            const auto clip = g.getClipBounds().getIntersection (holder.getLocalBounds());
+            areaSum += (double) clip.getWidth() * (double) clip.getHeight();
+            lastClip = clip;
+            scale = g.getInternalContext().getPhysicalPixelScaleFactor();
         }));
     }
 
@@ -80,6 +88,9 @@ struct PaintClock final : public juce::DocumentWindow
     const cymbalis::ui::HitLayer* hits = nullptr;
     int marksMin = 1 << 30;
     long marksSum = 0;
+    double areaSum = 0.0;
+    juce::Rectangle<int> lastClip;
+    float scale = 0.0f;
 };
 
 template <typename T>
@@ -120,7 +131,7 @@ Stats statsOf (std::vector<double> v)
 
 struct HitTiming::Run
 {
-    explicit Run (bool openEditor)
+    explicit Run (bool openEditor) : clock (openEditor)
     {
         processor.prepareToPlay (kRate, kBlock);
         if (! openEditor)
@@ -143,6 +154,28 @@ struct HitTiming::Run
         if (editor != nullptr)
             clock.holder.removeChildComponent (editor.get());
         editor.reset();
+    }
+
+    // The last live paint's region and the whole editor, painted again into an image with the
+    // same renderer, `n` times each (the first of each, which may render cached images at the
+    // image's scale, is not counted): the cost of painting itself, without the window.
+    std::pair<Stats, Stats> paintIntoImage (int n)
+    {
+        juce::Image image (juce::Image::ARGB, editor->getWidth(), editor->getHeight(), true, juce::NativeImageType());
+        const auto time = [&] (juce::Rectangle<int> area) {
+            std::vector<double> t;
+            for (int i = 0; i <= n; ++i)
+            {
+                juce::Graphics g (image);
+                g.reduceClipRegion (area);
+                const double t0 = juce::Time::getMillisecondCounterHiRes();
+                editor->paintEntireComponent (g, false);
+                if (i > 0)
+                    t.push_back (juce::Time::getMillisecondCounterHiRes() - t0);
+            }
+            return statsOf (t);
+        };
+        return { time (clock.lastClip), time (editor->getLocalBounds()) };
     }
 
     // Plays the note-ons in real time, block by block, and times processBlock over the
@@ -205,37 +238,54 @@ void HitTiming::timerCallback()
     const double now = juce::Time::getMillisecondCounterHiRes();
     switch (phase)
     {
-        case 0: // the editor opens; its first paint renders the cached images
-            withEditor = std::make_unique<Run> (true);
-            phaseStartMs = now;
+        case 0: // the MIDI with no editor first
+            before = std::make_unique<Run> (false);
+            before->start();
             phase = 1;
             return;
-        case 1:
-            if (now - phaseStartMs < 1000.0)
+        case 1: // then the editor opens; its first paint renders the cached images
+            if (! before->done)
                 return;
-            withEditor->start();
+            before->audio.join();
+            withEditor = std::make_unique<Run> (true);
+            phaseStartMs = now;
             phase = 2;
             return;
-        case 2: // then the same MIDI with no editor
+        case 2: // timed once JUCE's splash screen has faded out (2 s shown, 2 s fading), so
+                // that its repaints are not counted
+            if (now - phaseStartMs < 1000.0
+                || (findChild<juce::JUCESplashScreen> (*withEditor->editor) != nullptr && now - phaseStartMs < 8000.0))
+                return;
+            withEditor->start();
+            phase = 3;
+            return;
+        case 3: // then the same MIDI with no editor again
             if (! withEditor->done)
                 return;
             withEditor->audio.join();
+            {
+                const auto [region, whole] = withEditor->paintIntoImage (10);
+                regionIntoImageMs = region.median;
+                editorIntoImageMs = whole.median;
+            }
             withEditor->clock.setVisible (false);
-            withoutEditor = std::make_unique<Run> (false);
-            withoutEditor->start();
-            phase = 3;
+            after = std::make_unique<Run> (false);
+            after->start();
+            phase = 4;
             return;
-        case 3:
+        case 4:
         {
-            if (! withoutEditor->done)
+            if (! after->done)
                 return;
-            withoutEditor->audio.join();
+            after->audio.join();
             stopTimer();
-            const auto paints = statsOf (withEditor->clock.times);
-            const auto layer = statsOf (withEditor->clock.hitTimes);
-            const auto open = statsOf (withEditor->blockMs), closed = statsOf (withoutEditor->blockMs);
             const auto& c = withEditor->clock;
-            const bool ran = c.hits != nullptr && paints.n > 0 && open.n > 0 && closed.n > 0;
+            const auto paints = statsOf (c.times);
+            const auto layer = statsOf (c.hitTimes);
+            const auto open = statsOf (withEditor->blockMs);
+            const auto closedBefore = statsOf (before->blockMs), closedAfter = statsOf (after->blockMs);
+            const bool ran = c.hits != nullptr && paints.n > 0 && open.n > 0 && closedBefore.n > 0 && closedAfter.n > 0;
+            const double editorArea = (double) c.holder.getWidth() * (double) c.holder.getHeight();
             std::printf ("hits: editor 1536 x 1024, a strike every %.0f ms at velocity 0.9 (notes 60-64), timed over %.0f s\n",
                          1000.0 * kHitEverySeconds, kTimedSeconds);
             std::printf ("  marks active while timed: at least %d, mean %.1f (at most %d)\n", paints.n > 0 ? c.marksMin : 0,
@@ -244,13 +294,21 @@ void HitTiming::timerCallback()
                          paints.n, paints.mean, paints.median, paints.worst, paints.mean < 2.0 ? "within target" : "ABOVE TARGET");
             std::printf ("    of which the marks layer: %zu paints, average %.3f ms, median %.3f ms, worst %.3f ms\n", layer.n, layer.mean,
                          layer.median, layer.worst);
-            std::printf ("  processBlock with the editor open: %zu blocks, average %.4f ms, median %.4f ms, worst %.4f ms\n", open.n,
-                         open.mean, open.median, open.worst);
-            std::printf ("  processBlock with no editor:       %zu blocks, average %.4f ms, median %.4f ms, worst %.4f ms\n", closed.n,
-                         closed.mean, closed.median, closed.worst);
+            std::printf ("    area per paint: average %.0f %% of the editor (the clip's bounding box), %.2f physical pixels per unit\n",
+                         paints.n > 0 ? 100.0 * c.areaSum / (double) paints.n / editorArea : 0.0, (double) c.scale);
+            std::printf ("    the last paint's region (%s) painted into an image: median %.3f ms; the whole editor: median %.3f ms\n",
+                         c.lastClip.toString().toRawUTF8(), regionIntoImageMs, editorIntoImageMs);
+            const auto block = [] (const char* what, const Stats& b) {
+                std::printf ("  processBlock, %-18s %zu blocks, average %.4f ms, median %.4f ms, worst %.4f ms\n", what, b.n, b.mean,
+                             b.median, b.worst);
+            };
+            block ("no editor (before):", closedBefore);
+            block ("editor open:", open);
+            block ("no editor (after):", closedAfter);
             std::fflush (stdout);
+            before.reset();
             withEditor.reset();
-            withoutEditor.reset();
+            after.reset();
             if (finished)
                 finished (ran ? 0 : 1);
             return;
