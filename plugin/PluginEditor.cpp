@@ -195,9 +195,18 @@ void NoteBox::setOpen (bool shouldBeOpen)
     repaint();
 }
 
+void NoteBox::setLit (bool l)
+{
+    if (l != lit)
+    {
+        lit = l;
+        repaint();
+    }
+}
+
 void NoteBox::paint (juce::Graphics& g)
 {
-    const auto outline = open ? palette::openOutline : (isMouseOver() ? palette::bronze : palette::rowOutline);
+    const auto outline = open ? palette::openOutline : (isMouseOver() || lit ? palette::bronze : palette::rowOutline);
     drawBoxOutline (g, getLocalBounds(), outline);
     const auto area = getLocalBounds().toFloat();
     const auto f = assets.font (kRowSize, kNoteValueSpacing);
@@ -263,11 +272,20 @@ void StickBox::setOpen (bool shouldBeOpen)
     repaint();
 }
 
+void StickBox::setLit (bool l)
+{
+    if (l != lit)
+    {
+        lit = l;
+        repaint();
+    }
+}
+
 void StickBox::paint (juce::Graphics& g)
 {
-    auto outline = palette::rowOutline;
+    auto outline = lit ? palette::bronze : palette::rowOutline;
     if (selectable)
-        outline = open ? palette::openOutline : (isMouseOver() ? palette::bronze : palette::rowOutline);
+        outline = open ? palette::openOutline : (isMouseOver() || lit ? palette::bronze : palette::rowOutline);
     drawBoxOutline (g, getLocalBounds(), outline);
     const auto f = assets.font (kRowSize, kStickValueSpacing);
     if (stick == Stick::none)
@@ -500,6 +518,98 @@ void PopupPanel::mouseUp (const juce::MouseEvent& e)
 }
 
 // =====================================================================================
+// The photo area's image, at the physical pixel scale, used only where the area's corner
+// falls on a whole physical pixel: there the copy is pixel for pixel what drawing it would
+// give. (JUCE's own buffering would also copy it at fractional offsets, resampled.)
+class PhotoArea::Cache final : public juce::CachedComponentImage
+{
+public:
+    explicit Cache (Component& c) : owner (c) {}
+
+    void paint (juce::Graphics& g) override
+    {
+        const float scale = g.getInternalContext().getPhysicalPixelScaleFactor();
+        if (! onWholePixels (scale))
+        {
+            owner.paintEntireComponent (g, false);
+            return;
+        }
+        const auto size = (owner.getLocalBounds().toFloat() * scale).getSmallestIntegerContainer().withZeroOrigin();
+        if (! valid || image.getBounds() != size || ! juce::exactlyEqual (scale, imageScale))
+        {
+            image = juce::Image (juce::Image::ARGB, juce::jmax (1, size.getWidth()), juce::jmax (1, size.getHeight()), true);
+            juce::Graphics ig (image);
+            ig.addTransform (juce::AffineTransform::scale (scale));
+            owner.paintEntireComponent (ig, false);
+            imageScale = scale;
+            valid = true;
+        }
+        g.drawImageTransformed (image, juce::AffineTransform::scale (1.0f / scale));
+    }
+    bool invalidateAll() override
+    {
+        valid = false;
+        return true;
+    }
+    bool invalidate (const juce::Rectangle<int>&) override
+    {
+        valid = false;
+        return true;
+    }
+    void releaseResources() override
+    {
+        image = {};
+        valid = false;
+    }
+
+private:
+    // Whether the component's corner lands on a whole physical pixel of its window.
+    bool onWholePixels (float scale) const
+    {
+        const auto* top = owner.getTopLevelComponent();
+        const auto o = top->getLocalPoint (&owner, juce::Point<float>());
+        const float toTop = top->getLocalPoint (&owner, juce::Point<float> (1.0f, 0.0f)).x - o.x;
+        const auto p = o * (scale / toTop);
+        return toTop > 0.0f && std::abs (p.x - std::round (p.x)) < 1.0e-3f && std::abs (p.y - std::round (p.y)) < 1.0e-3f;
+    }
+
+    Component& owner;
+    juce::Image image;
+    float imageScale = 0.0f;
+    bool valid = false;
+};
+
+PhotoArea::PhotoArea (CymbalisProcessor& p, const Assets& a) : processor (p), assets (a)
+{
+    setOpaque (true);
+    setInterceptsMouseClicks (false, false);
+    setCachedComponentImage (new Cache (*this)); // redrawn when the preset or the scale changes
+}
+
+void PhotoArea::paint (juce::Graphics& g)
+{
+    g.fillAll (palette::background);
+    g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
+    if (assets.background.isValid())
+        g.drawImage (assets.background, juce::Rectangle<float> ((float) kDesignWidth, (float) kDesignHeight)
+                                            .withPosition (-getPosition().toFloat()));
+    if (processor.presetError().isEmpty())
+    {
+        // Fitted to the photo area, aspect ratio kept, centred (UI_SPEC section 3).
+        const auto& photo = assets.photos[(size_t) processor.presetIndex()];
+        if (photo.isValid())
+            g.drawImage (photo, getLocalBounds().toFloat(), juce::RectanglePlacement::centred);
+        return;
+    }
+    const auto area = getLocalBounds().toFloat().reduced (60.0f, 200.0f);
+    drawInkTextCentred (g, assets.font (kHeaderSize, 3.0f), "PRESET FAILED TO LOAD", { area.getCentreX(), area.getY() + 20.0f },
+                        palette::label);
+    g.setColour (palette::secondary);
+    g.setFont (assets.font (kRowSize));
+    g.drawFittedText (processor.presetError(), area.withTrimmedTop (60.0f).toNearestInt(), juce::Justification::centredTop, 12);
+}
+
+// =====================================================================================
 namespace
 {
 // Catches clicks outside the popup and closes it.
@@ -534,6 +644,22 @@ Content::Content (CymbalisProcessor& p)
 {
     setSize (kDesignWidth, kDesignHeight);
     setOpaque (true);
+
+    // The photo and the hit display over it, behind every control. Hits from before the
+    // editor opened are not shown.
+    processor.clearHits();
+    photoArea = std::make_unique<PhotoArea> (processor, assets);
+    photoArea->setBounds (kPhoto);
+    addAndMakeVisible (*photoArea);
+    hitLayer = std::make_unique<HitLayer> (processor);
+    hitLayer->setBounds (kPhoto);
+    hitLayer->onRowLitChanged = [this] (int s) {
+        const bool on = hitLayer->rowLit (s);
+        noteBoxes[(size_t) s]->setLit (on);
+        stickBoxes[(size_t) s]->setLit (on);
+        repaint (rowLabelArea (s));
+    };
+    addAndMakeVisible (*hitLayer);
 
     // Velocity Sensitivity, Volume and Pan: each label centred on its knob.
     for (size_t i : { size_t (0), size_t (1), size_t (4) })
@@ -626,8 +752,11 @@ void Content::refresh()
     {
         shownPreset = preset;
         presetBox.setText (processor.presetName());
-        repaint(); // photo and error
+        photoArea->repaint(); // photo and error
+        setHitDisc();
+        repaint();
     }
+    hitLayer->poll();
     for (int s = 0; s < kNumSlots; ++s)
     {
         const auto stick = processor.shownStick (s);
@@ -839,19 +968,11 @@ void Content::openStickMenu (int slot)
 
 void Content::paint (juce::Graphics& g)
 {
+    // The photo area is its own (opaque) component, PhotoArea.
     g.fillAll (palette::background);
     g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
     if (assets.background.isValid())
         g.drawImage (assets.background, getLocalBounds().toFloat());
-    if (processor.presetError().isEmpty())
-    {
-        // Fitted to the photo area, aspect ratio kept, centred (UI_SPEC section 3).
-        const auto& photo = assets.photos[(size_t) processor.presetIndex()];
-        if (photo.isValid())
-            g.drawImage (photo, kPhoto.toFloat(), juce::RectanglePlacement::centred);
-    }
-    else
-        paintError (g);
     paintLines (g);
     paintLabels (g);
     paintRows (g);
@@ -933,18 +1054,27 @@ void Content::paintRows (juce::Graphics& g)
         const auto& ps = preset.slots[s];
         const float spacing = ps.label != nullptr ? ps.labelSpacing : kRowLabelSpacing[s];
         drawInkText (g, assets.font (kRowSize, spacing), rowLabel (processor.presetIndex(), (int) s),
-                     { 1201.0f, kRowLabelY[s] }, palette::secondary);
+                     { 1201.0f, kRowLabelY[s] }, hitLayer->rowLit ((int) s) ? palette::openOutline : palette::secondary);
     }
 }
 
-void Content::paintError (juce::Graphics& g)
+// The hit display's disc for the current preset (UI_SPEC section 10): centred in the photo
+// area, radius 0.495 x the fitted photo's width.
+void Content::setHitDisc()
 {
-    const auto area = kPhoto.toFloat().reduced (60.0f, 200.0f);
-    drawInkTextCentred (g, assets.font (kHeaderSize, 3.0f), "PRESET FAILED TO LOAD", { area.getCentreX(), area.getY() + 20.0f },
-                        palette::label);
-    g.setColour (palette::secondary);
-    g.setFont (assets.font (kRowSize));
-    g.drawFittedText (processor.presetError(), area.withTrimmedTop (60.0f).toNearestInt(), juce::Justification::centredTop, 12);
+    const int preset = processor.presetIndex();
+    const auto& photo = assets.photos[(size_t) preset];
+    const auto area = kPhoto.toFloat().withZeroOrigin();
+    const float width = photo.isValid()
+                            ? juce::RectanglePlacement (juce::RectanglePlacement::centred).appliedTo (photo.getBounds().toFloat(), area).getWidth()
+                            : area.getWidth();
+    hitLayer->setDisc (area.getCentre(), 0.495f * width, kPresets[(size_t) preset].bellRadius);
+}
+
+// A row's label, which the hit display lights.
+juce::Rectangle<int> Content::rowLabelArea (int slot) const
+{
+    return { 1196, kRowTop[(size_t) slot] - 2, 68, 29 };
 }
 
 } // namespace cymbalis::ui

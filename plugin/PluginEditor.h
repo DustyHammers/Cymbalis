@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "ui/HitDisplay.h"
 #include "ui/UiAssets.h"
 
 #include <array>
@@ -61,6 +62,7 @@ public:
     void setNote (int n);
     void setLearning (bool l, float pulse);
     void setOpen (bool shouldBeOpen);
+    void setLit (bool l); // the hit display lights the row that played
     std::function<void (int)> onNoteDragged;
     std::function<void()> onClick;
 
@@ -77,6 +79,7 @@ private:
     bool learning = false;
     float pulse = 1.0f;
     bool open = false;
+    bool lit = false;
     int dragStartNote = -1;
     bool dragged = false;
 };
@@ -90,6 +93,7 @@ public:
 
     void setStick (Stick s, bool selectable);
     void setOpen (bool shouldBeOpen);
+    void setLit (bool l); // the hit display lights the row that played
     std::function<void()> onClick;
 
     void paint (juce::Graphics& g) override;
@@ -102,6 +106,23 @@ private:
     Stick stick = Stick::none;
     bool selectable = false;
     bool open = false;
+    bool lit = false;
+};
+
+// The photo area (UI_SPEC section 3): the background under it and the preset's photo,
+// fitted, or the preset's load error. Opaque and cached as an image where it sits on whole
+// pixels (the maximum editor size), so that the hit display's repaints over it only copy
+// that image; elsewhere it draws as it would without a cache.
+class PhotoArea final : public juce::Component
+{
+public:
+    PhotoArea (CymbalisProcessor& p, const Assets& assets);
+    void paint (juce::Graphics& g) override;
+
+private:
+    class Cache;
+    CymbalisProcessor& processor;
+    const Assets& assets;
 };
 
 // The note box's menu: MIDI LEARN, RESET DEFAULT and NONE, then a scrollable list of every
@@ -209,10 +230,15 @@ private:
     void paintLabels (juce::Graphics& g);
     void paintRows (juce::Graphics& g);
     void paintLines (juce::Graphics& g);
-    void paintError (juce::Graphics& g);
+    void setHitDisc();
+    juce::Rectangle<int> rowLabelArea (int slot) const;
 
     CymbalisProcessor& processor;
     Assets assets;
+
+    // The photo, and the hit display over it (under every control).
+    std::unique_ptr<PhotoArea> photoArea;
+    std::unique_ptr<HitLayer> hitLayer;
 
     std::array<KnobSpec, 5> knobSpecs;
     std::array<std::unique_ptr<Knob>, 5> knobs;
