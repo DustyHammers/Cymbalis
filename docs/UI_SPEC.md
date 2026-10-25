@@ -1,6 +1,6 @@
 # UI specification — Cymbalis
 
-Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE added 2026-10-15, SWISH 2026-10-17. Layout v2 (mockup v2: a larger, higher photo area, MIDI CHANNEL under CYMBAL, Velocity Sensitivity and Volume in a bottom row) approved by Kris 2026-10-25; the Pan parameter and its knob added 2026-10-25 at Kris's request; the hit display (section 10) approved by Kris 2026-10-25. All coordinates are in 1536×1024 design units. `docs/ui/reference_mockup.png` shows the original artwork (layout v1).
+Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE added 2026-10-15, SWISH 2026-10-17. Layout v2 (mockup v2: a larger, higher photo area, MIDI CHANNEL under CYMBAL, Velocity Sensitivity and Volume in a bottom row) approved by Kris 2026-10-25; the Pan parameter and its knob added 2026-10-25 at Kris's request; the hit display (section 10) approved by Kris 2026-10-25. Layout v3 (mockup v3: the MIDI CHANNEL box and the TUNING button swapped) approved by Kris 2026-10-25. All coordinates are in 1536×1024 design units. `docs/ui/reference_mockup.png` shows the original artwork (layout v1).
 
 ## 1. Assets (`resources/ui/`)
 
@@ -23,13 +23,14 @@ Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE add
 
 ## 3. Layout
 
-Layout v2, approved by Kris 2026-10-25 (mockup v2). Left column: the CYMBAL and MIDI CHANNEL boxes. Centre: the photo. Bottom row: Velocity Sensitivity, Volume and Pan. Right column: the rows and the blend knobs, as in layout v1.
+Layout v3, approved by Kris 2026-10-25 (mockup v3): layout v2 with the MIDI CHANNEL box and the TUNING button swapped. Left column: the CYMBAL box and, under it, the TUNING button. Top right: the MIDI CHANNEL box. Centre: the photo. Bottom row: Velocity Sensitivity, Volume and Pan. Right column: the rows and the blend knobs, as in layout v1.
 
 | Element | Position | Notes |
 |---|---|---|
 | Cymbal photo | top-left 447,50, size 680×680 (centre 787,390) | Changes per preset. Each photo is fitted into this area with its aspect ratio kept, centred (Nova 674×680, Smoke Flat Ride 676×680, Hammered Thin Ride 676×680, Swish 671×680). Layout v1: 434,94, 707×713 |
 | CYMBAL preset dropdown | box 61,371, 277×62 | Shows the preset name, e.g. **NOVA RIDE**. Changing preset changes the name, the photo and the sound. A name too wide to sit centred clear of the arrow is centred between the box's left edge and the arrow, with tighter letter spacing |
-| MIDI CHANNEL dropdown | box 61,501, 277×62, under the CYMBAL box | Channels 1–16, in a 4×4 grid that opens above the box, centred on it. Layout v1: 632,936 |
+| MIDI CHANNEL dropdown | box 1404,30, 110×36 (centred on x 1459), top right, above the column headers | Channels 1–16, in a 4×4 grid that opens below the box (box bottom + 3), right-aligned with its right edge, so it stays inside the window. The channel number is left-aligned, its ink 12 units in from the box's left edge (where a long preset name starts), in the preset name's font, size and colour. Its label is on the same line, to the left (section 4). Layout v2: 61,501, 277×62 under the CYMBAL box, grid above it; layout v1: 632,936 |
+| TUNING button | box 61,501, 277×62 (the CYMBAL box's size), under the CYMBAL box | Tuning code only (`CYMBALIS_WITH_TUNING`, `docs/TUNING.md`); in a lean build this place is empty. Outlined like the preset and channel boxes (section 5). **TUNING** centred, drawn like the preset name; no arrow and no label above it. Its Tuning window still opens where it did in layout v2: below 1404,30, 110×36 (the button's layout v2 place, now the MIDI CHANNEL box), right-aligned with it. Layout v2: 1404,30, 110×36 |
 | Bottom row | x 39–1161 in thirds (39–413, 413–787, 787–1161), knob centres at y 881 (the height of Blend Position 2) | Each knob is centred in its third |
 | Velocity Sensitivity knob | centre 226,881 (first third) | See section 9. Layout v1: 201,641 |
 | Volume knob | centre 600,881 (second third) | See section 9. Layout v1: 199,881 |
@@ -40,7 +41,7 @@ Layout v2, approved by Kris 2026-10-25 (mockup v2). Left column: the CYMBAL and 
 | Articulation rows | box tops at y 140 / 220 / 300 / 380 / 460 (BELL, BOW, EDGE, BELL2, BOW2) | Each row has a stick box and a MIDI note box |
 | Stick box (under STICK ARTICULATION) | x1265, 99×25, 2 px border `#463C30` | Shows **TIP** or **SHOULDER** (section 8); selectable where the preset has both (section 6) |
 | MIDI note box (under MIDI NOTE) | x1424, 66×25, 2 px border `#463C30` | Note name + number, e.g. `C3 60` |
-| Preset and channel boxes | 2 px border `#534739` | Dropdown arrow: 13×9 triangle `#999489` at 306,398 and 306,528 |
+| Preset and channel boxes, TUNING button | 2 px border `#534739` | Dropdown arrow: 13×9 triangle `#999489` at 306,398 (CYMBAL) and 1484,44 (MIDI CHANNEL); the TUNING button has none |
 | Divider lines (1 px, `#353231`) | horizontal 39→1161 at y757, above the bottom row; vertical x1188, y110→850 | Layout v1's lines at y869 (338→1161 and the short 39→58) are gone |
 | −/+ marks (1 px, `#695E52`) | Under each bottom-row knob, at fixed offsets from its centre (cx, cy): − at cx−81, cy+81 (11 px); + centred at cx+73, cy+82 (10×9). Vel: − at 145,962; + centred 299,963. Vol: − at 519,962; + centred 673,963 | The offsets are layout v1's |
 
@@ -53,7 +54,7 @@ All dropdowns, pop-up menus and value text are drawn by JUCE (custom LookAndFeel
 
 Measured from Kris's original artwork. "Top-left" is the top-left corner of the ink. Sizes and spacing were derived with Carlito (same metrics as Calibri) and should be checked once in JUCE against the original artwork.
 
-Layout v2 (2026-10-25) moved VELOCITY SENSITIVITY, VOLUME and MIDI CHANNEL; their text, font, size, spacing and colour are unchanged. Each is centred horizontally (the editor centres it by its ink width, so it stays centred with Calibri Light too; the left edges given are Carlito's). PAN, L and R (2026-10-25) are centred the same way; PAN is drawn like VOLUME.
+Layout v2 (2026-10-25) moved VELOCITY SENSITIVITY, VOLUME and MIDI CHANNEL, and layout v3 (2026-10-25) moved MIDI CHANNEL again, to the left of its box at the top right; their text, font, size, spacing and colour are unchanged. Each is centred horizontally (the editor centres it by its ink width, so it stays centred with Calibri Light too; the left edges given are Carlito's). PAN, L and R (2026-10-25) are centred the same way; PAN is drawn like VOLUME.
 
 The CYMBALIS logo and "BRONZE MODELING INSTRUMENT" are part of the background image and are not drawn.
 
@@ -64,7 +65,7 @@ The CYMBALIS logo and "BRONZE MODELING INSTRUMENT" are part of the background im
 | VOLUME | centred on x 600 (left 560.8), top 784 | 17.1 | 3.40 | `#A09C99` |
 | PAN | centred on x 974, top 784 | 17.1 | 3.40 | `#A09C99` |
 | L · R (under Pan) | centred on x 901 · 1047, top 958 | 15.6 | — | `#695E52` |
-| MIDI CHANNEL | centred over its box, x 199.5 (left 130.8), top 478 | 17.1 | 3.11 | `#A7A7A4` |
+| MIDI CHANNEL | on its box's line, to its left: ink right edge at x 1384, centred vertically on the box (centre y 48). Layout v2: centred over its box at x 199.5, top 478 | 17.1 | 3.11 | `#A7A7A4` |
 | STICK ARTICULATION | 1201, 98 | 17.1 | 3.29 | `#A7A7A4` |
 | MIDI NOTE | 1424, 98 | 17.1 | 3.00 | `#A7A7A4` |
 | BELL / BOW / EDGE / BELL2 / BOW2 (rows) | x1201; y 148 / 228 / 307 / 387 / 468 | 15.6 | 3.33 / 2.88 / 2.83 / 3.50 / 3.25 | `#695E52` |
@@ -74,7 +75,7 @@ The CYMBALIS logo and "BRONZE MODELING INSTRUMENT" are part of the background im
 | BLEND POSITION 2 | 1270, 783 | 17.1 | 2.98 | `#A7A7A4` |
 | BOW · EDGE (under Blend 2) | 1249, 958 · 1409, 958 | 15.6 | 2.88 · 2.83 | `#695E52` |
 
-Values drawn inside boxes use the same font in `#A7A7A4`; secondary values (note number) use `#695E52`.
+Values drawn inside boxes use the same font in `#A7A7A4`; secondary values (note number) use `#695E52`. The TUNING button's text is drawn like the preset name: 17.1, spacing 3.2, `#A7A7A4`, centred.
 
 CENTER and CENTER2 are drawn like the other row labels but with tighter letter spacing. At the other labels' spacing (about 3), CENTER2 would reach x 1277, into the stick box at x 1265; at 1.5 and 0.0 both end about 7.5 units clear of it.
 
@@ -103,7 +104,8 @@ Hover, open and selected states use only colours from this table.
 - **No mouse wheel:** the mouse wheel and trackpad scrolling change no value anywhere in the editor: not the knobs, the note boxes or the dropdowns. A value changes only by a deliberate click and drag, a menu choice or MIDI learn (and the host's automation of the five parameters). The wheel still scrolls the note list.
 - **MIDI note box:** vertical drag changes the note. A click opens a menu: MIDI LEARN, RESET DEFAULT, NONE (unassign) and a scrollable list of every note, C-2 (0) to G8 (127), each with its number; the current note is outlined and in view. No separate Learn button is added.
 - **Stick box:** where the preset has both stick versions, a click opens a TIP / SHOULDER popup. In every preset the bell and bow rows (BELL, BOW, BELL2, BOW2) have both; section 8 lists what each plays. EDGE is SHOULDER only in every preset: its box shows SHOULDER and opens nothing. Which rows offer the choice comes from the slot table (`StickDisplay::choice` in `plugin/SlotTable.h`). Each preset keeps its own choices: picking SHOULDER on a row in one preset leaves the other presets' rows as they are. The choices are saved with the session (section 9); they are not automatable parameters.
-- **Dropdowns:** the preset dropdown is a list of NOVA RIDE, SMOKE FLAT RIDE, HAMMERED THIN RIDE and SWISH; the channel dropdown is a 4×4 grid.
+- **Dropdowns:** the preset dropdown is a list of NOVA RIDE, SMOKE FLAT RIDE, HAMMERED THIN RIDE and SWISH, below its box; the channel dropdown is a 4×4 grid below its box, right-aligned with it. A choice sets the preset or the channel.
+- **TUNING button** (tuning code only): a click opens the Tuning window, a second click closes it; while it is open the button has the open outline `#A5A299`, and the bronze `#76624C` on hover otherwise. Cmd-click on the CYMBALIS logo opens it too (`docs/TUNING.md`).
 - **Preset switch:** the chosen preset's data is loaded into the one cymbal engine and plays from the next audio block (PORT_MAP, "602 and Bettis", decision 6). If the old cymbal is still ringing it fades out over 30 ms; it does not carry over. Notes, the MIDI channel and the knobs stay as they are; the rows play the stick choices of the chosen preset.
 - Knob value readout while dragging: Velocity "100%", Volume "+0.0 dB", Pan "C" (or "L 35", "R 35"), Blend 1 "BELL 100 · 0 BOW", Blend 2 "BOW 100 · 0 EDGE".
 - MIDI LEARN: the next note-on on the selected channel is assigned; the box pulses "LEARN" until then; clicking elsewhere cancels.

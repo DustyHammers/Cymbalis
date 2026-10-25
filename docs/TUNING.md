@@ -10,7 +10,7 @@ Cymbalis Tuning (plugin code `CymT`), the separate tuning build of earlier versi
 
 ## Opening the window
 
-In Cymbalis, click **TUNING**, the box in the editor's top right corner (above the STICK ARTICULATION and MIDI NOTE headers). It opens the Tuning window; a second click closes it. While the window is open the box has the light outline of an open box. **Cmd-click on the CYMBALIS logo** (Ctrl-click on Linux) opens it too. The rest of the editor is unchanged; a lean build (above) has neither the button nor the window.
+In Cymbalis, click **TUNING**, the box under the CYMBAL box (left column; `docs/UI_SPEC.md` section 3, layout v3). It opens the Tuning window; a second click closes it. While the window is open the box has the light outline of an open box. **Cmd-click on the CYMBALIS logo** (Ctrl-click on Linux) opens it too. The rest of the editor is unchanged; a lean build (above) has neither the button nor the window.
 
 The Tuning window is attached to the editor's window. On macOS it is a child window of it:
 
@@ -20,7 +20,7 @@ The Tuning window is attached to the editor's window. On macOS it is a child win
 
 On other systems it is kept on top.
 
-It opens below the TUNING box, right-aligned with it, so the box stays clickable; where the screen has no room below, it opens to the left of the box. If you move it, it stays where you put it, unless that would cover the box when it next opens. Its close button hides it, like the second click on TUNING. It closes when the editor closes.
+It opens at the editor's top right, where it opened before layout v3: below the MIDI CHANNEL box (1404,30, 110×36, the TUNING button's place in layout v2), right-aligned with it, so that box stays clickable; where the screen has no room below, it opens to the left of it. If you move it, it stays where you put it, unless that would cover that box when it next opens. The window is 860 pixels wide when it opens, so on an editor narrower than about 1120 pixels it reaches over the right part of the TUNING button. Its close button hides it, like the second click on TUNING. It closes when the editor closes.
 
 The window has two parts, one below the other, each under a filled title band with a bronze rule:
 

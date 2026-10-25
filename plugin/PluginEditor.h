@@ -34,7 +34,12 @@ private:
 class DropdownBox final : public juce::Component
 {
 public:
-    DropdownBox (const Assets& assets, juce::Point<float> arrowTopLeft);
+    enum class Align
+    {
+        centre, // the CYMBAL box
+        left    // the MIDI CHANNEL box
+    };
+    DropdownBox (const Assets& assets, juce::Point<float> arrowTopLeft, Align valueAlign = Align::centre);
 
     void setText (const juce::String& t);
     void setOpen (bool shouldBeOpen);
@@ -48,6 +53,7 @@ public:
 private:
     const Assets& assets;
     juce::Point<float> arrow; // in this component's coordinates
+    Align align;
     juce::String text;
     bool open = false;
 };
@@ -247,7 +253,7 @@ private:
 
     DropdownBox presetBox, channelBox;
 #if CYMBALIS_TUNING
-    // The TUNING button (top right) opens and closes the Tuning window.
+    // The TUNING button (under the CYMBAL box) opens and closes the Tuning window.
     class TuningButton;
     std::unique_ptr<TuningButton> tuningButton;
     void toggleTuningWindow (bool open);

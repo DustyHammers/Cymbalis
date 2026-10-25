@@ -258,8 +258,9 @@ public:
     TuningWindow (CymbalisProcessor& p, const ui::Assets& assets, juce::Component& owner);
     ~TuningWindow() override;
 
-    // Visible, in front, attached to the editor's window, and clear of `keepClear` (the
-    // TUNING button, in screen coordinates) so that the button stays clickable.
+    // Visible, in front, attached to the editor's window, and clear of `keepClear` (in screen
+    // coordinates: the editor's top right, where the TUNING button was before layout v3 and
+    // the MIDI CHANNEL box is now) so that the box there stays clickable.
     void show (juce::Rectangle<int> keepClear);
     void hide();
     bool isShowing() const { return isVisible(); }

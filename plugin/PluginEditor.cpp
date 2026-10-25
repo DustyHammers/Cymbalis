@@ -15,7 +15,8 @@ namespace
 // labels; values use the same font (section 4, last line).
 constexpr float kHeaderSize = 17.1f;
 constexpr float kRowSize = 15.6f;
-constexpr float kBoxValueSpacing = 3.2f;   // CYMBAL and MIDI CHANNEL boxes
+constexpr float kBoxValueSpacing = 3.2f;   // CYMBAL and MIDI CHANNEL boxes, TUNING
+constexpr float kBoxValueLeft = 12.0f;     // a box value's ink inset when it does not sit centred
 constexpr float kStickValueSpacing = 2.0f; // stick boxes
 constexpr float kNoteValueSpacing = 1.0f;  // note boxes
 constexpr float kPopupSpacing = 2.5f;
@@ -27,13 +28,16 @@ constexpr std::array<float, kNumSlots> kRowLabelSpacing { 3.33f, 2.88f, 2.83f, 3
 const juce::Rectangle<int> kStickBox (1265, 0, 99, 25);
 const juce::Rectangle<int> kNoteBox (1424, 0, 66, 25);
 const juce::Rectangle<int> kPresetBox (61, 371, 277, 62);
-const juce::Rectangle<int> kChannelBox (61, 501, 277, 62); // under the CYMBAL box
+const juce::Rectangle<int> kChannelBox (1404, 30, 110, 36); // top right, above the column headers (y 98)
 const juce::Rectangle<int> kPhoto (447, 50, 680, 680);
-constexpr float kChannelLabelTop = 478.0f; // MIDI CHANNEL, centred over its box
-constexpr float kKnobLabelTop = 784.0f;    // Velocity Sensitivity and Volume, centred on their knobs
+constexpr float kChannelLabelRight = 1384.0f; // MIDI CHANNEL ends here, on the box's line, to its left
+constexpr float kKnobLabelTop = 784.0f;       // Velocity Sensitivity and Volume, centred on their knobs
 #if CYMBALIS_TUNING
 const juce::Rectangle<int> kLogo (40, 80, 390, 130); // the CYMBALIS logo and its tagline in the background
-const juce::Rectangle<int> kTuningButton (1404, 30, 110, 36); // top right, above the column headers (y 98)
+const juce::Rectangle<int> kTuningButton (61, 501, 277, 62); // under the CYMBAL box, its size
+// The Tuning window opens below this area, right-aligned with it, and keeps it clear: the
+// TUNING button's place before layout v3, where the MIDI CHANNEL box is now.
+const juce::Rectangle<int> kTuningWindowAnchor (1404, 30, 110, 36);
 #endif
 
 const juce::String emDash = juce::String::fromUTF8 ("\xe2\x80\x94");
@@ -53,6 +57,13 @@ void drawValue (juce::Graphics& g, const juce::Font& f, const juce::String& text
     drawInkText (g, f, text, { area.getCentreX() - b.getWidth() * 0.5f, capBaseline (f, area) + b.getY() }, c);
 }
 
+// `text` at the left of `area` (its ink from area's left edge), vertically by the capital height.
+void drawValueLeft (juce::Graphics& g, const juce::Font& f, const juce::String& text, juce::Rectangle<float> area,
+                    juce::Colour c)
+{
+    drawInkText (g, f, text, { area.getX(), capBaseline (f, area) + inkBounds (f, text).getY() }, c);
+}
+
 void drawTriangle (juce::Graphics& g, juce::Point<float> topLeft)
 {
     juce::Path p;
@@ -70,7 +81,8 @@ void drawBoxOutline (juce::Graphics& g, juce::Rectangle<int> r, juce::Colour c)
 
 #if CYMBALIS_TUNING
 // =====================================================================================
-// Tuning code (CYMBALIS_WITH_TUNING): the TUNING button, drawn like the editor's boxes.
+// Tuning code (CYMBALIS_WITH_TUNING): the TUNING button, drawn like the CYMBAL box without
+// its arrow.
 class Content::TuningButton final : public juce::Component
 {
 public:
@@ -87,7 +99,7 @@ public:
     void paint (juce::Graphics& g) override
     {
         drawBoxOutline (g, getLocalBounds(), open ? palette::openOutline : (isMouseOver() ? palette::bronze : palette::boxOutline));
-        drawValue (g, assets.font (kRowSize, kStickValueSpacing), "TUNING", getLocalBounds().toFloat(), palette::label);
+        drawValue (g, assets.font (kHeaderSize, kBoxValueSpacing), "TUNING", getLocalBounds().toFloat(), palette::label);
     }
     void mouseEnter (const juce::MouseEvent&) override { repaint(); }
     void mouseExit (const juce::MouseEvent&) override { repaint(); }
@@ -124,7 +136,8 @@ void Knob::paint (juce::Graphics& g)
 }
 
 // =====================================================================================
-DropdownBox::DropdownBox (const Assets& a, juce::Point<float> arrowTopLeft) : assets (a), arrow (arrowTopLeft)
+DropdownBox::DropdownBox (const Assets& a, juce::Point<float> arrowTopLeft, Align valueAlign)
+    : assets (a), arrow (arrowTopLeft), align (valueAlign)
 {
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
 }
@@ -146,14 +159,19 @@ void DropdownBox::paint (juce::Graphics& g)
     const auto outline = open ? palette::openOutline : (isMouseOver() ? palette::bronze : palette::boxOutline);
     drawBoxOutline (g, getLocalBounds(), outline);
     drawTriangle (g, arrow);
-    // Centred in the box. A name too long for that is centred between the left edge and
-    // the arrow instead, with tighter letter spacing until it fits.
     auto area = getLocalBounds().toFloat();
     auto font = assets.font (kHeaderSize, kBoxValueSpacing);
+    if (align == Align::left)
+    {
+        drawValueLeft (g, font, text, area.withTrimmedLeft (kBoxValueLeft), palette::label);
+        return;
+    }
+    // Centred in the box. A name too long for that is centred between the left edge and
+    // the arrow instead, with tighter letter spacing until it fits.
     const float right = arrow.x - 10.0f;
     if (area.getCentreX() + inkBounds (font, text).getWidth() * 0.5f > right)
     {
-        area = area.withLeft (12.0f).withRight (right);
+        area = area.withLeft (kBoxValueLeft).withRight (right);
         for (float spacing = kBoxValueSpacing - 0.25f; spacing >= 0.5f && inkBounds (font, text).getWidth() > area.getWidth();
              spacing -= 0.25f)
             font = assets.font (kHeaderSize, spacing);
@@ -640,7 +658,7 @@ Content::Content (CymbalisProcessor& p)
           { CymbalisProcessor::paramPan, { 974.0f, 881.0f }, "PAN", { 0.0f, kKnobLabelTop }, 3.40f, palette::knobLabel },
       } },
       presetBox (assets, { 306.0f - (float) kPresetBox.getX(), 398.0f - (float) kPresetBox.getY() }),
-      channelBox (assets, { 306.0f - (float) kChannelBox.getX(), 528.0f - (float) kChannelBox.getY() })
+      channelBox (assets, { 1484.0f - (float) kChannelBox.getX(), 44.0f - (float) kChannelBox.getY() }, DropdownBox::Align::left)
 {
     setSize (kDesignWidth, kDesignHeight);
     setOpaque (true);
@@ -796,7 +814,7 @@ void Content::toggleTuningWindow (bool open)
     {
         if (tuningWindow == nullptr)
             tuningWindow = std::make_unique<tuning::TuningWindow> (processor, assets, *this);
-        tuningWindow->show (tuningButton->localAreaToGlobal (tuningButton->getLocalBounds()));
+        tuningWindow->show (localAreaToGlobal (kTuningWindowAnchor));
     }
     else if (tuningWindow != nullptr)
         tuningWindow->hide();
@@ -903,7 +921,7 @@ void Content::openPresetMenu()
     showPopup (std::move (panel), b, [this] { presetBox.setOpen (false); });
 }
 
-// A 4 x 4 grid of channels 1-16.
+// A 4 x 4 grid of channels 1-16, below the box and right-aligned with it.
 void Content::openChannelMenu()
 {
     juce::StringArray items;
@@ -916,7 +934,7 @@ void Content::openChannelMenu()
         refresh();
     };
     const int w = panel->getWidth(), h = panel->getHeight();
-    const juce::Rectangle<int> b (kChannelBox.getCentreX() - w / 2, kChannelBox.getY() - 4 - h, w, h);
+    const juce::Rectangle<int> b (kChannelBox.getRight() - w, kChannelBox.getBottom() + 3, w, h);
     channelBox.setOpen (true);
     showPopup (std::move (panel), b, [this] { channelBox.setOpen (false); });
 }
@@ -1009,9 +1027,10 @@ void Content::paintLabels (juce::Graphics& g)
     };
 
     header ("CYMBAL", 160.0f, 348.0f, 3.45f, palette::label);
-    const auto channelFont = assets.font (kHeaderSize, 3.11f);
-    header ("MIDI CHANNEL", kChannelBox.toFloat().getCentreX() - inkBounds (channelFont, "MIDI CHANNEL").getWidth() * 0.5f,
-            kChannelLabelTop, 3.11f, palette::label);
+    // MIDI CHANNEL on its box's line, to the left: its ink ends at x 1384, centred on the box.
+    const auto channelInk = inkBounds (assets.font (kHeaderSize, 3.11f), "MIDI CHANNEL");
+    header ("MIDI CHANNEL", kChannelLabelRight - channelInk.getWidth(), kChannelBox.toFloat().getCentreY() - channelInk.getHeight() * 0.5f,
+            3.11f, palette::label);
     header ("STICK ARTICULATION", 1201.0f, 98.0f, 3.29f, palette::label);
     header ("MIDI NOTE", 1424.0f, 98.0f, 3.00f, palette::label);
 
