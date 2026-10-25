@@ -648,6 +648,11 @@ Every other key the two presets set either has its default effect or is not read
    - The preset is session state, not a parameter.
    - The strike-phase random sequence starts from the loaded preset's own seed (NOVA RIDE 7, SMOKE FLAT RIDE and HAMMERED THIN RIDE 11), as in Python. This happens each time a preset is loaded: at plugin load, on a switch and on a session restore. Each bake's pick vectors and wander tables also come from its own seed.
    - The MF and LF accumulators belong to the cymbal and start fresh with the new one.
+7. **Bettis bell and bow follow velocity linearly** (2026-10-25). With no measured velocity tables, Bettis's bell and bow strikes use the Hertz law, amplitude v² (`hertzVelocity`): −12 dB at MIDI 64 and −20 dB at MIDI 40, where Nova and every edge fall about linearly (−6 and −10 dB). On pads that left the bell and bow too quiet at mid velocities.
+   - The fix is a velocity curve (`docs/TUNING.md`) on the four bell and bow articulations, tip and shoulder (`bell`, `bow`, `bell_shoulder`, `bow_shoulder`): `vel_0.6_db` 4.437 (20·log10(1/0.6)) and `vel_0.3_db` 10.458 (20·log10(1/0.3)). Interpolated in log velocity, it turns v² into v at every velocity, within 0.001 dB down to 0.15; below 0.3 the same slope continues.
+   - It is the bake's tuning block, applied with `tools/apply_tuning.py`; re-baking Bettis drops it, as any tuning.
+   - Level only: the Hertz law's spectral term (softer strikes darker) stays. At velocity 1.0 the curve is 0 dB, so the trims (decision 5, measured at 1.0) and full-velocity hits do not change.
+   - EDGE is not touched: its NPZ captures are already linear in velocity. The 602 and Swish are not changed yet.
 
 ### Things in the source data or engine that look wrong (ported as they are)
 
@@ -660,7 +665,7 @@ Every other key the two presets set either has its default effect or is not read
 - **Bettis's LF accumulator is inert in Python.** It is in boost mode (`lf_max_scale` 1.7), which never scales amplitude (line 914), and `lf_wander_rate_boost` is 0 with `wander_depth` 0. The plugin applies the LF scale in both modes (live-engine decision 6), so Bettis's LF builds up to ×1.7 on repeated hits.
 - **Bettis's `edge_band_env_path` file is never used.** It is a 4-band, 200-frame envelope that the NPZ path overrides. 602's file is an all-zero trigger: it only switches the NPZ envelope on.
 - **NPZ edge coupling ignores the excitation table.** It skips `exc_norm`, the edge position weights and `edge_level_boost`. The calibration strike (Python's `_compute_calib_scalar`) is rendered without the band envelope, so the calibration scalar does not reflect the envelope's level. The trims make up for it.
-- **`hertz_vel_scale` scales amplitude by v².** Its docstring says the Hertz peak force goes as v^(6/5); the code comments that v² is a perceptual calibration.
+- **`hertz_vel_scale` scales amplitude by v².** Its docstring says the Hertz peak force goes as v^(6/5); the code comments that v² is a perceptual calibration. Bettis's bell and bow are offset to v by a velocity curve (decision 7).
 
 ## Swish (22" China)
 
