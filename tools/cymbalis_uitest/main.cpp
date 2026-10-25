@@ -258,9 +258,10 @@ private:
         }
         else if (name == "channel")
         {
-            // The MIDI CHANNEL box (61, 501, 277 x 62; UI_SPEC section 3). Grid popup: 4 x 61 wide
-            // plus 2 x 8, centred over the box (x 199), above it (top 501 - 4 - 176); 4 rows of 40.
-            s.actions = { click (199.0f, 532.0f), wait, click (199.0f - 130.0f + 8.0f + 30.0f, 321.0f + 8.0f + 40.0f + 20.0f), wait };
+            // The MIDI CHANNEL box (1404, 30, 110 x 36, top right; UI_SPEC section 3). Grid popup:
+            // 4 x 61 wide plus 2 x 8 (260), below the box (top 66 + 3) and right-aligned with it
+            // (left 1514 - 260); 4 rows of 40. Channel 5 starts the second row.
+            s.actions = { click (1459.0f, 48.0f), wait, click (1254.0f + 8.0f + 30.0f, 69.0f + 8.0f + 40.0f + 20.0f), wait };
             s.key = "midiChannel";
             s.expected = "5";
         }
@@ -310,8 +311,9 @@ private:
         }
         else if (name == "tuning" || name == "tuningclose")
         {
-            // The TUNING button (PluginEditor.cpp kTuningButton: 1404, 30, 110 x 36), top right.
-            s.actions = { click (1459.0f, 48.0f), wait, wait };
+            // The TUNING button (PluginEditor.cpp kTuningButton: 61, 501, 277 x 62), under the
+            // CYMBAL box.
+            s.actions = { click (199.0f, 532.0f), wait, wait };
             s.key = "Tuning window";
             s.expected = name == "tuning" ? "visible-front" : "hidden";
             s.probe = [this] { return cymbalis::uitest::tuningWindowState (*editor); };
@@ -325,7 +327,7 @@ private:
                              wheelError = {};
                              const juce::Point<float> points[] = { { 226.0f, 881.0f }, { 600.0f, 881.0f }, { 974.0f, 881.0f }, { 1349.0f, 642.0f },
                                                                    { 1350.0f, 881.0f }, { 1457.0f, 232.0f }, { 1314.0f, 152.0f },
-                                                                   { 199.0f, 402.0f },  { 199.0f, 532.0f } };
+                                                                   { 199.0f, 402.0f },  { 1459.0f, 48.0f } };
                              for (auto p : points)
                                  wheelError += cymbalis::uitest::wheel (*editor, at (p.x, p.y));
                          },

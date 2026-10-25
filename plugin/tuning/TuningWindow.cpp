@@ -1038,7 +1038,7 @@ juce::BorderSize<int> frameOf (const juce::Component& window)
 
 void TuningWindow::show (juce::Rectangle<int> keepClear)
 {
-    // Placed when it first opens, and again only if it would cover the button; a window
+    // Placed when it first opens, and again only if it would cover `keepClear`; a window
     // moved elsewhere stays there.
     const auto frame = frameOf (*this);
     if (! placed || frame.addedTo (getScreenBounds()).intersects (keepClear))
@@ -1053,8 +1053,8 @@ void TuningWindow::show (juce::Rectangle<int> keepClear)
 
 void TuningWindow::placeClearOf (juce::Rectangle<int> button)
 {
-    // Below the button and right-aligned with it; where the screen has no room below, to
-    // its left.
+    // Below `button` (the area to keep clear) and right-aligned with it; where the screen
+    // has no room below, to its left.
     const auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect (button);
     const auto area = display != nullptr ? display->userArea : button.expanded (2000);
     const auto frame = frameOf (*this);
