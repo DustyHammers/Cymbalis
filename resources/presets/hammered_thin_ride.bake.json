@@ -1144,10 +1144,12 @@
     "format": "cymbalis-tuning",
     "version": 1,
     "applied_by": "tools/apply_tuning.py",
-    "applied_utc": "2026-10-25T00:15:01Z",
+    "applied_utc": "2026-10-25T16:58:25Z",
     "source": "hammered_thin_ride.tuning.json",
     "source_date": "2026-10-25T00:00:00.000+00:00",
-    "cymbal": {},
+    "cymbal": {
+      "output_gain_db": -11.0
+    },
     "articulations": {
       "bell": {
         "vel_0.6_db": 4.437,
