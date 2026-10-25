@@ -171,6 +171,18 @@ jobs:
           test "${PIPESTATUS[0]}" -eq 0
           { echo "### Hit display timing"; echo '```'; cat hits.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
+      # The cymbal motion (docs/UI_SPEC.md section 10) at 1536 x 1024: EDGE at velocity 1.0
+      # every 0.5 s and BOW at 0.8 every 0.125 s for 4 s, the editor's paint times and
+      # processBlock with the editor open and with none. Printed to the log and the job
+      # summary only.
+      - name: Cymbal motion timing
+        timeout-minutes: 3
+        run: |
+          UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
+          "$UITEST" motion | tee motion.txt
+          test "${PIPESTATUS[0]}" -eq 0
+          { echo "### Cymbal motion timing"; echo '```'; cat motion.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Package
         run: |
           SHA=$(git rev-parse --short HEAD)

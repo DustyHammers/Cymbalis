@@ -103,6 +103,8 @@ void HitLayer::setDisc (juce::Point<float> centre, float radius, float bellRadiu
     discClip.addEllipse (juce::Rectangle<float> (2.0f * radius, 2.0f * radius).withCentre (centre));
     discBounds = discClip.getBounds().getSmallestIntegerContainer().expanded (1);
     arcScale = 0.0f; // the arcs follow the radius
+    cymbalMotion.setDisc (centre, radius);
+    motionMargin = 0.0f;
 }
 
 // While marks are active this layer's own timer reads the FIFO (one 30 Hz frame clock);
@@ -123,6 +125,15 @@ void HitLayer::poll()
         step (now);
 }
 
+void HitLayer::prepare (float scale)
+{
+    if (std::abs (scale - spriteScale) > 1.0e-3f * scale)
+        buildSprites (scale);
+    if (std::abs (scale - arcScale) > 1.0e-3f * scale)
+        buildArcs (scale);
+    cymbalMotion.prepare (scale);
+}
+
 void HitLayer::timerCallback()
 {
     const double now = juce::Time::getMillisecondCounterHiRes();
@@ -132,23 +143,35 @@ void HitLayer::timerCallback()
     step (now);
 }
 
-// Lays the marks out at `now`: repaints what each covered and covers now, drops the
-// finished ones, and keeps the timer running only while a mark is active.
+// Lays the marks and the cymbal's pose out at `now`. While the cymbal moves (and on the
+// frame it comes to rest) the disc is repainted, with a margin for the shift; otherwise
+// what each mark covered and covers now. Drops the finished marks, and keeps the timer
+// running only while a mark is active or the cymbal can still move.
 void HitLayer::step (double now)
 {
     frameMs = now;
+    const bool wasMoving = cymbalMotion.moving();
+    cymbalMotion.step (now);
+    const bool moving = cymbalMotion.moving();
     for (int i = numMarks - 1; i >= 0; --i)
     {
         auto& m = marks[(size_t) i];
         const bool done = now - m.startMs >= m.durationMs;
         const auto e = done ? juce::Rectangle<int>() : extent (m, now);
-        repaint (m.shown.getUnion (e));
+        if (! moving && ! wasMoving)
+            repaint (m.shown.getUnion (e));
         m.shown = e;
         if (done)
             removeMark (i);
     }
+    if (moving || wasMoving)
+    {
+        const float margin = moving ? cymbalMotion.shiftReach() : 0.0f;
+        repaint (discBounds.expanded ((int) std::ceil (juce::jmax (margin, motionMargin)) + 2));
+        motionMargin = margin;
+    }
     updateLit();
-    if (numMarks == 0)
+    if (numMarks == 0 && ! cymbalMotion.active())
         stopTimer();
     else if (! isTimerRunning())
         startTimerHz (30);
@@ -172,8 +195,10 @@ void HitLayer::addMark (const CymbalisProcessor::HitEvent& e, double now)
     m.edge = m.fraction >= edgeFraction;
     m.bell = m.fraction < bellZone;
     m.ripple = m.velocity > 0.5f;
-    // 4 to 5 o'clock: 45 degrees clockwise from 3 o'clock, +-12 degrees at random.
+    // 4 to 5 o'clock: 45 degrees clockwise from 3 o'clock, +-12 degrees at random. The
+    // cymbal moves from the same hit.
     m.angle = quarterPi + juce::degreesToRadians (24.0f * (random.nextFloat() - 0.5f));
+    cymbalMotion.addHit (m.velocity, e.position, m.angle, now);
     m.spotRadius = spotRadiusFor (m.velocity, m.shoulder);
     m.arcStep = juce::roundToInt (m.velocity * (float) (arcSteps - 1));
     m.centre = discCentre + juce::Point<float> (std::cos (m.angle), std::sin (m.angle)) * (m.fraction * discRadius);
@@ -329,6 +354,8 @@ void HitLayer::paint (juce::Graphics& g)
         buildSprites (scale);
     if (std::abs (scale - arcScale) > 1.0e-3f * scale)
         buildArcs (scale);
+    if (cymbalMotion.moving()) // the marks move with the cymbal
+        g.addTransform (cymbalMotion.transform());
 
     // Edge arcs first: rotated, and already clipped to the disc.
     g.setImageResamplingQuality (juce::Graphics::lowResamplingQuality);

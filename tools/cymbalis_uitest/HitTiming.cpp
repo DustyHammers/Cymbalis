@@ -15,11 +15,35 @@ namespace
 {
 constexpr double kRate = 48000.0;
 constexpr int kBlock = 256;
-constexpr double kLeadSeconds = 0.6;  // the marks build up to 16 before the timing starts
-constexpr double kTimedSeconds = 2.0;
-constexpr double kHitEverySeconds = 0.024; // marks last 0.475 s at velocity 0.9: about 20 would be active, 16 are kept
-constexpr int kNotes[] = { 60, 62, 64, 61, 63 }; // the default notes: BELL, BOW, EDGE, BELL2, BOW2
-constexpr int kVelocity = 114;                    // 0.9
+
+// What a run plays: streams of note-ons, each with its notes (in turn), MIDI velocity and
+// interval; a lead before the timing starts; the timed length; the paint targets.
+struct Stream
+{
+    std::vector<int> notes;
+    int velocity;
+    double everySeconds;
+};
+struct Pattern
+{
+    const char* description;
+    double leadSeconds, timedSeconds;
+    std::vector<Stream> streams;
+    double averageTargetMs, worstTargetMs; // 0: none
+};
+
+Pattern patternFor (HitTiming::Mode mode)
+{
+    if (mode == HitTiming::Mode::motion)
+        // EDGE (64) at velocity 1.0 every 0.5 s and BOW (62) at 0.8 (MIDI 102, 0.803) every
+        // 0.125 s: the cymbal moving and marks running together.
+        return { "EDGE at velocity 1.0 every 0.5 s and BOW at 0.8 every 0.125 s", 0.0, 4.0,
+                 { { { 64 }, 127, 0.5 }, { { 62 }, 102, 0.125 } }, 4.0, 8.0 };
+    // A strike every 24 ms at velocity 0.9 (MIDI 114) on the default notes BELL, BOW, EDGE,
+    // BELL2, BOW2 in turn: marks last 0.475 s, so about 20 would be active and 16 are kept;
+    // they build up to 16 in the lead.
+    return { "a strike every 24 ms at velocity 0.9 (notes 60-64)", 0.6, 2.0, { { { 60, 62, 64, 61, 63 }, 114, 0.024 } }, 2.0, 0.0 };
+}
 
 // Times every paint of a component. JUCE draws a component that has a CachedComponentImage
 // by calling that image's paint() each time its parent paints it; this one paints the
@@ -67,6 +91,7 @@ struct PaintClock final : public juce::DocumentWindow
             {
                 marksMin = std::min (marksMin, hits->numActive());
                 marksSum += hits->numActive();
+                movingPaints += hits->motion().moving() ? 1 : 0;
             }
             const auto clip = g.getClipBounds().getIntersection (holder.getLocalBounds());
             areaSum += (double) clip.getWidth() * (double) clip.getHeight();
@@ -88,6 +113,7 @@ struct PaintClock final : public juce::DocumentWindow
     const cymbalis::ui::HitLayer* hits = nullptr;
     int marksMin = 1 << 30;
     long marksSum = 0;
+    int movingPaints = 0;
     double areaSum = 0.0;
     juce::Rectangle<int> lastClip;
     float scale = 0.0f;
@@ -131,7 +157,7 @@ Stats statsOf (std::vector<double> v)
 
 struct HitTiming::Run
 {
-    explicit Run (bool openEditor) : clock (openEditor)
+    Run (Pattern p, bool openEditor) : pattern (std::move (p)), clock (openEditor)
     {
         processor.prepareToPlay (kRate, kBlock);
         if (! openEditor)
@@ -186,12 +212,11 @@ struct HitTiming::Run
             juce::AudioBuffer<float> buffer (2, kBlock);
             juce::MidiBuffer midi;
             midi.ensureSize (1024);
-            const int lead = (int) std::lround (kLeadSeconds * kRate / kBlock);
-            const int timed = (int) std::lround (kTimedSeconds * kRate / kBlock);
+            const int lead = (int) std::lround (pattern.leadSeconds * kRate / kBlock);
+            const int timed = (int) std::lround (pattern.timedSeconds * kRate / kBlock);
             blockMs.reserve ((size_t) timed);
-            const double hitEvery = kHitEverySeconds * kRate;
-            double nextHit = 0.0;
-            int hit = 0;
+            std::vector<double> nextHit (pattern.streams.size(), 0.0);
+            std::vector<size_t> hit (pattern.streams.size(), 0);
             const auto begin = std::chrono::steady_clock::now();
             for (int b = 0; b < lead + timed; ++b)
             {
@@ -199,9 +224,14 @@ struct HitTiming::Run
                     clock.recording = true;
                 midi.clear();
                 const double from = (double) b * kBlock;
-                for (; nextHit < from + kBlock; nextHit += hitEvery)
-                    midi.addEvent (juce::MidiMessage::noteOn (processor.midiChannel(), kNotes[hit++ % 5], (juce::uint8) kVelocity),
-                                   (int) (nextHit - from));
+                for (size_t k = 0; k < pattern.streams.size(); ++k)
+                {
+                    const auto& st = pattern.streams[k];
+                    for (; nextHit[k] < from + kBlock; nextHit[k] += st.everySeconds * kRate)
+                        midi.addEvent (juce::MidiMessage::noteOn (processor.midiChannel(), st.notes[hit[k]++ % st.notes.size()],
+                                                                  (juce::uint8) st.velocity),
+                                       (int) (nextHit[k] - from));
+                }
                 buffer.clear();
                 const auto t0 = std::chrono::steady_clock::now();
                 processor.processBlock (buffer, midi);
@@ -215,6 +245,7 @@ struct HitTiming::Run
         });
     }
 
+    const Pattern pattern;
     CymbalisProcessor processor;
     PaintClock clock;
     std::unique_ptr<juce::AudioProcessorEditor> editor;
@@ -223,7 +254,7 @@ struct HitTiming::Run
     std::vector<double> blockMs;
 };
 
-HitTiming::HitTiming (std::function<void (int)> f) : finished (std::move (f))
+HitTiming::HitTiming (Mode m, std::function<void (int)> f) : mode (m), finished (std::move (f))
 {
     startTimer (50);
 }
@@ -239,7 +270,7 @@ void HitTiming::timerCallback()
     switch (phase)
     {
         case 0: // the MIDI with no editor first
-            before = std::make_unique<Run> (false);
+            before = std::make_unique<Run> (patternFor (mode), false);
             before->start();
             phase = 1;
             return;
@@ -247,7 +278,7 @@ void HitTiming::timerCallback()
             if (! before->done)
                 return;
             before->audio.join();
-            withEditor = std::make_unique<Run> (true);
+            withEditor = std::make_unique<Run> (patternFor (mode), true);
             phaseStartMs = now;
             phase = 2;
             return;
@@ -269,7 +300,7 @@ void HitTiming::timerCallback()
                 editorIntoImageMs = whole.median;
             }
             withEditor->clock.setVisible (false);
-            after = std::make_unique<Run> (false);
+            after = std::make_unique<Run> (patternFor (mode), false);
             after->start();
             phase = 4;
             return;
@@ -286,12 +317,20 @@ void HitTiming::timerCallback()
             const auto closedBefore = statsOf (before->blockMs), closedAfter = statsOf (after->blockMs);
             const bool ran = c.hits != nullptr && paints.n > 0 && open.n > 0 && closedBefore.n > 0 && closedAfter.n > 0;
             const double editorArea = (double) c.holder.getWidth() * (double) c.holder.getHeight();
-            std::printf ("hits: editor 1536 x 1024, a strike every %.0f ms at velocity 0.9 (notes 60-64), timed over %.0f s\n",
-                         1000.0 * kHitEverySeconds, kTimedSeconds);
+            const auto& pattern = withEditor->pattern;
+            std::printf ("%s: editor 1536 x 1024, %s, timed over %.0f s\n", mode == Mode::motion ? "motion" : "hits", pattern.description,
+                         pattern.timedSeconds);
             std::printf ("  marks active while timed: at least %d, mean %.1f (at most %d)\n", paints.n > 0 ? c.marksMin : 0,
                          paints.n > 0 ? (double) c.marksSum / (double) paints.n : 0.0, cymbalis::ui::HitLayer::maxMarks);
-            std::printf ("  editor paint calls: %zu, average %.3f ms, median %.3f ms, worst %.3f ms (target: average under 2 ms) -> %s\n",
-                         paints.n, paints.mean, paints.median, paints.worst, paints.mean < 2.0 ? "within target" : "ABOVE TARGET");
+            if (mode == Mode::motion)
+                std::printf ("  paints with the cymbal moving: %d of %zu\n", c.movingPaints, paints.n);
+            const bool withinTarget = paints.mean < pattern.averageTargetMs
+                                      && (pattern.worstTargetMs <= 0.0 || paints.worst < pattern.worstTargetMs);
+            const auto worstTarget = pattern.worstTargetMs > 0.0 ? juce::String (", worst under ") + juce::String (pattern.worstTargetMs, 0) + " ms"
+                                                                 : juce::String();
+            std::printf ("  editor paint calls: %zu, average %.3f ms, median %.3f ms, worst %.3f ms (target: average under %.0f ms%s) -> %s\n",
+                         paints.n, paints.mean, paints.median, paints.worst, pattern.averageTargetMs, worstTarget.toRawUTF8(),
+                         withinTarget ? "within target" : "ABOVE TARGET");
             std::printf ("    of which the marks layer: %zu paints, average %.3f ms, median %.3f ms, worst %.3f ms\n", layer.n, layer.mean,
                          layer.median, layer.worst);
             std::printf ("    area per paint: average %.0f %% of the editor (the clip's bounding box), %.2f physical pixels per unit\n",

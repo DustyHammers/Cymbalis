@@ -538,15 +538,27 @@ void PopupPanel::mouseUp (const juce::MouseEvent& e)
 // =====================================================================================
 // The photo area's image, at the physical pixel scale, used only where the area's corner
 // falls on a whole physical pixel: there the copy is pixel for pixel what drawing it would
-// give. (JUCE's own buffering would also copy it at fractional offsets, resampled.)
+// give. (JUCE's own buffering would also copy it at fractional offsets, resampled.) While
+// the cymbal moves: images of the background alone and of the photo alone, at that scale,
+// the photo drawn with the cymbal's pose and medium resampling, then its shading.
 class PhotoArea::Cache final : public juce::CachedComponentImage
 {
 public:
-    explicit Cache (Component& c) : owner (c) {}
+    explicit Cache (PhotoArea& c) : owner (c) {}
 
     void paint (juce::Graphics& g) override
     {
         const float scale = g.getInternalContext().getPhysicalPixelScaleFactor();
+        if (! juce::exactlyEqual (scale, paintedScale))
+        {
+            paintedScale = scale;
+            changedMs = juce::Time::getMillisecondCounterHiRes();
+        }
+        if (owner.motion != nullptr && owner.motion->moving())
+        {
+            paintMoving (g, scale);
+            return;
+        }
         if (! onWholePixels (scale))
         {
             owner.paintEntireComponent (g, false);
@@ -566,21 +578,66 @@ public:
     }
     bool invalidateAll() override
     {
-        valid = false;
+        valid = layersValid = false;
+        changedMs = juce::Time::getMillisecondCounterHiRes();
         return true;
     }
     bool invalidate (const juce::Rectangle<int>&) override
     {
-        valid = false;
-        return true;
+        return invalidateAll();
     }
     void releaseResources() override
     {
-        image = {};
-        valid = false;
+        image = background = photo = {};
+        valid = layersValid = false;
+    }
+
+    static constexpr double settleMs = 250.0;
+    bool wantsLayers (double now) const
+    {
+        return paintedScale > 0.0f && ! layersReady (paintedScale) && now - changedMs >= settleMs;
+    }
+    float buildLayersNow()
+    {
+        buildLayers (paintedScale);
+        return paintedScale;
     }
 
 private:
+    juce::Rectangle<int> sizeAt (float scale) const
+    {
+        return (owner.getLocalBounds().toFloat() * scale).getSmallestIntegerContainer().withZeroOrigin();
+    }
+    bool layersReady (float scale) const
+    {
+        return layersValid && background.getBounds() == sizeAt (scale) && juce::exactlyEqual (scale, layersScale);
+    }
+    void buildLayers (float scale)
+    {
+        const auto size = sizeAt (scale);
+        const auto render = [&] (auto paintLayer) {
+            juce::Image layer (juce::Image::ARGB, juce::jmax (1, size.getWidth()), juce::jmax (1, size.getHeight()), true);
+            juce::Graphics lg (layer);
+            lg.addTransform (juce::AffineTransform::scale (scale));
+            paintLayer (lg);
+            return layer;
+        };
+        background = render ([this] (juce::Graphics& lg) { owner.paintBackground (lg); });
+        photo = render ([this] (juce::Graphics& lg) { owner.paintPhoto (lg); });
+        layersScale = scale;
+        layersValid = true;
+    }
+    void paintMoving (juce::Graphics& g, float scale)
+    {
+        if (! layersReady (scale))
+            buildLayers (scale);
+        const auto toArea = juce::AffineTransform::scale (1.0f / scale);
+        g.drawImageTransformed (background, toArea);
+        g.setImageResamplingQuality (juce::Graphics::mediumResamplingQuality);
+        g.drawImageTransformed (photo, toArea.followedBy (owner.motion->transform()));
+        owner.motion->drawOverlay (g);
+    }
+
     // Whether the component's corner lands on a whole physical pixel of its window.
     bool onWholePixels (float scale) const
     {
@@ -591,26 +648,53 @@ private:
         return toTop > 0.0f && std::abs (p.x - std::round (p.x)) < 1.0e-3f && std::abs (p.y - std::round (p.y)) < 1.0e-3f;
     }
 
-    Component& owner;
+    PhotoArea& owner;
     juce::Image image;
     float imageScale = 0.0f;
     bool valid = false;
+    juce::Image background, photo; // while the cymbal moves
+    float layersScale = 0.0f;
+    bool layersValid = false;
+    float paintedScale = 0.0f; // the scale it was last painted at
+    double changedMs = 0.0;    // when that scale, or the preset, last changed
 };
 
 PhotoArea::PhotoArea (CymbalisProcessor& p, const Assets& a) : processor (p), assets (a)
 {
     setOpaque (true);
     setInterceptsMouseClicks (false, false);
-    setCachedComponentImage (new Cache (*this)); // redrawn when the preset or the scale changes
+    cache = new Cache (*this);
+    setCachedComponentImage (cache); // redrawn when the preset or the scale changes
+}
+
+bool PhotoArea::wantsPrepare (double nowMs) const
+{
+    return cache != nullptr && cache->wantsLayers (nowMs);
+}
+
+float PhotoArea::prepare()
+{
+    return cache != nullptr ? cache->buildLayersNow() : 0.0f;
 }
 
 void PhotoArea::paint (juce::Graphics& g)
+{
+    paintBackground (g);
+    paintPhoto (g);
+}
+
+void PhotoArea::paintBackground (juce::Graphics& g)
 {
     g.fillAll (palette::background);
     g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
     if (assets.background.isValid())
         g.drawImage (assets.background, juce::Rectangle<float> ((float) kDesignWidth, (float) kDesignHeight)
                                             .withPosition (-getPosition().toFloat()));
+}
+
+void PhotoArea::paintPhoto (juce::Graphics& g)
+{
+    g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
     if (processor.presetError().isEmpty())
     {
         // Fitted to the photo area, aspect ratio kept, centred (UI_SPEC section 3).
@@ -678,6 +762,7 @@ Content::Content (CymbalisProcessor& p)
         repaint (rowLabelArea (s));
     };
     addAndMakeVisible (*hitLayer);
+    photoArea->setMotion (&hitLayer->motion());
 
     // Velocity Sensitivity, Volume and Pan: each label centred on its knob.
     for (size_t i : { size_t (0), size_t (1), size_t (4) })
@@ -775,6 +860,9 @@ void Content::refresh()
         repaint();
     }
     hitLayer->poll();
+    // The images for the moving cymbal and the marks, once the size and preset have settled.
+    if (photoArea->wantsPrepare (juce::Time::getMillisecondCounterHiRes()))
+        hitLayer->prepare (photoArea->prepare());
     for (int s = 0; s < kNumSlots; ++s)
     {
         const auto stick = processor.shownStick (s);

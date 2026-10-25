@@ -118,17 +118,30 @@ private:
 // The photo area (UI_SPEC section 3): the background under it and the preset's photo,
 // fitted, or the preset's load error. Opaque and cached as an image where it sits on whole
 // pixels (the maximum editor size), so that the hit display's repaints over it only copy
-// that image; elsewhere it draws as it would without a cache.
+// that image; elsewhere it draws as it would without a cache. While the cymbal moves
+// (UI_SPEC section 10, "Cymbal motion") it draws the background, then the photo with the
+// cymbal's pose and its shading over it, from images of each.
 class PhotoArea final : public juce::Component
 {
 public:
     PhotoArea (CymbalisProcessor& p, const Assets& assets);
+    void setMotion (const CymbalMotion* m) noexcept { motion = m; }
     void paint (juce::Graphics& g) override;
+
+    // The images for the moving cymbal are rendered once the area's physical scale (and
+    // preset) has held for a moment after it opened, was resized or changed preset, so not
+    // at every step of a resize. prepare() renders them and returns that scale.
+    bool wantsPrepare (double nowMs) const;
+    float prepare();
 
 private:
     class Cache;
+    Cache* cache = nullptr; // owned by the component (setCachedComponentImage)
+    void paintBackground (juce::Graphics& g);
+    void paintPhoto (juce::Graphics& g); // the photo, or the load error
     CymbalisProcessor& processor;
     const Assets& assets;
+    const CymbalMotion* motion = nullptr;
 };
 
 // The note box's menu: MIDI LEARN, RESET DEFAULT and NONE, then a scrollable list of every

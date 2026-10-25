@@ -1,6 +1,6 @@
 # UI specification — Cymbalis
 
-Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE added 2026-10-15, SWISH 2026-10-17. Layout v2 (mockup v2: a larger, higher photo area, MIDI CHANNEL under CYMBAL, Velocity Sensitivity and Volume in a bottom row) approved by Kris 2026-10-25; the Pan parameter and its knob added 2026-10-25 at Kris's request; the hit display (section 10) approved by Kris 2026-10-25. Layout v3 (mockup v3: the MIDI CHANNEL box and the TUNING button swapped) approved by Kris 2026-10-25. All coordinates are in 1536×1024 design units. `docs/ui/reference_mockup.png` shows the original artwork (layout v1).
+Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE added 2026-10-15, SWISH 2026-10-17. Layout v2 (mockup v2: a larger, higher photo area, MIDI CHANNEL under CYMBAL, Velocity Sensitivity and Volume in a bottom row) approved by Kris 2026-10-25; the Pan parameter and its knob added 2026-10-25 at Kris's request; the hit display (section 10) approved by Kris 2026-10-25. Layout v3 (mockup v3: the MIDI CHANNEL box and the TUNING button swapped) approved by Kris 2026-10-25; the cymbal motion (section 10, mockup v4) approved by Kris 2026-10-25. All coordinates are in 1536×1024 design units. `docs/ui/reference_mockup.png` shows the original artwork (layout v1).
 
 ## 1. Assets (`resources/ui/`)
 
@@ -255,9 +255,43 @@ Approved by Kris, 2026-10-25. UI only: it changes nothing in the sound and adds 
   - the spot, at radii 7 % apart covering the TIP and SHOULDER sizes;
   - the ripple ring and the bell ring, also at radii 7 % apart, each kept as the 32 px tiles it passes through;
   - the edge arc, at velocity 0, 0.2 … 1, with its inner arc.
-- The images are rendered the first time a mark is drawn after the editor opens, is resized or moves to a screen with another scale (the arcs also after a preset change, since they follow R).
+- The images are rendered once the editor's size and preset have held for 250 ms after it opens, is resized, moves to a screen with another scale or changes preset (the arcs follow R), so not at every step of a resize; a hit that comes first renders what it needs.
 - A frame only places those images, with a position and an opacity:
   - spots and rings at the nearest radius, unscaled, on whole pixels;
   - arcs rotated about the disc's centre to the hit's angle and scaled to its radius fraction. The disc's edge is already in an arc's image, so arcs need no clip; spots and rings are clipped to the disc only when one reaches past it.
-- Only the rectangle around each active mark is repainted (the spot and the ripple's current extent, with the previous frame's), plus a lit row's label area when it changes; never the whole editor or the whole photo.
+- While the cymbal is at rest, only the rectangle around each active mark is repainted (the spot and the ripple's current extent, with the previous frame's), plus a lit row's label area when it changes; never the whole editor or the whole photo. While it moves, see "Cymbal motion".
 - The photo area is its own opaque component, cached as an image, so a mark's repaint copies the photo from that image.
+
+### Cymbal motion
+
+Approved by Kris, 2026-10-25 (mockup v4). UI only: no change to the sound, no parameters, and the audio thread does nothing new; the hit FIFO above is its only input. The same on every preset, each with its own photo and bellRadius.
+
+**Input.** Every hit event the hit layer reads also starts a motion hit: its engine velocity v, its strike position p and its mark's angle θ (the same random 4–5 o'clock angle). Up to 16 motion hits are kept; when full, the oldest is dropped. A motion hit outlives its mark: it ends when its age passes 7·τ.
+
+**Motion per hit** (design units; angles clockwise from 3 o'clock). Settings at three strike positions, linear in p between them (bell 1.0 → bow 0.5 → edge 0.0), so the blend knobs move smoothly between them:
+
+| | tilt A (per unit velocity) | decay τ (s) | wobble rate f (turns/s) | shift D | spin (degrees) |
+|---|---|---|---|---|---|
+| bell (p = 1.0) | 0.002 | 0.30 | 2.6 | 0.2 | 0 |
+| bow (p = 0.5) | 0.006 | 0.50 | 2.0 | 0.5 | 0 |
+| edge (p = 0.0) | 0.025 | 1.30 | 1.4 | 2.1 | 0.15 |
+
+- At age a: r = (1 − e^(−a / 0.02)) · e^(−a / τ).
+- u = (cos θ, sin θ), the direction of the hit; w = u turned 90° clockwise on screen, (−sin θ, cos θ).
+- d = cos(2πfa)·u + 0.85·sin(2πfa)·w: the cymbal first tips toward the hit, then its low point circles round the rim on a slightly oval path, and dies away.
+- Summed over all motion hits: tilt T += A·v·r·d; shift S += D·v·r·d; spin φ += spin·v·r·cos(2πfa).
+
+**Drawing the cymbal** (each frame, from the summed T, S, φ).
+- k = |T|, û = T / k.
+- The photo is drawn about the disc centre c with p' = c − S + Rot(φ)·(I − k·ûûᵀ)·(p − c): squashed by k along û (foreshortening as it tips), turned by φ, moved by −S. The background under it stays.
+- Tilt shading: the half toward +û (dipping away) darker, the other half lighter, by 1.2·k × the distance from the centre line (at the rim ±1.2·k, at most ±3 %): black and white with that alpha, a soft linear gradient.
+- Light: a soft warm band across the disc, perpendicular to û, centred at 0.35·R on the −û side (the raised side), 0.18·R wide at half height (a Gaussian profile), tint (1, 0.93, 0.80) at up to 15 % × min(1, k / 0.025) over the metal, at its middle.
+- Both follow min(k, 0.025), so they are one cached image at full strength (the band over the shading), drawn rotated to û with the photo's pose and opacity min(k, 0.025) / 0.025. The disc's edge is in the image, so it is clipped to the disc without a path.
+- The hit marks move with the cymbal: they are drawn with the same transform as the photo.
+- Rest: when k < 0.0005, |S| < 0.1 and |φ| < 0.005°, the photo and the marks are drawn exactly as without motion (no transform, no shading, no band), so the still editor is pixel-identical to the editor without motion.
+
+**Drawing cheaply.**
+- Cached at the physical scale, rendered when the editor's size and preset have settled (as the mark images above), and freed with the editor: the photo area as now (for rest), the background alone and the photo alone (for motion), the shading and band image, and the mark images. No gradient, blur or path is computed per frame; a moving frame draws the background image, then the photo image with the pose and medium resampling quality, then the shading and band image with its transform and opacity, then the marks with the pose. At rest the photo area copies its cached image as before, at the normal quality.
+- While the cymbal moves (and on the frame it comes to rest) the hit layer's 30 Hz timer repaints only the photo area: the disc's bounds, plus a margin of the largest shift the motion hits can still give, plus 2 units; and the lit rows as they change. The timer stops when no mark is active and the motion hits kept can no longer move the cymbal past the rest thresholds (the sums of A·v·e^(−a/τ), D·v·e^(−a/τ) and spin·v·e^(−a/τ), which bound |T|, |S| and |φ|, are below them), which can come before the hits end at 7·τ.
+- No new image files and no new resources.
+- The photo area is 680 units square and the disc about 667 wide, so a shift of more than about 6.5 units would meet the photo area's edge. Normal playing stays within about 4.5 (an EDGE hit every 0.71 s, in step with its wobble); only a burst like 16 EDGE hits within 0.15 s goes further.

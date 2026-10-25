@@ -5,9 +5,11 @@
 // lasts. The processor writes one event per strike into a FIFO; this layer reads them on
 // the editor's timer. Marks are drawn only from images rendered once per scale and preset,
 // only the rectangles around them are repainted, and the layer's own timer runs only while
-// a mark is active.
+// a mark is active or the cymbal moves. Each hit also moves the cymbal (CymbalMotion): the
+// marks are drawn with its pose, and the photo area draws the photo with it.
 
 #include "PluginProcessor.h"
+#include "ui/CymbalMotion.h"
 
 #include <array>
 #include <functional>
@@ -28,11 +30,16 @@ public:
     // Called by the editor's timer: takes the new hits from the processor's FIFO.
     void poll();
 
+    // Renders the marks' and the cymbal's images at this physical scale, ahead of the first
+    // hit (the editor calls it once its size has settled).
+    void prepare (float scale);
+
     // While a row's latest mark is active.
     bool rowLit (int slot) const noexcept { return lit[(size_t) slot]; }
     std::function<void (int slot)> onRowLitChanged;
 
     int numActive() const noexcept { return numMarks; }
+    const CymbalMotion& motion() const noexcept { return cymbalMotion; }
 
     void paint (juce::Graphics& g) override;
 
@@ -102,6 +109,9 @@ private:
     float discRadius = 1.0f, bellZone = 0.4f;
     juce::Path discClip;
     juce::Rectangle<int> discBounds;
+
+    CymbalMotion cymbalMotion;
+    float motionMargin = 0.0f; // the shift reach the last moving frame was repainted for
 
     float spriteScale = 0.0f, arcScale = 0.0f; // the physical scales they were built at (0: none)
     std::vector<Sprite> spots, ripples, bellRings; // at radii 7 % apart (spots: TIP and SHOULDER sizes)
