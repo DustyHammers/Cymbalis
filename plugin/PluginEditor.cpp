@@ -27,8 +27,10 @@ constexpr std::array<float, kNumSlots> kRowLabelSpacing { 3.33f, 2.88f, 2.83f, 3
 const juce::Rectangle<int> kStickBox (1265, 0, 99, 25);
 const juce::Rectangle<int> kNoteBox (1424, 0, 66, 25);
 const juce::Rectangle<int> kPresetBox (61, 371, 277, 62);
-const juce::Rectangle<int> kChannelBox (632, 936, 277, 62);
-const juce::Rectangle<int> kPhoto (434, 94, 707, 713);
+const juce::Rectangle<int> kChannelBox (61, 501, 277, 62); // under the CYMBAL box
+const juce::Rectangle<int> kPhoto (447, 50, 680, 680);
+constexpr float kChannelLabelTop = 478.0f; // MIDI CHANNEL, centred over its box
+constexpr float kKnobLabelTop = 784.0f;    // Velocity Sensitivity and Volume, centred on their knobs
 #if CYMBALIS_TUNING
 const juce::Rectangle<int> kLogo (40, 80, 390, 130); // the CYMBALIS logo and its tagline in the background
 const juce::Rectangle<int> kTuningButton (1404, 30, 110, 36); // top right, above the column headers (y 98)
@@ -519,16 +521,25 @@ private:
 Content::Content (CymbalisProcessor& p)
     : processor (p),
       knobSpecs { {
-          { CymbalisProcessor::paramVelocitySensitivity, { 201.0f, 641.0f }, "VELOCITY SENSITIVITY", { 99.0f, 544.0f }, 3.09f, palette::knobLabel },
-          { CymbalisProcessor::paramVolumeDb, { 199.0f, 881.0f }, "VOLUME", { 164.0f, 784.0f }, 3.40f, palette::knobLabel },
+          // The bottom row: x 39-1161 in thirds, a knob centred in each; the third (x 974) is
+          // kept free. Their labels are centred in the constructor.
+          { CymbalisProcessor::paramVelocitySensitivity, { 226.0f, 881.0f }, "VELOCITY SENSITIVITY", { 0.0f, kKnobLabelTop }, 3.09f, palette::knobLabel },
+          { CymbalisProcessor::paramVolumeDb, { 600.0f, 881.0f }, "VOLUME", { 0.0f, kKnobLabelTop }, 3.40f, palette::knobLabel },
           { CymbalisProcessor::paramBlend1, { 1349.0f, 642.0f }, "BLEND POSITION 1", { 1269.0f, 545.0f }, 3.18f, palette::label },
           { CymbalisProcessor::paramBlend2, { 1350.0f, 881.0f }, "BLEND POSITION 2", { 1270.0f, 783.0f }, 2.98f, palette::label },
       } },
       presetBox (assets, { 306.0f - (float) kPresetBox.getX(), 398.0f - (float) kPresetBox.getY() }),
-      channelBox (assets, { 877.0f - (float) kChannelBox.getX(), 963.0f - (float) kChannelBox.getY() })
+      channelBox (assets, { 306.0f - (float) kChannelBox.getX(), 528.0f - (float) kChannelBox.getY() })
 {
     setSize (kDesignWidth, kDesignHeight);
     setOpaque (true);
+
+    // Velocity Sensitivity and Volume: each label centred on its knob.
+    for (size_t i : { size_t (0), size_t (1) })
+    {
+        auto& spec = knobSpecs[i];
+        spec.labelInk.x = spec.centre.x - inkBounds (assets.font (kHeaderSize, spec.spacing), spec.label).getWidth() * 0.5f;
+    }
 
     for (size_t i = 0; i < knobs.size(); ++i)
     {
@@ -848,21 +859,22 @@ void Content::paint (juce::Graphics& g)
 void Content::paintLines (juce::Graphics& g)
 {
     g.setColour (palette::divider);
-    g.fillRect (338, 869, 1161 - 338, 1);
-    g.fillRect (39, 869, 58 - 39, 1);
+    g.fillRect (39, 757, 1161 - 39, 1); // above the bottom row
     g.fillRect (1188, 110, 1, 850 - 110);
 
-    // - and + under Velocity Sensitivity and Volume
+    // - and + under Velocity Sensitivity and Volume, at fixed offsets from each knob
     g.setColour (palette::secondary);
     auto minus = [&g] (float x, float y) { g.fillRect (juce::Rectangle<float> (x, y, 11.0f, 1.0f)); };
     auto plus = [&g] (float cx, float cy) {
         g.fillRect (juce::Rectangle<float> (cx - 5.0f, cy - 0.5f, 10.0f, 1.0f));
         g.fillRect (juce::Rectangle<float> (cx - 0.5f, cy - 4.5f, 1.0f, 9.0f));
     };
-    minus (120.0f, 722.0f);
-    plus (274.0f, 723.0f);
-    minus (118.0f, 962.0f);
-    plus (272.0f, 963.0f);
+    for (size_t i : { size_t (0), size_t (1) })
+    {
+        const auto c = knobSpecs[i].centre;
+        minus (c.x - 81.0f, c.y + 81.0f);
+        plus (c.x + 73.0f, c.y + 82.0f);
+    }
 }
 
 void Content::paintLabels (juce::Graphics& g)
@@ -875,7 +887,9 @@ void Content::paintLabels (juce::Graphics& g)
     };
 
     header ("CYMBAL", 160.0f, 348.0f, 3.45f, palette::label);
-    header ("MIDI CHANNEL", 704.0f, 913.0f, 3.11f, palette::label);
+    const auto channelFont = assets.font (kHeaderSize, 3.11f);
+    header ("MIDI CHANNEL", kChannelBox.toFloat().getCentreX() - inkBounds (channelFont, "MIDI CHANNEL").getWidth() * 0.5f,
+            kChannelLabelTop, 3.11f, palette::label);
     header ("STICK ARTICULATION", 1201.0f, 98.0f, 3.29f, palette::label);
     header ("MIDI NOTE", 1424.0f, 98.0f, 3.00f, palette::label);
 
