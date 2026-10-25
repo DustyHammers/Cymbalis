@@ -1,6 +1,6 @@
 # Tuning by ear: the Tuning window
 
-Kris tunes each cymbal by ear in Cymbalis's Tuning window, saves the settings as a tuning file (JSON), and brings the file to the project session. There, `tools/apply_tuning.py` writes it into the preset's bake in `resources/presets/`, and the plugin plays the tuned values from the bake. This document is the approved spec, 2026-10-16. The tuning adds no host parameters; the four plugin parameters (`docs/UI_SPEC.md` section 9) stay as they are.
+Kris tunes each cymbal by ear in Cymbalis's Tuning window, saves the settings as a tuning file (JSON), and brings the file to the project session. There, `tools/apply_tuning.py` writes it into the preset's bake in `resources/presets/`, and the plugin plays the tuned values from the bake. This document is the approved spec, 2026-10-16. The tuning adds no host parameters; the plugin parameters (`docs/UI_SPEC.md` section 9) stay as they are.
 
 ## One plugin, with the tuning code
 
@@ -327,7 +327,7 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
 
 ### Meters
 
-- **Output, after the Volume knob:** the peak (held for 1.5 s) and the RMS over about 300 ms, in dBFS. **CLIP** lights when a sample reaches 0 dBFS; click it to reset it.
+- **Output, after the Volume and Pan knobs:** the peak (held for 1.5 s) and the RMS over about 300 ms, in dBFS. **CLIP** lights when a sample reaches 0 dBFS; click it to reset it.
 - **Last hit, before the Volume knob:**
   - the row and articulation it played, and its velocity;
   - its peak, and the RMS of the first 500 ms after the strike, both channels.

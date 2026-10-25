@@ -24,6 +24,40 @@ const char* findResource (const char* originalFilename, int& size)
 juce::String percentText (float v) { return juce::String (juce::roundToInt (v * 100.0f)) + "%"; }
 
 const juce::String middleDot = juce::String::fromUTF8 ("\xc2\xb7");
+
+// Pan (UI_SPEC section 9): each input channel is placed at a position and panned at constant
+// power, the left one at -1 + 2 max(p, 0), the right one at 1 + 2 min(p, 0). A channel at
+// `pos` goes to the left output with cos((pos + 1) pi/4) and to the right with
+// sin((pos + 1) pi/4), written as sines so that the ends are exactly 0 and 1. Gains: L to
+// left, R to left, L to right, R to right.
+void panGains (float p, float (&g)[4]) noexcept
+{
+    constexpr double quarterPi = 0.78539816339744831;
+    const double posL = p > 0.0f ? -1.0 + 2.0 * p : -1.0;
+    const double posR = p > 0.0f ? 1.0 : 1.0 + 2.0 * p;
+    g[0] = (float) std::sin ((1.0 - posL) * quarterPi);
+    g[1] = (float) std::sin ((1.0 - posR) * quarterPi);
+    g[2] = (float) std::sin ((1.0 + posL) * quarterPi);
+    g[3] = (float) std::sin ((1.0 + posR) * quarterPi);
+}
+
+// "C" at centre, else "L 35" / "R 35".
+juce::String panText (float p)
+{
+    const int n = juce::roundToInt (std::abs (p) * 100.0f);
+    return n == 0 ? juce::String ("C") : (p < 0.0f ? "L " : "R ") + juce::String (n);
+}
+
+float panFromText (const juce::String& text)
+{
+    const auto s = text.trim().toUpperCase();
+    const float x = s.retainCharacters ("0123456789.").getFloatValue() / 100.0f;
+    if (s.startsWith ("L"))
+        return -x;
+    if (s.startsWith ("R"))
+        return x;
+    return s.startsWith ("C") ? 0.0f : s.getFloatValue() / 100.0f;
+}
 } // namespace
 
 // Builds the next cymbal and frees retired ones, off the audio thread. It polls: the audio
@@ -53,6 +87,7 @@ CymbalisProcessor::CymbalisProcessor()
     volumeDb = apvts.getRawParameterValue (paramVolumeDb);
     blend1 = apvts.getRawParameterValue (paramBlend1);
     blend2 = apvts.getRawParameterValue (paramBlend2);
+    pan = apvts.getRawParameterValue (paramPan);
     for (size_t i = 0; i < notes.size(); ++i)
         notes[i].store (cymbalis::kSlots[i].defaultNote);
     for (size_t k = 0; k < sticks.size(); ++k)
@@ -88,7 +123,7 @@ CymbalisProcessor::~CymbalisProcessor()
 }
 
 
-// Exactly the four parameters of docs/UI_SPEC.md section 9.
+// Exactly the five parameters of docs/UI_SPEC.md section 9.
 juce::AudioProcessorValueTreeState::ParameterLayout CymbalisProcessor::createParameterLayout()
 {
     using namespace juce;
@@ -128,6 +163,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout CymbalisProcessor::createPar
             const int edge = roundToInt (v * 100.0f);
             return "BOW " + String (100 - edge) + " " + middleDot + " " + String (edge) + " EDGE";
         })));
+
+    // Added after the first four (version hint 2).
+    params.push_back (std::make_unique<AudioParameterFloat> (
+        ParameterID { paramPan, 2 }, "Pan", NormalisableRange<float> (-1.0f, 1.0f), 0.0f,
+        AudioParameterFloatAttributes()
+            .withStringFromValueFunction ([] (float v, int) { return panText (v); })
+            .withValueFromStringFunction ([] (const String& s) { return panFromText (s); })));
 
     return { params.begin(), params.end() };
 }
@@ -276,6 +318,8 @@ void CymbalisProcessor::prepareToPlay (double sampleRate, int)
     fadeRight.assign (kFadeChunk, 0.0f);
     gain.reset (sampleRate, 0.02);
     gain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (volumeDb->load(), -1000.0f));
+    panPosition.reset (sampleRate, 0.02); // as the volume
+    panPosition.setCurrentAndTargetValue (pan->load());
 }
 
 void CymbalisProcessor::releaseResources() {}
@@ -410,6 +454,24 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     {
         buffer.applyGain (0, 0, n, gain.getTargetValue());
         buffer.applyGain (1, 0, n, gain.getTargetValue());
+    }
+
+    // Pan, the last stage, smoothed like the volume. At centre it does nothing.
+    panPosition.setTargetValue (pan->load());
+    if (panPosition.isSmoothing() || ! juce::exactlyEqual (panPosition.getTargetValue(), 0.0f))
+    {
+        float g[4];
+        const bool smoothing = panPosition.isSmoothing();
+        if (! smoothing)
+            panGains (panPosition.getTargetValue(), g);
+        for (int i = 0; i < n; ++i)
+        {
+            if (smoothing)
+                panGains (panPosition.getNextValue(), g);
+            const float l = left[i], r = right[i];
+            left[i] = l * g[0] + r * g[1];
+            right[i] = l * g[2] + r * g[3];
+        }
     }
 #if CYMBALIS_TUNING
     meterBlock (left, right, n, true);
@@ -567,7 +629,12 @@ void CymbalisProcessor::setStateInformation (const void* data, int sizeInBytes)
         xml->removeChildElement (session, true);
     }
     learnSlot.store (-1);
-    apvts.replaceState (juce::ValueTree::fromXml (*xml));
+    auto state = juce::ValueTree::fromXml (*xml);
+    // A session from before the Pan parameter has no entry for it: it loads at centre (the
+    // state would otherwise keep the current pan).
+    if (! state.getChildWithProperty ("id", paramPan).isValid())
+        state.appendChild (juce::ValueTree ("PARAM", { { "id", paramPan }, { "value", 0.0f } }), nullptr);
+    apvts.replaceState (state);
 }
 
 juce::AudioProcessorEditor* CymbalisProcessor::createEditor()

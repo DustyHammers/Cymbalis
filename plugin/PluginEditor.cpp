@@ -521,12 +521,13 @@ private:
 Content::Content (CymbalisProcessor& p)
     : processor (p),
       knobSpecs { {
-          // The bottom row: x 39-1161 in thirds, a knob centred in each; the third (x 974) is
-          // kept free. Their labels are centred in the constructor.
+          // The bottom row: x 39-1161 in thirds, a knob centred in each (Velocity Sensitivity,
+          // Volume, Pan). Their labels are centred in the constructor.
           { CymbalisProcessor::paramVelocitySensitivity, { 226.0f, 881.0f }, "VELOCITY SENSITIVITY", { 0.0f, kKnobLabelTop }, 3.09f, palette::knobLabel },
           { CymbalisProcessor::paramVolumeDb, { 600.0f, 881.0f }, "VOLUME", { 0.0f, kKnobLabelTop }, 3.40f, palette::knobLabel },
           { CymbalisProcessor::paramBlend1, { 1349.0f, 642.0f }, "BLEND POSITION 1", { 1269.0f, 545.0f }, 3.18f, palette::label },
           { CymbalisProcessor::paramBlend2, { 1350.0f, 881.0f }, "BLEND POSITION 2", { 1270.0f, 783.0f }, 2.98f, palette::label },
+          { CymbalisProcessor::paramPan, { 974.0f, 881.0f }, "PAN", { 0.0f, kKnobLabelTop }, 3.40f, palette::knobLabel },
       } },
       presetBox (assets, { 306.0f - (float) kPresetBox.getX(), 398.0f - (float) kPresetBox.getY() }),
       channelBox (assets, { 306.0f - (float) kChannelBox.getX(), 528.0f - (float) kChannelBox.getY() })
@@ -534,8 +535,8 @@ Content::Content (CymbalisProcessor& p)
     setSize (kDesignWidth, kDesignHeight);
     setOpaque (true);
 
-    // Velocity Sensitivity and Volume: each label centred on its knob.
-    for (size_t i : { size_t (0), size_t (1) })
+    // Velocity Sensitivity, Volume and Pan: each label centred on its knob.
+    for (size_t i : { size_t (0), size_t (1), size_t (4) })
     {
         auto& spec = knobSpecs[i];
         spec.labelInk.x = spec.centre.x - inkBounds (assets.font (kHeaderSize, spec.spacing), spec.label).getWidth() * 0.5f;
@@ -916,6 +917,11 @@ void Content::paintLabels (juce::Graphics& g)
     small ("BOW", 1409.0f, 720.0f, 2.88f);
     small ("BOW", 1249.0f, 958.0f, 2.88f);
     small ("EDGE", 1409.0f, 958.0f, 2.83f);
+
+    // L and R under Pan, each centred on its x.
+    const auto rowFont = assets.font (kRowSize);
+    for (auto [text, x] : { std::pair<const char*, float> { "L", 901.0f }, { "R", 1047.0f } })
+        drawInkText (g, rowFont, text, { x - inkBounds (rowFont, text).getWidth() * 0.5f, 958.0f }, palette::secondary);
 }
 
 void Content::paintRows (juce::Graphics& g)
