@@ -110,12 +110,12 @@ Built 2026-10-26 in the project session from Kris's SPEAR captures (Bell V1-V4, 
 
 | File | MD5 |
 |---|---|
-| `presets/raven/Raven_Baseline1.json` | `b8bed4a0c5f8edceb22da63fef3df15a` |
+| `presets/raven/Raven_Baseline1.json` | `361c7b3b900b440c6cce3a7ea56c20e6` |
 | `presets/raven/data/raven_bell_excitation_ratios.json` | `5456a7a3b0d5e69393a90f37d8ac70da` |
 | `presets/raven/data/raven_build_info.json` | `528384e41cdc74e2e9a6715fdf1db33a` |
 | `presets/raven/data/raven_edge_benv_trigger.json` | `0a1f20be7c52c42897acec4b6a01b042` |
 | `presets/raven/data/raven_edge_excitation_ratios_neutral.json` | `d6fbff7aa816a34abc62dcd140ee5175` |
-| `presets/raven/data/raven_edge_npz_data.json` | `7eec3f5b6e8774b904009accedb1399c` |
+| `presets/raven/data/raven_edge_npz_data.json` | `5614a439a80f2a4e47e2ee427743fce5` |
 | `presets/raven/data/raven_edge_vel_tilt.json` | `7ca4b1dfe389f178b93ed34c827464b6` |
 | `presets/raven/data/raven_fingerprint.json` | `30cb99e57c5f501fe5761227473c5242` |
 | `presets/raven/data/raven_pkt_data.json` | `700bda1627e8f58e0e2486f2160efc85` |
@@ -125,6 +125,6 @@ Built 2026-10-26 in the project session from Kris's SPEAR captures (Bell V1-V4, 
 - Bettis format: fingerprint (900 modes), bell ratios, neutral edge ratios, NPZ edge (7 velocities) with band envelopes, edge pk_t by velocity, edge velocity tilt, and an all-zero edge band envelope file that switches the NPZ envelope on in Python (as the 602's).
 - Mode bank: partials of the bow and edge captures clustered within a 0.3 % span; exc from the bow captures only (80th percentile of each capture's normalised peak amplitude), gamma 0.8, modes below 400 Hz x0.65. 682 modes seen in at least 2 bow captures, plus 218 seen only in the edge captures (exc 0: they sound on edge strikes through the NPZ velw).
 - T60: log-linear decay fits of the partials, amplitude-weighted median per mode, scaled per one-third-octave band so that the modelled band decay matches the SPEAR band decay of the three loudest bow captures; `t60_scale` 1.0.
-- The NPZ edge uses the plugin's 22 one-third-octave bands exactly (89.09 Hz x 2^(j/3)), so the Tuning window's onset-shift bands map one to one. Each band envelope is divided by the band's velw norm, so a band's level follows the SPEAR band level (`edge_rms_correction` all 1).
+- The NPZ edge uses the plugin's 22 one-third-octave bands exactly (89.09 Hz x 2^(j/3)), so the Tuning window's onset-shift bands map one to one. The band envelopes are the SPEAR band levels (loudest band = 1); `edge_rms_correction` divides each band by its velw norm (geometric mean over the velocities, within x0.25-x4), so a band's level follows the SPEAR band level. It acts after the engine normalises the envelope, so a sparse band cannot become the envelope's peak.
 - Velocities from the captures' levels (RMS of the first 500 ms relative to the loudest capture of each articulation), in `data/raven_build_info.json` with the SPEAR level targets: BELL +4.72 dB and EDGE +16.23 dB above BOW (Bell V4, Edge V7 against Bow V7).
 - Build-up (LF and MF) as Bettis and Swish; wander, stick click and NL off. No velocity tables: bell and bow use the hertz law (v^2).
