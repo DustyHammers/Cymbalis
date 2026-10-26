@@ -88,8 +88,8 @@ jobs:
 
       # The engine's block times in dense playing (a strike every 24 ms, every preset, 44.1 and
       # 96 kHz, 128- and 64-sample blocks, real-time thread, each case three times in turn),
-      # then where strike() and the slowest blocks spend their time (profile build). Printed to
-      # the log and the job summary only; nothing is uploaded.
+      # then where strike() and the slowest blocks spend their time (profile build, blocks back
+      # to back). Printed to the log and the job summary only; nothing is uploaded.
       - name: Engine block times in dense playing
         timeout-minutes: 15
         run: |
@@ -104,7 +104,7 @@ jobs:
             echo
             echo "### Engine parts in dense playing (profile build)"
             echo
-            build/tools/cymbalis_bench/cymbalis_bench_profile --dense "${BAKES[@]}" --runs 1 --sample-rate 44100 --block 128
+            build/tools/cymbalis_bench/cymbalis_bench_profile --dense "${BAKES[@]}" --runs 1 --sample-rate 44100 --block 128 --free
           } | tee -a "$GITHUB_STEP_SUMMARY"
           test "${PIPESTATUS[0]}" -eq 0
 
