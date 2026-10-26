@@ -12,11 +12,12 @@
 //       any sample differs.
 //
 //   check --time [--runs N] [--sample-rate SR ...] BAKE.json ...
-//       Block times of both engines, alternately in one process, each block waiting for its
-//       deadline on a real-time thread (as a host's audio thread), the smallest of the runs per
-//       block (the engines are deterministic, so block i does the same work in every run): a
-//       strike every 24 ms, and flams (two strikes in one block, the second 1 ms later or half
-//       a block, whichever is shorter), at 128- and 64-sample blocks (default 44.1 kHz).
+//       Block times of both engines in one process on a real-time thread (as a host's audio
+//       thread): at every block's deadline both render that block, one after the other (which
+//       one first alternates), so a slow moment of the machine falls on both; the smallest of
+//       the runs per block (the engines are deterministic, so block i does the same work in every
+//       run). A strike every 24 ms, and flams (two strikes in one block, the second 1 ms later or
+//       half a block, whichever is shorter), at 128- and 64-sample blocks (default 44.1 kHz).
 #include "Bake.h"
 
 #define FastEngine FastEngineRef
@@ -185,64 +186,93 @@ int identity(const std::vector<std::string>& bakes, bool mechanisms)
     return same ? 0 : 1;
 }
 
-// One run: every block's time (us) and its number of strikes, after a 1 s lead.
-template <class E>
-std::vector<double> timeBlocks(const std::shared_ptr<const cymbalis::BakeData>& bake, double sr, int block, bool flams,
-                               std::vector<uint8_t>& strikes)
+// The block sequence of a run: the strikes in order, a strike every 24 ms or flams.
+std::vector<Hit> strikesFor(const cymbalis::BakeData& bake, double sr, int block, bool flams)
 {
-    makeRealtime(1000.0 * block / sr);
-    const int slots = int(bake->slots.size());
-    E e(bake);
-    e.prepare(sr);
-    std::vector<Hit> hits;
+    const int slots = int(bake.slots.size());
     const int gap = std::min(int(std::lround(0.001 * sr)), block / 2);
+    std::vector<Hit> hits;
     for (int k = 0; k * 0.024 < 5.0; ++k)
     {
         const int s = k % slots;
         if (!flams)
-            hits.push_back({int64_t(std::floor(k * 0.024 * sr)), s, kVelocities[k % 7], bake->slots[size_t(s)].position});
+            hits.push_back({int64_t(std::floor(k * 0.024 * sr)), s, kVelocities[k % 7], bake.slots[size_t(s)].position});
         else
         {
             // Both in one block: the first 4 samples into it.
             const int64_t at = (int64_t(std::ceil(k * 0.024 * sr)) + block - 1) / block * block + 4;
             const int s2 = (k + 2) % slots;
-            hits.push_back({at, s, kVelocities[k % 7], bake->slots[size_t(s)].position});
-            hits.push_back({at + gap, s2, kVelocities[(k + 3) % 7], bake->slots[size_t(s2)].position});
+            hits.push_back({at, s, kVelocities[k % 7], bake.slots[size_t(s)].position});
+            hits.push_back({at + gap, s2, kVelocities[(k + 3) % 7], bake.slots[size_t(s2)].position});
         }
     }
-    std::vector<float> L(static_cast<size_t>(block)), R(static_cast<size_t>(block));
-    std::vector<double> t;
-    strikes.clear();
-    const int lead = int(1.0 * sr / block), timed = int(4.0 * sr / block);
-    size_t h = 0;
-    const auto start = Clock::now();
-    for (int b = 0; b < lead + timed; ++b)
+    return hits;
+}
+
+// One block of an engine from `h` on: its time (us) and its strikes.
+template <class E>
+double renderBlock(E& e, const std::vector<Hit>& hits, size_t& h, int64_t from, int block, float* L, float* R, int& count)
+{
+    int pos = 0;
+    count = 0;
+    const auto t0 = Clock::now();
+    for (; h < hits.size() && hits[h].sample < from + block; ++h, ++count)
     {
-        const int64_t from = int64_t(b) * block;
-        int pos = 0, n = 0;
-        const auto t0 = Clock::now();
-        for (; h < hits.size() && hits[h].sample < from + block; ++h, ++n)
+        const int at = int(hits[h].sample - from);
+        if (at > pos)
         {
-            const int at = int(hits[h].sample - from);
-            if (at > pos)
-            {
-                e.process(L.data() + pos, R.data() + pos, at - pos);
-                pos = at;
-            }
-            e.strike(hits[h].slot, hits[h].velocity, hits[h].position);
+            e.process(L + pos, R + pos, at - pos);
+            pos = at;
         }
-        if (pos < block)
-            e.process(L.data() + pos, R.data() + pos, block - pos);
-        const auto t1 = Clock::now();
-        if (b >= lead)
+        e.strike(hits[h].slot, hits[h].velocity, hits[h].position);
+    }
+    if (pos < block)
+        e.process(L + pos, R + pos, block - pos);
+    return std::chrono::duration<double, std::micro>(Clock::now() - t0).count();
+}
+
+// One run of both engines in step, after a 1 s lead: each block's time per engine (ref, this)
+// and its number of strikes.
+void timeRun(const std::shared_ptr<const cymbalis::BakeData>& bake, double sr, int block, bool flams,
+             std::vector<double> (&t)[2], std::vector<uint8_t>& strikes)
+{
+    makeRealtime(1000.0 * block / sr);
+    cymbalis::FastEngineRef a(bake);
+    cymbalis::FastEngine b(bake);
+    a.prepare(sr);
+    b.prepare(sr);
+    const std::vector<Hit> hits = strikesFor(*bake, sr, block, flams);
+    std::vector<float> L(static_cast<size_t>(block)), R(static_cast<size_t>(block));
+    const int lead = int(1.0 * sr / block), timed = int(4.0 * sr / block);
+    size_t ha = 0, hb = 0;
+    t[0].clear();
+    t[1].clear();
+    strikes.clear();
+    const auto start = Clock::now();
+    for (int i = 0; i < lead + timed; ++i)
+    {
+        const int64_t from = int64_t(i) * block;
+        int n = 0;
+        double ta, tb;
+        if (i % 2 == 0)
         {
-            t.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
+            ta = renderBlock(a, hits, ha, from, block, L.data(), R.data(), n);
+            tb = renderBlock(b, hits, hb, from, block, L.data(), R.data(), n);
+        }
+        else
+        {
+            tb = renderBlock(b, hits, hb, from, block, L.data(), R.data(), n);
+            ta = renderBlock(a, hits, ha, from, block, L.data(), R.data(), n);
+        }
+        if (i >= lead)
+        {
+            t[0].push_back(ta);
+            t[1].push_back(tb);
             strikes.push_back(uint8_t(n));
         }
         std::this_thread::sleep_until(start + std::chrono::duration_cast<Clock::duration>(
-                                                  std::chrono::duration<double>(double(b + 1) * block / sr)));
+                                                  std::chrono::duration<double>(double(i + 1) * block / sr)));
     }
-    return t;
 }
 
 struct Summary
@@ -266,9 +296,10 @@ int timing(const std::vector<std::string>& bakes, std::vector<double> rates, int
 {
     if (rates.empty())
         rates = {44100.0};
-    std::printf("Block times (us, and %% of the block's duration): main's engine (ref) and this one, "
-                "alternately in one process, paced in real time on a real-time thread, the smallest of %d runs "
-                "per block; median and worst of the blocks with no strike, one strike, two strikes (a flam).\n\n",
+    std::printf("Block times (us, and %% of the block's duration): the ref engine and this one in one process "
+                "on a real-time thread, both rendering each block at its deadline (which one first alternates), "
+                "the smallest of %d runs per block; median and worst of the blocks with no strike, one strike, "
+                "two strikes (a flam).\n\n",
                 runs);
     std::printf("| Preset | Rate | Block | Budget | Engine | No strike: median | One strike: median | worst | "
                 "Flam: median | worst |\n|---|---|---|---|---|---|---|---|---|---|\n");
@@ -279,27 +310,27 @@ int timing(const std::vector<std::string>& bakes, std::vector<double> rates, int
             for (const int block : {128, 64})
             {
                 const double budget = 1e6 * block / sr;
-                std::vector<double> single[2], flam[2];
+                std::vector<double> single[2], flam[2], a[2], f[2];
                 std::vector<uint8_t> sSingle, sFlam;
                 for (int r = 0; r < runs; ++r)
+                {
+                    timeRun(bake, sr, block, false, a, sSingle);
+                    timeRun(bake, sr, block, true, f, sFlam);
                     for (int e = 0; e < 2; ++e)
                     {
-                        auto a = e == 0 ? timeBlocks<cymbalis::FastEngineRef>(bake, sr, block, false, sSingle)
-                                        : timeBlocks<cymbalis::FastEngine>(bake, sr, block, false, sSingle);
-                        auto f = e == 0 ? timeBlocks<cymbalis::FastEngineRef>(bake, sr, block, true, sFlam)
-                                        : timeBlocks<cymbalis::FastEngine>(bake, sr, block, true, sFlam);
                         if (r == 0)
                         {
-                            single[e] = a;
-                            flam[e] = f;
+                            single[e] = a[e];
+                            flam[e] = f[e];
                         }
                         else
-                            for (size_t i = 0; i < a.size(); ++i)
+                            for (size_t i = 0; i < a[e].size(); ++i)
                             {
-                                single[e][i] = std::min(single[e][i], a[i]);
-                                flam[e][i] = std::min(flam[e][i], f[i]);
+                                single[e][i] = std::min(single[e][i], a[e][i]);
+                                flam[e][i] = std::min(flam[e][i], f[e][i]);
                             }
                     }
+                }
                 for (int e = 0; e < 2; ++e)
                 {
                     const Summary none = summary(single[e], sSingle, 0), one = summary(single[e], sSingle, 1),
