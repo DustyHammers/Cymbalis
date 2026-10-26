@@ -75,4 +75,4 @@ jobs:
           git fetch --depth 1 origin main:refs/remotes/origin/main
           echo "### Identity, arm64"; tools/cymbalis_identity/run.sh --arch arm64 || true
           echo "### Identity, x86_64 (Rosetta)"; tools/cymbalis_identity/run.sh --arch x86_64 || true
-          echo "### Timing"; tools/cymbalis_identity/run.sh --arch arm64 --time --runs 4
+          echo "### Timing"; tools/cymbalis_identity/run.sh --arch arm64 --time --runs 6
