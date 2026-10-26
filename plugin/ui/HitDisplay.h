@@ -60,16 +60,11 @@ private:
 
     // A cached image of a shape, coloured, at `scale` pixels per design unit: its top-left
     // corner (design units) relative to the shape's reference point, and the shape's
-    // radius. A ring is kept as the tiles it passes through, so its empty middle is never
-    // drawn.
+    // radius. One image each, rings too: on macOS every image drawn is a separate GPU upload
+    // and submission, so a few larger images cost far less than many small ones.
     struct Sprite
     {
-        struct Tile
-        {
-            juce::Image image;
-            juce::Point<int> offset; // pixels from the sprite's top-left corner
-        };
-        std::vector<Tile> tiles;
+        juce::Image image;
         juce::Point<float> origin;
         float radius = 0.0f;
         float scale = 1.0f;

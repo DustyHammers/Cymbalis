@@ -38,47 +38,25 @@ float arcStroke (float v) { return 10.0f + 8.0f * v; }
 float band (float d, float half, float soft) { return juce::jlimit (0.0f, 1.0f, (half + 0.5f * soft - d) / soft); }
 
 // A coloured image of `bounds` (design units) at `scale` pixels per unit, `colourAt` giving
-// each pixel's colour. With `tile` above 0 it is kept as tiles of that many pixels, and
-// tiles with nothing in them are dropped.
+// each pixel's colour.
 template <typename ColourAt>
-std::vector<std::pair<juce::Image, juce::Point<int>>> renderTiles (juce::Rectangle<float> bounds, float scale, int tile,
-                                                                     ColourAt colourAt)
+juce::Image renderImage (juce::Rectangle<float> bounds, float scale, ColourAt colourAt)
 {
     const int w = juce::jmax (1, (int) std::ceil (bounds.getWidth() * scale));
     const int h = juce::jmax (1, (int) std::ceil (bounds.getHeight() * scale));
     juce::Image image (juce::Image::ARGB, w, h, true);
+    juce::Image::BitmapData data (image, juce::Image::BitmapData::writeOnly);
+    for (int y = 0; y < h; ++y)
     {
-        juce::Image::BitmapData data (image, juce::Image::BitmapData::writeOnly);
-        for (int y = 0; y < h; ++y)
+        const float py = bounds.getY() + ((float) y + 0.5f) / scale;
+        for (int x = 0; x < w; ++x)
         {
-            const float py = bounds.getY() + ((float) y + 0.5f) / scale;
-            for (int x = 0; x < w; ++x)
-            {
-                const auto c = colourAt (bounds.getX() + ((float) x + 0.5f) / scale, py);
-                if (c.getAlpha() > 0)
-                    data.setPixelColour (x, y, c);
-            }
+            const auto c = colourAt (bounds.getX() + ((float) x + 0.5f) / scale, py);
+            if (c.getAlpha() > 0)
+                data.setPixelColour (x, y, c);
         }
     }
-    std::vector<std::pair<juce::Image, juce::Point<int>>> tiles;
-    if (tile <= 0)
-    {
-        tiles.emplace_back (image, juce::Point<int>());
-        return tiles;
-    }
-    const juce::Image::BitmapData data (image, juce::Image::BitmapData::readOnly);
-    for (int ty = 0; ty < h; ty += tile)
-        for (int tx = 0; tx < w; tx += tile)
-        {
-            const auto area = juce::Rectangle<int> (tx, ty, tile, tile).getIntersection (image.getBounds());
-            bool any = false;
-            for (int y = area.getY(); y < area.getBottom() && ! any; ++y)
-                for (int x = area.getX(); x < area.getRight() && ! any; ++x)
-                    any = reinterpret_cast<const juce::PixelARGB*> (data.getPixelPointer (x, y))->getAlpha() > 0;
-            if (any)
-                tiles.emplace_back (image.getClippedImage (area).createCopy(), area.getPosition());
-        }
-    return tiles;
+    return image;
 }
 } // namespace
 
@@ -242,11 +220,10 @@ void HitLayer::updateLit()
 // per design unit. They are drawn unscaled, at whole pixels.
 void HitLayer::buildSprites (float scale)
 {
-    const auto make = [scale] (float radius, float reach, int tile, auto colourAt) {
+    const auto make = [scale] (float radius, float reach, auto colourAt) {
         const auto bounds = juce::Rectangle<float> (2.0f * reach, 2.0f * reach).withCentre ({});
         Sprite s;
-        for (auto& t : renderTiles (bounds, scale, tile, colourAt))
-            s.tiles.push_back ({ t.first, t.second });
+        s.image = renderImage (bounds, scale, colourAt);
         s.origin = bounds.getTopLeft();
         s.radius = radius;
         s.scale = scale;
@@ -257,13 +234,13 @@ void HitLayer::buildSprites (float scale)
     grad.addColour (0.25, palette::hitGold.withAlpha (0.75f));
     grad.addColour (0.60, palette::hitBronze.withAlpha (0.28f));
     const auto spot = [&] (float r) {
-        return make (r, r + 1.0f, 0, [&] (float x, float y) {
+        return make (r, r + 1.0f, [&] (float x, float y) {
             const float d = std::sqrt (x * x + y * y) / r;
             return d < 1.0f ? grad.getColourAtPosition (d) : juce::Colours::transparentBlack;
         });
     };
     const auto ring = [&] (float r, float half, float soft, juce::Colour c) {
-        return make (r, r + half + soft, 32, [=] (float x, float y) {
+        return make (r, r + half + soft, [=] (float x, float y) {
             return c.withMultipliedAlpha (band (std::abs (std::sqrt (x * x + y * y) - r), half, soft));
         });
     };
@@ -299,13 +276,12 @@ void HitLayer::buildArcs (float scale)
         }
         bounds = bounds.expanded (1.0f);
         Sprite s;
-        for (auto& t : renderTiles (bounds, scale, 0, [=] (float x, float y) {
-                 const float rho = std::sqrt (x * x + y * y);
-                 const float along = std::abs (std::atan2 (y, x)) * rho;
-                 const float inside = juce::jlimit (0.0f, 1.0f, disc - rho + 0.5f);
-                 return c.withMultipliedAlpha (band (std::abs (rho - a), half, soft) * band (along, halfSpan * rho, soft) * inside);
-             }))
-            s.tiles.push_back ({ t.first, t.second });
+        s.image = renderImage (bounds, scale, [=] (float x, float y) {
+            const float rho = std::sqrt (x * x + y * y);
+            const float along = std::abs (std::atan2 (y, x)) * rho;
+            const float inside = juce::jlimit (0.0f, 1.0f, disc - rho + 0.5f);
+            return c.withMultipliedAlpha (band (std::abs (rho - a), half, soft) * band (along, halfSpan * rho, soft) * inside);
+        });
         s.origin = bounds.getTopLeft();
         s.radius = a;
         s.scale = scale;
@@ -358,16 +334,13 @@ void HitLayer::paint (juce::Graphics& g)
 void HitLayer::drawAt (juce::Graphics& g, const Sprite& s, juce::Point<float> at) const
 {
     const auto corner = ((at + s.origin) * s.scale).roundToInt();
-    for (auto& t : s.tiles)
-        g.drawImageTransformed (t.image, juce::AffineTransform::translation ((float) (corner.x + t.offset.x), (float) (corner.y + t.offset.y))
-                                             .scaled (1.0f / s.scale));
+    g.drawImageTransformed (s.image, juce::AffineTransform::translation ((float) corner.x, (float) corner.y).scaled (1.0f / s.scale));
 }
 
 // An arc, placed by `place` (rotation and scale about the disc's centre).
 void HitLayer::drawArc (juce::Graphics& g, const Sprite& s, const juce::AffineTransform& place) const
 {
-    for (auto& t : s.tiles)
-        g.drawImageTransformed (t.image, juce::AffineTransform::scale (1.0f / s.scale).translated (s.origin).followedBy (place));
+    g.drawImageTransformed (s.image, juce::AffineTransform::scale (1.0f / s.scale).translated (s.origin).followedBy (place));
 }
 
 void HitLayer::drawMark (juce::Graphics& g, const Mark& m, double now, bool arcs) const
