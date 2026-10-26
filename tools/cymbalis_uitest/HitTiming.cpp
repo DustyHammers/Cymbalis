@@ -31,6 +31,7 @@ constexpr double kRate = 44100.0;
 constexpr int kBlocks[] = { 256, 128 };
 constexpr double kLeadSeconds = 1.0;  // the cymbal is built and the marks build up to 16 before the timing starts
 constexpr double kTimedSeconds = 3.0;
+constexpr double kProfileTimedSeconds = 10.0; // the profiling run plays on while sample attaches and samples
 constexpr double kHitEverySeconds = 0.024; // marks last 0.475 s at velocity 0.9: about 20 would be active, 16 are kept
 constexpr int kNotes[] = { 60, 62, 64, 61, 63 }; // the default notes: BELL, BOW, EDGE, BELL2, BOW2
 constexpr int kVelocity = 114;                    // 0.9
@@ -375,7 +376,8 @@ struct HitTiming::Result
 
 struct HitTiming::Run final : private juce::Timer
 {
-    Run (Editor kind, int blockSize, bool rt, bool synchronous) : editorKind (kind), block (blockSize), realtime (rt)
+    Run (Editor kind, int blockSize, bool rt, bool synchronous, double seconds)
+        : editorKind (kind), block (blockSize), realtime (rt), timedSeconds (seconds)
     {
         processor.prepareToPlay (kRate, block);
         if (kind == Editor::none)
@@ -455,7 +457,7 @@ struct HitTiming::Run final : private juce::Timer
             juce::MidiBuffer midi;
             midi.ensureSize (1024);
             const int lead = (int) std::lround (kLeadSeconds * kRate / block);
-            const int timed = (int) std::lround (kTimedSeconds * kRate / block);
+            const int timed = (int) std::lround (timedSeconds * kRate / block);
             blockMs.reserve ((size_t) timed);
             blockCpuMs.reserve ((size_t) timed);
             const double hitEvery = kHitEverySeconds * kRate;
@@ -519,6 +521,7 @@ struct HitTiming::Run final : private juce::Timer
     Editor editorKind;
     int block;
     bool realtime;
+    double timedSeconds;
     CymbalisProcessor processor;
     std::unique_ptr<CymbalisProcessor> other;
     PaintClock clock;
@@ -569,7 +572,7 @@ void HitTiming::timerCallback()
         case 0: // the next case; an editor's first paint renders its cached images
         {
             const auto& s = steps[next];
-            run = std::make_unique<Run> (s.editor, s.block, s.realtime, s.synchronous);
+            run = std::make_unique<Run> (s.editor, s.block, s.realtime, s.synchronous, s.profile ? kProfileTimedSeconds : kTimedSeconds);
             phaseStartMs = now;
             phase = 1;
             return;
@@ -594,7 +597,7 @@ void HitTiming::timerCallback()
                     samplerStarted = true;
                     sampler = startSampler (kProfileSeconds);
                 }
-                if (! run->done)
+                if (! run->done || (sampler != nullptr && sampler->isRunning()))
                     return;
                 run->audio.join();
                 profile = readProfile (sampler.get());
