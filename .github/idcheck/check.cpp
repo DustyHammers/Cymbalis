@@ -9,6 +9,16 @@
 
 #include <algorithm>
 #include <chrono>
+#include <thread>
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#include <mach/mach_time.h>
+#include <mach/thread_policy.h>
+#include <pthread.h>
+#elif defined(__linux__)
+#include <pthread.h>
+#include <sched.h>
+#endif
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -40,10 +50,40 @@ void render(E& e, const std::vector<Hit>& hits, int64_t total, int block, std::v
     }
 }
 
-// Block times of an engine over the dense sequence (no output check), free-running.
+static bool gPaced = false;
+static int gRuns = 3;
+
+bool makeRealtime(double periodMs)
+{
+#if defined(__APPLE__)
+    mach_timebase_info_data_t base {};
+    mach_timebase_info(&base);
+    const auto ticks = [&](double ms) { return uint32_t(ms * 1.0e6 * double(base.denom) / double(base.numer)); };
+    thread_time_constraint_policy_data_t policy {};
+    policy.period = ticks(periodMs);
+    policy.computation = ticks(0.5 * periodMs);
+    policy.constraint = ticks(periodMs);
+    policy.preemptible = 1;
+    return thread_policy_set(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY,
+                             thread_policy_t(&policy), THREAD_TIME_CONSTRAINT_POLICY_COUNT) == KERN_SUCCESS;
+#elif defined(__linux__)
+    (void) periodMs;
+    sched_param param {};
+    param.sched_priority = sched_get_priority_max(SCHED_FIFO) - 1;
+    return pthread_setschedparam(pthread_self(), SCHED_FIFO, &param) == 0;
+#else
+    (void) periodMs;
+    return false;
+#endif
+}
+
+// Block times of an engine over the dense sequence (no output check), free-running or, with
+// gPaced, each block waiting for its deadline on a real-time thread.
 template <class E>
 std::vector<double> timeBlocks(const std::shared_ptr<const cymbalis::BakeData>& bake, double sr, int block, std::vector<uint8_t>& hasStrike)
 {
+    if (gPaced)
+        makeRealtime(1000.0 * block / sr);
     const double vel[] = {0.95, 0.4, 0.8, 0.6, 1.0, 0.3, 0.7};
     const int slots = int(bake->slots.size());
     E e(bake);
@@ -53,6 +93,7 @@ std::vector<double> timeBlocks(const std::shared_ptr<const cymbalis::BakeData>& 
     hasStrike.clear();
     int64_t k = 0, next = 0;
     const int lead = int(1.0 * sr / block), timed = int(4.0 * sr / block);
+    const auto start = std::chrono::steady_clock::now();
     for (int b = 0; b < lead + timed; ++b)
     {
         const int64_t from = int64_t(b) * block;
@@ -70,6 +111,9 @@ std::vector<double> timeBlocks(const std::shared_ptr<const cymbalis::BakeData>& 
         if (pos < block) e.process(L.data() + pos, R.data() + pos, block - pos);
         const auto t1 = std::chrono::steady_clock::now();
         if (b >= lead) { t.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count()); hasStrike.push_back(uint8_t(strikes > 0)); }
+        if (gPaced)
+            std::this_thread::sleep_until(start + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                                      std::chrono::duration<double>(double(b + 1) * block / sr)));
     }
     return t;
 }
@@ -84,7 +128,7 @@ int timing(int argc, char** argv)
             {
                 std::vector<double> mo, mn;
                 std::vector<uint8_t> st;
-                for (int r = 0; r < 3; ++r)
+                for (int r = 0; r < gRuns; ++r)
                 {
                     auto a = timeBlocks<cymbalis::FastEngineMain>(bake, sr, block, st);
                     auto b = timeBlocks<cymbalis::FastEngine>(bake, sr, block, st);
@@ -96,7 +140,7 @@ int timing(int argc, char** argv)
                     for (size_t j = 0; j < v.size(); ++j) if (sel < 0 || st[j] == sel) x.push_back(v[j]);
                     std::sort(x.begin(), x.end());
                     char buf[128];
-                    std::snprintf(buf, sizeof buf, "%5.0f %5.0f %5.0f", x[x.size() / 2], x[std::min(x.size() - 1, x.size() * 99 / 100)], x.back());
+                    std::snprintf(buf, sizeof buf, "%5.0f %5.0f %5.0f %5.0f", x[x.size() / 2], x[std::min(x.size() - 1, x.size() * 99 / 100)], x[std::min(x.size() - 1, x.size() * 999 / 1000)], x.back());
                     return std::string(buf);
                 };
                 std::printf("%-20s %4.1f/%3d  main: all %s | strike %s    new: all %s | strike %s\n",
@@ -109,8 +153,23 @@ int timing(int argc, char** argv)
 
 int main(int argc, char** argv)
 {
+    // --time [--paced] [--runs N] BAKE...: main's engine against this one, alternately, the
+    // smallest of the runs per block: median, p99, p99.9 and worst (us), all blocks | blocks
+    // with a strike.
     if (argc > 1 && std::string(argv[1]) == "--time")
-        return timing(argc, argv);
+    {
+        std::vector<char*> rest = {argv[0], argv[1]};
+        for (int i = 2; i < argc; ++i)
+        {
+            const std::string a = argv[i];
+            if (a == "--paced") gPaced = true;
+            else if (a == "--runs" && i + 1 < argc) gRuns = std::atoi(argv[++i]);
+            else rest.push_back(argv[i]);
+        }
+        std::printf("columns: median p99 p99.9 worst (us), smallest of %d runs per block, %s\n", gRuns,
+                    gPaced ? "paced in real time on a real-time thread" : "blocks back to back");
+        return timing(int(rest.size()), rest.data());
+    }
 #if defined(__x86_64__)
     _mm_setcsr(_mm_getcsr() | 0x8040);
 #elif defined(__aarch64__)
@@ -119,10 +178,21 @@ int main(int argc, char** argv)
     const double vel[] = {0.95, 0.4, 0.8, 0.6, 1.0, 0.3, 0.7};
     bool allSame = true;
     double worstRel = 0.0;
-    for (int i = 1; i < argc; ++i)
+    // --mechanisms: the energy cascade (which draws from the strike-phase sequence), loud-band
+    // and re-hit damping on, through setTuning, the same for both engines.
+    bool mech = false;
+    int first = 1;
+    if (argc > 1 && std::string(argv[1]) == "--mechanisms") { mech = true; first = 2; }
+    for (int i = first; i < argc; ++i)
     {
         auto bake = cymbalis::loadBake(argv[i]);
         const int slots = int(bake->slots.size());
+        cymbalis::Tuning t = bake->tuning;
+        t.cymbal.cascadeAmount = 0.8;
+        t.cymbal.cascadeThresholdDb = -40.0;
+        t.cymbal.loudDampAmount = 1.5;
+        t.cymbal.loudDampThresholdDb = -30.0;
+        t.cymbal.rehitDampAmount = 0.6;
         for (double sr : {44100.0, 96000.0})
             for (int block : {128, 64})
             {
@@ -138,6 +208,11 @@ int main(int argc, char** argv)
                 cymbalis::FastEngine b(bake);
                 a.prepare(sr);
                 b.prepare(sr);
+                if (mech)
+                {
+                    a.setTuning(t, nullptr);
+                    b.setTuning(t, nullptr);
+                }
                 std::vector<float> La, Ra, Lb, Rb;
                 render(a, hits, total, block, La, Ra);
                 render(b, hits, total, block, Lb, Rb);

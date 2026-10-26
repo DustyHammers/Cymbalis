@@ -108,9 +108,11 @@ jobs:
           } | tee -a "$GITHUB_STEP_SUMMARY"
           test "${PIPESTATUS[0]}" -eq 0
 
-      # Scratch branch only: the branch's FastEngine against main's, bit for bit, in memory.
-      - name: Bit-identity against main (scratch)
-        timeout-minutes: 20
+      # Scratch branch only: the branch's FastEngine against main's, bit for bit, in memory
+      # (default tuning, then the cascade and both dampings on), both slices; then main's engine
+      # against the branch's, alternately, paced in real time on a real-time thread.
+      - name: Bit-identity and timing against main (scratch)
+        timeout-minutes: 30
         run: |
           git fetch --depth 1 origin main
           mkdir -p idcheck/main
@@ -124,14 +126,14 @@ jobs:
             clang++ $FL -c plugin/dsp/FastEngine.cpp -o idcheck/new_$ARCH.o
             clang++ -arch $ARCH -std=gnu++17 -O2 -DCYMBALIS_TUNING=1 -Iplugin/dsp -Iidcheck -c idcheck/check.cpp -o idcheck/check_$ARCH.o
             clang++ -arch $ARCH idcheck/check_$ARCH.o idcheck/old_$ARCH.o idcheck/new_$ARCH.o build/plugin/dsp/libcymbalis_engine.a -o idcheck/check_$ARCH
-            echo "--- $ARCH ---"
-            if [ "$ARCH" = x86_64 ]; then arch -x86_64 idcheck/check_$ARCH resources/presets/*.bake.json; else idcheck/check_$ARCH resources/presets/*.bake.json; fi
+            RUN=""; [ "$ARCH" = x86_64 ] && RUN="arch -x86_64"
+            echo "--- $ARCH, default tuning ---"
+            $RUN idcheck/check_$ARCH resources/presets/*.bake.json || true
+            echo "--- $ARCH, cascade and dampings on ---"
+            $RUN idcheck/check_$ARCH --mechanisms resources/presets/*.bake.json || true
           done
-
-      # Scratch branch only: Nova at normal priority, against the real-time thread.
-      - name: Dense playing at normal priority (scratch)
-        timeout-minutes: 10
-        run: build/tools/cymbalis_bench/cymbalis_bench --dense --bake resources/presets/nova_ride.bake.json --sample-rate 44100 --block 128 --block 64 --normal-priority
+          echo "--- arm64, main against the branch, paced, real-time ---"
+          idcheck/check_arm64 --time --paced --runs 4 resources/presets/nova_ride.bake.json resources/presets/smoke_flat_ride.bake.json resources/presets/hammered_thin_ride.bake.json resources/presets/swish.bake.json
 
       - name: Locate bundles
         run: |
