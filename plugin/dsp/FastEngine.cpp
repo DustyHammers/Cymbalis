@@ -170,6 +170,27 @@ inline void cosSin(double x, double& c, double& s) noexcept
     }
 }
 
+// hypot(x, y) < t, with hypot only where it can decide: x^2 + y^2 against t^2 carries a
+// relative error of a few 1e-16, so outside t^2 (1 +- 1e-12) it gives hypot's answer.
+struct BelowHypot
+{
+    explicit BelowHypot(double t) noexcept : t(t), lo(t * t * (1.0 - 1e-12)), hi(t * t * (1.0 + 1e-12)), squares(t > 1e-150) {}
+    bool operator()(double x, double y) const noexcept
+    {
+        if (squares)
+        {
+            const double r2 = x * x + y * y;
+            if (r2 < lo)
+                return true;
+            if (r2 > hi)
+                return false;
+        }
+        return std::hypot(x, y) < t;
+    }
+    double t, lo, hi;
+    bool squares; // t^2 is a normal number
+};
+
 // The ramp of lines 896-901: min(1, bf + (1 - bf) * te / pt), then max(., 0).
 inline double ramp(double bf, double te, double invPt) noexcept
 {
@@ -409,7 +430,10 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
     scratchBellVel_.resize(n);
     scratchPosW_.resize(n);
     scratchPkT_.resize(n);
+    phaseCos_.resize(n);
+    phaseSin_.resize(n);
     rng_ = b.renderStream; // the strike-phase sequence starts from this preset's seed
+    aheadDone_ = 0;
 }
 
 // About 2.8 ms between control points at every supported rate. With NPZ edge data (a band
@@ -640,6 +664,8 @@ void FastEngine::process(float* left, float* right, int numSamples) noexcept
         return;
     }
     sampleNow_ = static_cast<int64_t>(clock_);
+    if (aheadDone_ < n_ || !(rng_ == aheadFrom_))
+        drawPhasesAhead((n_ + 3) / 4);
     int pos = 0;
     while (pos < numSamples)
     {
@@ -2967,6 +2993,28 @@ bool FastEngine::isSilent() const noexcept
 }
 
 
+// Draws up to `count` more of the next strike's phases (from where rng_ is now, starting over
+// if rng_ has moved since) and evaluates their cos and sin, as strike() would.
+void FastEngine::drawPhasesAhead(int count) noexcept
+{
+    if (!(rng_ == aheadFrom_) || aheadDone_ == 0)
+    {
+        aheadFrom_ = rng_;
+        aheadRng_ = rng_;
+        aheadDone_ = 0;
+    }
+    const BakeData& b = *bake_;
+    const double range = b.phaseHigh - b.phaseLow;
+    const int end = std::min(n_, aheadDone_ + count);
+    for (int i = aheadDone_; i < end; ++i)
+    {
+        const double phase = aheadRng_.uniform(b.phaseLow, range);
+        phaseCos_[size_t(i)] = std::cos(phase);
+        phaseSin_[size_t(i)] = std::sin(phase);
+    }
+    aheadDone_ = end;
+}
+
 void FastEngine::strike(int slotIndex, double velocity, double position) noexcept
 {
     if (!isPrepared() || slotIndex < 0 || slotIndex >= numSlots()) return;
@@ -2990,8 +3038,9 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
 
     CYM_PROF_BEGIN(strikePhases);
     const double range = b.phaseHigh - b.phaseLow;
-    for (size_t i = 0; i < n; ++i)
-        scratchPhase_[i] = rng_.uniform(b.phaseLow, range);
+    drawPhasesAhead(n_); // the rest of them, if they are still the next in the sequence
+    rng_ = aheadRng_;
+    aheadDone_ = 0;
     CYM_PROF_END(strikePhases);
 
     CYM_PROF_BEGIN(strikeVelocity);
@@ -3088,6 +3137,11 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
         npzLevel = numpyScalarPower(velocity, b.edgeNpz.levelVelGainPower);
         for (size_t i = 0; i < n; ++i)
             scratchPhase_[i] = rng_.uniform(b.phaseLow, range);
+        for (size_t i = 0; i < n; ++i)
+        {
+            phaseCos_[i] = std::cos(scratchPhase_[i]);
+            phaseSin_[i] = std::sin(scratchPhase_[i]);
+        }
         CYM_PROF_END(strikeNpz);
     }
     CYM_PROF_BEGIN(strikeCoupling);
@@ -3106,8 +3160,8 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
             m *= static_cast<double>(excGain[i]);
         if (tiltDb != 0.0)
             m *= std::exp(tiltExp * logF1k_[i]);
-        const double cr = (m * std::cos(scratchPhase_[i])) * calib;
-        const double ci = (m * std::sin(scratchPhase_[i])) * calib;
+        const double cr = (m * phaseCos_[i]) * calib;
+        const double ci = (m * phaseSin_[i]) * calib;
         comp.Br[i] = static_cast<float>(cr); // the coupling until its contact ends (startFreePhase)
         comp.Bi[i] = static_cast<float>(ci);
         if (contact != nullptr)
@@ -3598,10 +3652,11 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
     const int oldAct = nAct_;
     int a = 0;
     std::fill(actPos_.begin(), actPos_.end(), -1);
+    const BelowHypot below(threshold);
     for (int i = 0; i < n_; ++i)
     {
         const size_t k = size_t(i);
-        if (std::hypot(zr_[k], zi_[k]) < threshold)
+        if (below(zr_[k], zi_[k]))
         {
             // Below the skip threshold for this segment (as Engine): what it holds is dropped.
             for (auto& c : components_)

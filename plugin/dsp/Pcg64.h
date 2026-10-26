@@ -65,6 +65,12 @@ public:
 
     static u128 make128(uint64_t hi, uint64_t lo) noexcept { return (static_cast<u128>(hi) << 64) | lo; }
 
+    // The same state: the same outputs from here on.
+    bool operator==(const Pcg64& o) const noexcept
+    {
+        return state_ == o.state_ && inc_ == o.inc_ && hasU32_ == o.hasU32_ && u32_ == o.u32_;
+    }
+
 private:
     static constexpr u128 kMultiplier =
         (static_cast<u128>(0x2360ED051FC65DA4ULL) << 64) | static_cast<u128>(0x4385DF649FCCF645ULL);
