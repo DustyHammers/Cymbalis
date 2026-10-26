@@ -227,8 +227,8 @@ std::unique_ptr<juce::ChildProcess> startSampler (int seconds)
     return nullptr;
 }
 
-// The sample's summary: the functions most often at the top of a stack, over all threads,
-// without the ones that wait (an idle thread), in % of one core.
+// The sample's call graph, cut down to where the time goes: every frame (and thread) that was
+// busy, not waiting, for at least 2 % of the samples, with that share of one core.
 juce::String readProfile (juce::ChildProcess* sampler)
 {
     juce::String out;
@@ -240,36 +240,79 @@ juce::String readProfile (juce::ChildProcess* sampler)
     const auto lines = juce::StringArray::fromLines (profileFile().loadFileAsString());
     if (lines.size() < 5)
         return "profile: no sample output (" + output.trim() + ")\n";
-    static const char* const idle[] = { "mach_msg2_trap", "mach_msg_trap", "__psynch_cvwait", "__semwait_signal", "__workq_kernreturn",
-                                        "kevent", "__select", "semaphore_wait_trap", "semaphore_timedwait_trap", "__ulock_wait",
-                                        "__psynch_mutexwait", "nanosleep", "__sigsuspend", "read", "__wait4" };
-    int perThread = 0; // samples of one thread: the first thread's count in the call graph
-    bool inGraph = false, inTop = false;
-    int shown = 0;
-    out << "profile: the hit display running (" << kProfileSeconds
-        << " s, sampled every 1 ms), the functions most often at the top of a stack, waits left out:\n";
+
+    static const char* const waits[] = { "mach_msg2_trap", "mach_msg_trap", "__psynch_cvwait", "__semwait_signal", "__workq_kernreturn",
+                                         "kevent", "kevent64", "kevent_id", "__select", "semaphore_wait_trap", "semaphore_timedwait_trap",
+                                         "__ulock_wait", "__ulock_wait2", "__psynch_mutexwait", "nanosleep", "__sigsuspend", "read", "__wait4",
+                                         "poll", "__pthread_kill", "swtch_pri" };
+    struct Frame
+    {
+        int depth = 0, count = 0, waiting = 0, parent = -1, childCounts = 0;
+        juce::String line, name;
+    };
+    std::vector<Frame> frames;
+    std::vector<int> stack;
+    int perThread = 0; // samples of one thread
+    bool inGraph = false;
     for (const auto& line : lines)
     {
         if (line.startsWith ("Call graph:"))
-            inGraph = true;
-        else if (inGraph && perThread == 0 && line.contains ("Thread_"))
-            perThread = juce::jmax (1, line.trim().getIntValue());
-        else if (line.startsWith ("Sort by top of stack"))
-            inTop = true;
-        else if (inTop && (line.trim().isEmpty() || line.startsWith ("Binary Images")))
-            break;
-        else if (inTop)
         {
-            const auto t = line.trim();
-            const auto name = t.upToFirstOccurrenceOf ("  ", false, false);
-            bool waits = false;
-            for (auto* w : idle)
-                waits = waits || name == w;
-            const int count = t.fromLastOccurrenceOf (" ", false, false).getIntValue();
-            if (waits || count <= 0 || ++shown > 40)
-                continue;
-            out << juce::String::formatted ("  %6.1f %%  ", 100.0 * count / juce::jmax (1, perThread)) << t.dropLastCharacters (juce::String (count).length()).trimEnd() << "\n";
+            inGraph = true;
+            continue;
         }
+        if (! inGraph)
+            continue;
+        if (line.trim().isEmpty() || line.startsWith ("Total number in stack"))
+            break;
+        const int digit = line.indexOfAnyOf ("0123456789");
+        if (digit < 0)
+            continue;
+        Frame f;
+        f.depth = digit;
+        const auto rest = line.substring (digit);
+        f.count = rest.getIntValue();
+        f.name = rest.fromFirstOccurrenceOf (" ", false, false).upToFirstOccurrenceOf ("  ", false, false).trim();
+        f.line = line.substring (juce::jmin (digit, 4)).trimEnd();
+        if (perThread == 0 && f.name.startsWith ("Thread_"))
+            perThread = f.count;
+        while (! stack.empty() && frames[(size_t) stack.back()].depth >= f.depth)
+            stack.pop_back();
+        f.parent = stack.empty() ? -1 : stack.back();
+        if (f.parent >= 0)
+            frames[(size_t) f.parent].childCounts += f.count;
+        stack.push_back ((int) frames.size());
+        frames.push_back (f);
+    }
+    if (frames.empty() || perThread <= 0)
+        return "profile: no call graph in the sample output\n";
+    // Waiting samples, from the leaves up: a frame's own samples (at the top of the stack) count
+    // as waiting when it is a wait.
+    for (size_t i = frames.size(); i-- > 0;)
+    {
+        auto& f = frames[i];
+        bool isWait = false;
+        for (auto* w : waits)
+            isWait = isWait || f.name == w;
+        if (isWait)
+            f.waiting += f.count - f.childCounts;
+        if (f.parent >= 0)
+            frames[(size_t) f.parent].waiting += f.waiting;
+    }
+    out << "profile: the hit display running, " << kProfileSeconds << " s sampled every 1 ms (" << perThread
+        << " samples per thread); frames busy (not waiting) for at least 2 % of them, as % of one core:\n";
+    int shown = 0;
+    for (const auto& f : frames)
+    {
+        const int busy = f.count - f.waiting;
+        if (100 * busy < 2 * perThread)
+            continue;
+        if (++shown > 160)
+        {
+            out << "  ...\n";
+            break;
+        }
+        out << juce::String::formatted ("  %5.1f %% ", 100.0 * busy / perThread) << f.line.substring (0, 170) << "\n";
     }
 #else
     juce::ignoreUnused (sampler);
@@ -546,8 +589,11 @@ void HitTiming::timerCallback()
         {
             if (steps[next].profile)
             {
-                if (sampler == nullptr && run->clock.recording)
+                if (! samplerStarted && run->clock.recording)
+                {
+                    samplerStarted = true;
                     sampler = startSampler (kProfileSeconds);
+                }
                 if (! run->done)
                     return;
                 run->audio.join();

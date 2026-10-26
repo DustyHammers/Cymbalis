@@ -72,5 +72,6 @@ private:
     size_t lingerPaints = 0;
     double lingerCpuMs = 0.0;
     std::unique_ptr<juce::ChildProcess> sampler;
+    bool samplerStarted = false;
     juce::String profile;
 };
