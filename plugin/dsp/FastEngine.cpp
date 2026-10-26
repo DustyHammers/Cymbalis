@@ -1,5 +1,6 @@
 #include "FastEngine.h"
 #include "EngineProfile.h"
+#include "VecMath.h"
 
 #include <algorithm>
 #include <climits>
@@ -151,6 +152,32 @@ void complexPower(double r, double im, int64_t m, double& outR, double& outI)
     }
     outR = ar;
     outI = ai;
+}
+
+// complexPower for n modes with the same m, two modes per vector (the same operations).
+void complexPowerArray(const double* r, const double* im, int64_t m, double* outR, double* outI, int n)
+{
+    int i = 0;
+    for (; i + 2 <= n; i += 2)
+    {
+        v2d br = ld2(r + i), bi = ld2(im + i), ar = {1.0, 1.0}, ai = {0.0, 0.0};
+        for (int64_t e = m; e > 0; e >>= 1)
+        {
+            if (e & 1)
+            {
+                const v2d t = ar * br - ai * bi;
+                ai = ar * bi + ai * br;
+                ar = t;
+            }
+            const v2d t = br * br - bi * bi;
+            bi = 2.0 * br * bi;
+            br = t;
+        }
+        st2(outR + i, ar);
+        st2(outI + i, ai);
+    }
+    for (; i < n; ++i)
+        complexPower(r[i], im[i], m, outR[i], outI[i]);
 }
 
 // cos and sin of a small angle by their series to x^11 (error below 1e-16 for |x| <= 0.25),
@@ -432,6 +459,8 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
     scratchPkT_.resize(n);
     phaseCos_.resize(n);
     phaseSin_.resize(n);
+    for (auto* v : {&vmArg_, &vmArg2_, &vmExp_, &vmSin_, &vmCos_, &vmSin2_, &vmCos2_})
+        v->resize(n);
     rng_ = b.renderStream; // the strike-phase sequence starts from this preset's seed
     aheadDone_ = 0;
 }
@@ -1430,10 +1459,13 @@ void FastEngine::cymbalWideAtStrike(double t) noexcept
         const int j = static_cast<int>(freePos_ % K_);
         const double frac = j == 0 ? 1.0 : static_cast<double>(j) / static_cast<double>(K_);
         for (size_t k = 0; k < n; ++k)
+            vmArg_[k] = b.twoPi * lfoUnit_[k] * tau + b.lfoPhase[k];
+        vecmath::sinCosArray(vmArg_.data(), vmSin_.data(), vmCos_.data(), n_);
+        for (size_t k = 0; k < n; ++k)
         {
             if (wC_[k] == 0.0)
                 continue;
-            const double c = std::cos(b.twoPi * lfoUnit_[k] * tau + b.lfoPhase[k]);
+            const double c = vmCos_[k];
             const int a = freeStarted_ ? actPos_[k] : -1;
             if (a >= 0)
                 W_[k] = phiW0_[size_t(a)] + (phiW_[size_t(a)] - phiW0_[size_t(a)]) * frac;
@@ -1446,16 +1478,19 @@ void FastEngine::cymbalWideAtStrike(double t) noexcept
     }
     applyPendingWander(t);
     if (contactRot_)
+    {
+        vecmath::sinCosArray(W_.data(), vmSin_.data(), vmCos_.data(), n_);
         for (size_t k = 0; k < n; ++k)
         {
             const double gain = modeGain(k, lfSm_, mfSm_);
-            const double ur = W_[k] != 0.0 ? gain * std::cos(W_[k]) : gain;
-            const double ui = W_[k] != 0.0 ? gain * std::sin(W_[k]) : 0.0;
+            const double ur = W_[k] != 0.0 ? gain * vmCos_[k] : gain;
+            const double ui = W_[k] != 0.0 ? gain * vmSin_[k] : 0.0;
             cuLr_[k] = ur * gainL_[k];
             cuLi_[k] = ui * gainL_[k];
             cuRr_[k] = ur * gainR_[k];
             cuRi_[k] = ui * gainR_[k];
         }
+    }
 }
 
 // Every mode's amplitude at t0 and t1 (A0, A1, mode order): the components summed four
@@ -1751,9 +1786,17 @@ void FastEngine::rebaseComponents() noexcept
     for (int a = 0; a < nAct_; ++a)
     {
         const size_t s = size_t(actIdx_[size_t(a)]);
-        const double e = std::exp(negLambda_[s] * oscWash_ * d);
-        rotR_[s] = static_cast<float>(std::cos(omega_[s] * d) * e);
-        rotI_[s] = static_cast<float>(std::sin(omega_[s] * d) * e);
+        vmArg_[size_t(a)] = negLambda_[s] * oscWash_ * d;
+        vmArg2_[size_t(a)] = omega_[s] * d;
+    }
+    vecmath::expArray(vmArg_.data(), vmExp_.data(), nAct_);
+    vecmath::sinCosArray(vmArg2_.data(), vmSin_.data(), vmCos_.data(), nAct_);
+    for (int a = 0; a < nAct_; ++a)
+    {
+        const size_t s = size_t(actIdx_[size_t(a)]);
+        const double e = vmExp_[size_t(a)];
+        rotR_[s] = static_cast<float>(vmCos_[size_t(a)] * e);
+        rotI_[s] = static_cast<float>(vmSin_[size_t(a)] * e);
     }
     // The energy cascade's changes: this block's, the part rendered so far (all of it at a
     // control point, where they belong to the block that ends there), and the gains of the
@@ -1866,6 +1909,20 @@ void FastEngine::setDecay(Component& c, int mode) noexcept
     c.invDmul[s] = static_cast<float>(1.0 / dm);
 }
 
+void FastEngine::setDecayAll(Component& c) noexcept
+{
+    const size_t n = size_t(n_);
+    for (size_t s = 0; s < n; ++s)
+        vmArg_[s] = negLambda_[s] * c.epsK[s] * static_cast<double>(K_) / sr_;
+    vecmath::expArray(vmArg_.data(), vmExp_.data(), n_);
+    for (size_t s = 0; s < n; ++s)
+    {
+        const double dm = vmExp_[s];
+        c.dmul[s] = static_cast<float>(dm);
+        c.invDmul[s] = static_cast<float>(1.0 / dm);
+    }
+}
+
 // Adds `from` into `into`; both refer to the same sample. The decay becomes the
 // energy-weighted mean per mode. dropEnvelopes: what is left of both onset envelopes is
 // dropped (used only when no settled pair exists).
@@ -1883,10 +1940,10 @@ void FastEngine::mergeComponents(Component& into, Component& from, bool dropEnve
             into.epsK[s] = (ea * into.epsK[s] + eb * from.epsK[s]) / (ea + eb);
         into.Br[s] = static_cast<float>(ar + br);
         into.Bi[s] = static_cast<float>(ai + bi);
-        setDecay(into, k);
         eInto += ea;
         eFrom += eb;
     }
+    setDecayAll(into);
     if (eInto + eFrom > 0.0)
         into.eps = (eInto * into.eps + eFrom * from.eps) / (eInto + eFrom);
     into.order = std::max(into.order, from.order);
@@ -2143,7 +2200,10 @@ void FastEngine::restartFrames(Component& c, double elapsed) noexcept
     }
     c.frameBlocksLeft = std::min(left, frameBlocks_);
     for (int k = 0; k < n_; ++k)
-        c.fd[size_t(k)] = static_cast<float>(std::exp(negLambda_[size_t(k)] * c.epsK[size_t(k)] * phase));
+        vmArg_[size_t(k)] = negLambda_[size_t(k)] * c.epsK[size_t(k)] * phase;
+    vecmath::expArray(vmArg_.data(), vmExp_.data(), n_);
+    for (int k = 0; k < n_; ++k)
+        c.fd[size_t(k)] = static_cast<float>(vmExp_[size_t(k)]);
 }
 
 // LF weight of every mode, 1 - sigmoid at lf_cutoff_hz.
@@ -2708,8 +2768,7 @@ FastEngine::Component* FastEngine::cascadeComponent() noexcept
     std::fill(c.Br.begin(), c.Br.end(), 0.0f);
     std::fill(c.Bi.begin(), c.Bi.end(), 0.0f);
     std::fill(c.D.begin(), c.D.end(), 1.0f);
-    for (int k = 0; k < n_; ++k)
-        setDecay(c, k);
+    setDecayAll(c);
     cascComp_ = static_cast<int>(slot - components_.data());
     return slot;
 }
@@ -3007,11 +3066,9 @@ void FastEngine::drawPhasesAhead(int count) noexcept
     const double range = b.phaseHigh - b.phaseLow;
     const int end = std::min(n_, aheadDone_ + count);
     for (int i = aheadDone_; i < end; ++i)
-    {
-        const double phase = aheadRng_.uniform(b.phaseLow, range);
-        phaseCos_[size_t(i)] = std::cos(phase);
-        phaseSin_[size_t(i)] = std::sin(phase);
-    }
+        scratchPhase_[size_t(i)] = aheadRng_.uniform(b.phaseLow, range);
+    vecmath::sinCosArray(scratchPhase_.data() + aheadDone_, phaseSin_.data() + aheadDone_,
+                         phaseCos_.data() + aheadDone_, end - aheadDone_);
     aheadDone_ = end;
 }
 
@@ -3137,11 +3194,7 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
         npzLevel = numpyScalarPower(velocity, b.edgeNpz.levelVelGainPower);
         for (size_t i = 0; i < n; ++i)
             scratchPhase_[i] = rng_.uniform(b.phaseLow, range);
-        for (size_t i = 0; i < n; ++i)
-        {
-            phaseCos_[i] = std::cos(scratchPhase_[i]);
-            phaseSin_[i] = std::sin(scratchPhase_[i]);
-        }
+        vecmath::sinCosArray(scratchPhase_.data(), phaseSin_.data(), phaseCos_.data(), n_);
         CYM_PROF_END(strikeNpz);
     }
     CYM_PROF_BEGIN(strikeCoupling);
@@ -3152,6 +3205,12 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     // gain (f / 1 kHz) ^ (tiltDb ln 10 / (20 ln 2)) per mode.
     const double tiltDb = brightnessTiltDb(slotCurve_[size_t(slotIndex)], velocity);
     const double tiltExp = tiltDb * 0.16609640474436813; // ln 10 / (20 ln 2)
+    if (tiltDb != 0.0)
+    {
+        for (size_t i = 0; i < n; ++i)
+            vmArg_[i] = tiltExp * logF1k_[i];
+        vecmath::expArray(vmArg_.data(), vmExp_.data(), n_);
+    }
     for (size_t i = 0; i < n; ++i)
     {
         double m = npzEdge ? scratchBellVel_[i] * npzLevel
@@ -3159,7 +3218,7 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
         if (excGain != nullptr)
             m *= static_cast<double>(excGain[i]);
         if (tiltDb != 0.0)
-            m *= std::exp(tiltExp * logF1k_[i]);
+            m *= vmExp_[i];
         const double cr = (m * phaseCos_[i]) * calib;
         const double ci = (m * phaseSin_[i]) * calib;
         comp.Br[i] = static_cast<float>(cr); // the coupling until its contact ends (startFreePhase)
@@ -3189,8 +3248,7 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     for (size_t i = 0; i < n; ++i)
         comp.epsK[i] = comp.eps;
     if (!comp.pending)
-        for (int k = 0; k < n_; ++k) // without a contact phase the decay starts now
-            setDecay(comp, k);
+        setDecayAll(comp); // without a contact phase the decay starts now
     CYM_PROF_END(strikeDecay);
 
     ++strikesApplied_;
@@ -3564,12 +3622,11 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
         older = older || (c.used && !c.pending);
     if (m > 0 && older)
     {
+        complexPowerArray(stepR_.data(), stepI_.data(), m, vmCos_.data(), vmSin_.data(), n_);
         for (int k = 0; k < n_; ++k)
         {
-            double ur, ui;
-            complexPower(stepR_[size_t(k)], stepI_[size_t(k)], m, ur, ui);
-            rotR_[size_t(k)] = static_cast<float>(ur);
-            rotI_[size_t(k)] = static_cast<float>(ui);
+            rotR_[size_t(k)] = static_cast<float>(vmCos_[size_t(k)]);
+            rotI_[size_t(k)] = static_cast<float>(vmSin_[size_t(k)]);
         }
         for (auto& c : components_)
             if (c.used && !c.pending)
@@ -3591,11 +3648,11 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
             multiplyAmplitudes(c, H32r_.data(), H32i_.data());
             continue;
         }
+        complexPowerArray(stepR_.data(), stepI_.data(), extra, vmCos_.data(), vmSin_.data(), n_);
         for (int k = 0; k < n_; ++k)
         {
             const size_t s = size_t(k);
-            double er, ei;
-            complexPower(stepR_[s], stepI_[s], extra, er, ei);
+            const double er = vmCos_[s], ei = vmSin_[s];
             const double hr = Hr_[s] * er - Hi_[s] * ei, hi = Hr_[s] * ei + Hi_[s] * er;
             const double cr = c.Br[s], ci = c.Bi[s];
             c.Br[s] = static_cast<float>(cr * hr - ci * hi);
@@ -3611,8 +3668,7 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
             continue;
         if (c.pending)
         {
-            for (int k = 0; k < n_; ++k)
-                setDecay(c, k);
+            setDecayAll(c);
             c.pending = false;
             if (c.envOn) // the envelope scales what the contact left
             {
@@ -3653,6 +3709,20 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
     int a = 0;
     std::fill(actPos_.begin(), actPos_.end(), -1);
     const BelowHypot below(threshold);
+    // Per mode, two at a time: the LFO phase's cos and sin here (vmCos_, vmSin_) and the
+    // wander phase W's (vmCos2_, vmSin2_), W in vmArg2_.
+    if (wanderOn_)
+    {
+        for (int i = 0; i < n_; ++i)
+            vmArg_[size_t(i)] = b.twoPi * lfoUnit_[size_t(i)] * tau + b.lfoPhase[size_t(i)];
+        vecmath::sinCosArray(vmArg_.data(), vmSin_.data(), vmCos_.data(), n_);
+    }
+    for (int i = 0; i < n_; ++i)
+    {
+        const size_t k = size_t(i);
+        vmArg2_[k] = wanderOn_ && wC_[k] != 0.0 ? W_[k] + wC_[k] * gW * (vmCos_[k] - cW_[k]) : W_[k];
+    }
+    vecmath::sinCosArray(vmArg2_.data(), vmSin2_.data(), vmCos2_.data(), n_);
     for (int i = 0; i < n_; ++i)
     {
         const size_t k = size_t(i);
@@ -3677,13 +3747,12 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
         double rotR = 1.0, rotI = 0.0;
         if (wanderOn_ && wC_[k] != 0.0)
         {
-            const double arg = b.twoPi * lfoUnit_[k] * tau + b.lfoPhase[k];
-            cr_[d] = std::cos(arg);
-            ci_[d] = std::sin(arg);
-            const double W = W_[k] + wC_[k] * gW * (cr_[d] - cW_[k]);
+            cr_[d] = vmCos_[k];
+            ci_[d] = vmSin_[k];
+            const double W = vmArg2_[k];
             phiW0_[d] = phiW_[d] = W;
-            rotR = std::cos(W);
-            rotI = std::sin(W);
+            rotR = vmCos2_[k];
+            rotI = vmSin2_[k];
         }
         else
         {
@@ -3693,8 +3762,8 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
             phiW0_[d] = phiW_[d] = W_[k];
             if (W_[k] != 0.0)
             {
-                rotR = std::cos(W_[k]);
-                rotI = std::sin(W_[k]);
+                rotR = vmCos2_[k];
+                rotI = vmSin2_[k];
             }
         }
         qr_[d] = 1.0;

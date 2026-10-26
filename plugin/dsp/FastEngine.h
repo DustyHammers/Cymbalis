@@ -568,6 +568,11 @@ private:
     Pcg64 aheadFrom_, aheadRng_;
     int aheadDone_ = 0; // phases drawn ahead so far
     std::vector<double> phaseCos_, phaseSin_;
+
+    // Per-mode arguments and results of exp, sin and cos, evaluated two at a time
+    // (VecMath.h) in the strike's per-mode loops (preallocated, n each).
+    std::vector<double> vmArg_, vmArg2_, vmExp_, vmSin_, vmCos_, vmSin2_, vmCos2_;
+    void setDecayAll(Component& c) noexcept; // setDecay for every mode
 };
 
 } // namespace cymbalis
