@@ -7,6 +7,16 @@
 // k_cos.c and the medium case of e_rem_pio2.c), each within 1 ulp, so a result is libm's or
 // one of its neighbours. Arguments outside the ranges below (and NaN or infinity) are left
 // to libm itself, one value at a time.
+//
+// What FastEngine uses (FastEngine.cpp): expArray in rebaseComponents (the shared
+// oscillator's decay to the strike), setDecayAll (a strike's, a merge's and the cascade
+// component's own decay), restartFrames (the in-frame decay) and strike (the brightness
+// tilt); sinCosArray in rebaseComponents (its rotation), cymbalWideAtStrike (the LFO phase,
+// the contact factors), startFreePhase (the LFO and wander phases, the oscillator anchors),
+// drawPhasesAhead and strike (the strike phases). Everything else here serves those two:
+// expCore and sinCosCore are the vector algorithms, anyOutside picks the lanes for libm, and
+// load2, store2, splat2, roundNearest and selectBits are their helpers. Nothing else in
+// FastEngine (the control points, the kernel) uses this header.
 #pragma once
 
 #include <cmath>
