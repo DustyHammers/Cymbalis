@@ -13,6 +13,7 @@
 #include <utility>
 
 #include <pthread.h>
+#include <unistd.h>
 #include <sys/resource.h>
 #include <time.h>
 #if JUCE_MAC
@@ -204,6 +205,76 @@ double windowServerCpuMs()
     }
 #endif
     return -1.0;
+}
+
+constexpr int kProfileSeconds = 2;
+#if JUCE_MAC
+juce::File profileFile() { return juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("cymbalis_hits.sample.txt"); }
+#endif
+
+// Starts macOS's sample tool on this process for `seconds`, every 1 ms, into profileFile().
+std::unique_ptr<juce::ChildProcess> startSampler (int seconds)
+{
+    auto p = std::make_unique<juce::ChildProcess>();
+#if JUCE_MAC
+    profileFile().deleteFile();
+    if (p->start (juce::StringArray { "/usr/bin/sample", juce::String (getpid()), juce::String (seconds), "1", "-mayDie", "-file",
+                                      profileFile().getFullPathName() }))
+        return p;
+#else
+    juce::ignoreUnused (seconds);
+#endif
+    return nullptr;
+}
+
+// The sample's summary: the functions most often at the top of a stack, over all threads,
+// without the ones that wait (an idle thread), in % of one core.
+juce::String readProfile (juce::ChildProcess* sampler)
+{
+    juce::String out;
+#if JUCE_MAC
+    if (sampler == nullptr)
+        return "profile: sample could not be started\n";
+    const auto output = sampler->readAllProcessOutput();
+    sampler->waitForProcessToFinish (20000);
+    const auto lines = juce::StringArray::fromLines (profileFile().loadFileAsString());
+    if (lines.size() < 5)
+        return "profile: no sample output (" + output.trim() + ")\n";
+    static const char* const idle[] = { "mach_msg2_trap", "mach_msg_trap", "__psynch_cvwait", "__semwait_signal", "__workq_kernreturn",
+                                        "kevent", "__select", "semaphore_wait_trap", "semaphore_timedwait_trap", "__ulock_wait",
+                                        "__psynch_mutexwait", "nanosleep", "__sigsuspend", "read", "__wait4" };
+    int perThread = 0; // samples of one thread: the first thread's count in the call graph
+    bool inGraph = false, inTop = false;
+    int shown = 0;
+    out << "profile: the hit display running (" << kProfileSeconds
+        << " s, sampled every 1 ms), the functions most often at the top of a stack, waits left out:\n";
+    for (const auto& line : lines)
+    {
+        if (line.startsWith ("Call graph:"))
+            inGraph = true;
+        else if (inGraph && perThread == 0 && line.contains ("Thread_"))
+            perThread = juce::jmax (1, line.trim().getIntValue());
+        else if (line.startsWith ("Sort by top of stack"))
+            inTop = true;
+        else if (inTop && (line.trim().isEmpty() || line.startsWith ("Binary Images")))
+            break;
+        else if (inTop)
+        {
+            const auto t = line.trim();
+            const auto name = t.upToFirstOccurrenceOf ("  ", false, false);
+            bool waits = false;
+            for (auto* w : idle)
+                waits = waits || name == w;
+            const int count = t.fromLastOccurrenceOf (" ", false, false).getIntValue();
+            if (waits || count <= 0 || ++shown > 40)
+                continue;
+            out << juce::String::formatted ("  %6.1f %%  ", 100.0 * count / juce::jmax (1, perThread)) << t.dropLastCharacters (juce::String (count).length()).trimEnd() << "\n";
+        }
+    }
+#else
+    juce::ignoreUnused (sampler);
+#endif
+    return out;
 }
 
 juce::String cpuSummary()
@@ -435,6 +506,10 @@ HitTiming::HitTiming (std::function<void (int)> f) : finished (std::move (f))
             steps.push_back ({ Editor::otherIdle, block, realtime, false });
             steps.push_back ({ Editor::none, block, realtime, false });
         }
+#if JUCE_MAC
+    // Last, not timed: where the process's CPU goes while the hit display runs.
+    steps.push_back ({ Editor::own, kBlocks[0], false, false, true });
+#endif
     startTimer (50);
 }
 
@@ -469,6 +544,18 @@ void HitTiming::timerCallback()
             return;
         case 2:
         {
+            if (steps[next].profile)
+            {
+                if (sampler == nullptr && run->clock.recording)
+                    sampler = startSampler (kProfileSeconds);
+                if (! run->done)
+                    return;
+                run->audio.join();
+                profile = readProfile (sampler.get());
+                sampler.reset();
+                finishRun();
+                return;
+            }
             if (! run->done)
                 return;
             run->audio.join();
@@ -609,6 +696,8 @@ void HitTiming::report()
         }
         i = end;
     }
+    if (profile.isNotEmpty())
+        std::printf ("\n%s", profile.toRawUTF8());
     std::fflush (stdout);
     results.clear();
     if (finished)

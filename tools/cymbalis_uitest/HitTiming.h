@@ -54,6 +54,7 @@ private:
         int block;
         bool realtime;
         bool synchronous; // the window drawn with synchronous CoreGraphics, whatever the editor asks
+        bool profile = false; // not timed: the process sampled with macOS's sample tool instead
     };
 
     void timerCallback() override;
@@ -70,4 +71,6 @@ private:
     double windowServerStartMs = -1.0;
     size_t lingerPaints = 0;
     double lingerCpuMs = 0.0;
+    std::unique_ptr<juce::ChildProcess> sampler;
+    juce::String profile;
 };
