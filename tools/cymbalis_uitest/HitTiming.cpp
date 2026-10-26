@@ -72,8 +72,9 @@ struct PaintTimer final : public juce::CachedComponentImage
 // physical pixel scale are kept too.
 struct PaintClock final : public juce::DocumentWindow
 {
-    // Only the runs with an editor put their window on the desktop.
-    explicit PaintClock (bool onDesktop) : DocumentWindow ("CymbalisUiTest hits", juce::Colours::black, 0, onDesktop)
+    // Only the runs with an editor put this window on the desktop (Run), with the flags the
+    // plugin wrappers would use.
+    PaintClock() : DocumentWindow ("CymbalisUiTest hits", juce::Colours::black, 0, false)
     {
         setUsingNativeTitleBar (true);
         holder.setCachedComponentImage (new PaintTimer (holder, recording, times, [this] (juce::Graphics& g) {
@@ -226,12 +227,12 @@ juce::String cpuSummary()
     return s;
 }
 
-const char* caseName (HitTiming::Editor e, bool after)
+const char* caseName (HitTiming::Editor e, bool after, bool synchronous)
 {
     switch (e)
     {
         case HitTiming::Editor::none: return after ? "editor closed (after)" : "editor closed (before)";
-        case HitTiming::Editor::own: return "editor open, hit display";
+        case HitTiming::Editor::own: return synchronous ? "hit display, synchronous" : "editor open, hit display";
         case HitTiming::Editor::otherFed: return "editor open, dummy paint";
         case HitTiming::Editor::otherIdle: return "editor open, no hits";
     }
@@ -242,7 +243,7 @@ const char* caseName (HitTiming::Editor e, bool after)
 struct HitTiming::Result
 {
     Editor editor = Editor::none;
-    bool after = false;
+    bool after = false, synchronous = false;
     int block = 0;
     bool realtime = false, wasRealtime = false;
     Stats wall, cpu;
@@ -251,13 +252,16 @@ struct HitTiming::Result
     double areaPercent = 0.0, marksMean = 0.0;
     int marksMin = 0;
     double regionIntoImageMs = -1.0, editorIntoImageMs = -1.0;
+    int paintsAfter = -1;          // the hit display's paints in the second from 0.6 s after the last hit
+    double cpuAfter = 0.0;         // the process's CPU over that second, % of one core
+    int timerAfter = -1;           // whether the hit display's own timer still ran at its end (1) or not (0)
     juce::Rectangle<int> lastClip;
     float scale = 0.0f;
 };
 
 struct HitTiming::Run final : private juce::Timer
 {
-    Run (Editor kind, int blockSize, bool rt) : editorKind (kind), block (blockSize), realtime (rt), clock (kind != Editor::none)
+    Run (Editor kind, int blockSize, bool rt, bool synchronous) : editorKind (kind), block (blockSize), realtime (rt)
     {
         processor.prepareToPlay (kRate, block);
         if (kind == Editor::none)
@@ -275,6 +279,11 @@ struct HitTiming::Run final : private juce::Timer
         clock.holder.addAndMakeVisible (*editor);
         clock.watch (findChild<cymbalis::ui::HitLayer> (*editor));
         clock.setContentNonOwned (&clock.holder, true);
+        // As detail::PluginUtilities::getDesktopFlags: asynchronous CoreGraphics in a layer-backed
+        // view unless the editor asks for synchronous drawing (or this case forces it).
+        const bool sync = synchronous || ! editor->wantsLayerBackedView();
+        clock.addToDesktop (clock.getDesktopWindowStyleFlags()
+                            | (sync ? juce::ComponentPeer::windowRequiresSynchronousCoreGraphicsRendering : 0));
         clock.setTopLeftPosition (40, 40);
         clock.setVisible (true);
     }
@@ -415,11 +424,17 @@ struct HitTiming::Run final : private juce::Timer
 
 HitTiming::HitTiming (std::function<void (int)> f) : finished (std::move (f))
 {
-    // Each block size, at normal priority and then real-time: the five cases in turn.
+    // Each block size, at normal priority and then real-time: the cases in turn.
     for (const bool realtime : { false, true })
         for (const int block : kBlocks)
-            for (const auto e : { Editor::none, Editor::own, Editor::otherFed, Editor::otherIdle, Editor::none })
-                steps.push_back ({ e, block, realtime });
+        {
+            steps.push_back ({ Editor::none, block, realtime, false });
+            steps.push_back ({ Editor::own, block, realtime, false });
+            steps.push_back ({ Editor::own, block, realtime, true });
+            steps.push_back ({ Editor::otherFed, block, realtime, false });
+            steps.push_back ({ Editor::otherIdle, block, realtime, false });
+            steps.push_back ({ Editor::none, block, realtime, false });
+        }
     startTimer (50);
 }
 
@@ -436,7 +451,7 @@ void HitTiming::timerCallback()
         case 0: // the next case; an editor's first paint renders its cached images
         {
             const auto& s = steps[next];
-            run = std::make_unique<Run> (s.editor, s.block, s.realtime);
+            run = std::make_unique<Run> (s.editor, s.block, s.realtime, s.synchronous);
             phaseStartMs = now;
             phase = 1;
             return;
@@ -462,6 +477,7 @@ void HitTiming::timerCallback()
             Result r;
             r.editor = s.editor;
             r.after = s.editor == Editor::none && next > 0 && steps[next - 1].editor != Editor::none;
+            r.synchronous = s.synchronous;
             r.block = s.block;
             r.realtime = s.realtime;
             r.wasRealtime = run->wasRealtime;
@@ -480,24 +496,57 @@ void HitTiming::timerCallback()
             r.marksMean = r.paints.n > 0 ? (double) c.marksSum / (double) r.paints.n : 0.0;
             r.lastClip = c.lastClip;
             r.scale = c.scale;
-            if (s.editor == Editor::own && ! s.realtime && s.block == kBlocks[0] && r.paints.n > 0)
+            if (s.editor == Editor::own && ! s.synchronous && ! s.realtime && s.block == kBlocks[0] && r.paints.n > 0)
             {
                 const auto [region, whole] = run->paintIntoImage (10);
                 r.regionIntoImageMs = region.median;
                 r.editorIntoImageMs = whole.median;
             }
             results.push_back (r);
-            run->clock.setVisible (false);
-            run.reset();
-            phase = ++next < steps.size() ? 0 : 3;
+            if (s.editor == Editor::own)
+            {
+                phaseStartMs = now;
+                phase = 3;
+                return;
+            }
+            finishRun();
             return;
         }
-        case 3:
+        case 3: // the hit display after the last hit: its marks end within 0.5 s, then nothing
+                // should paint; count over the second from 0.6 s after
+            if (now - phaseStartMs < 600.0)
+                return;
+            lingerPaints = run->clock.hitTimes.size();
+            lingerCpuMs = processCpuMs();
+            run->clock.recording = true;
+            phaseStartMs = now;
+            phase = 4;
+            return;
+        case 4:
+            if (now - phaseStartMs < 1000.0)
+                return;
+            run->clock.recording = false;
+            if (run->clock.hits != nullptr)
+                // The hit layer's timer is a private base; a C-style cast reaches it (as the
+                // standard allows for an inaccessible base class) to read whether it runs.
+                results.back().timerAfter = ((const juce::Timer*) run->clock.hits)->isTimerRunning() ? 1 : 0;
+            results.back().paintsAfter = (int) (run->clock.hitTimes.size() - lingerPaints);
+            results.back().cpuAfter = 100.0 * (processCpuMs() - lingerCpuMs) / (now - phaseStartMs);
+            finishRun();
+            return;
+        case 5:
             stopTimer();
             report();
             return;
         default: return;
     }
+}
+
+void HitTiming::finishRun()
+{
+    run->clock.setVisible (false);
+    run.reset();
+    phase = ++next < steps.size() ? 0 : 5;
 }
 
 void HitTiming::report()
@@ -506,28 +555,31 @@ void HitTiming::report()
                  1000.0 * kHitEverySeconds, kRate / 1000.0, kTimedSeconds);
     std::printf ("  CPU: %s\n", cpuSummary().toRawUTF8());
     bool ran = true;
-    for (size_t i = 0; i < results.size(); i += 5)
+    for (size_t i = 0; i < results.size();)
     {
         const auto& first = results[i];
+        size_t end = i;
+        while (end < results.size() && results[end].block == first.block && results[end].realtime == first.realtime)
+            ++end;
         const double budget = 1000.0 * first.block / kRate;
         std::printf ("\n  audio thread %s, %d-sample blocks (budget %.3f ms)\n",
                      ! first.realtime ? "at normal priority" : first.wasRealtime ? "real-time" : "real-time REFUSED (normal priority)",
                      first.block, budget);
         std::printf ("    %-26s %s\n", "", "    processBlock (ms)          worst   its CPU (ms)     rest of the   WindowServer");
         std::printf ("    %-26s %s\n", "case", " median     p99   worst   / budget  median     p99   process       (whole run)");
-        for (size_t j = i; j < i + 5 && j < results.size(); ++j)
+        for (size_t j = i; j < end; ++j)
         {
             const auto& r = results[j];
             ran = ran && r.wall.n > 0;
             char ws[32] = "-";
             if (r.windowServer >= 0.0)
                 std::snprintf (ws, sizeof (ws), "%5.1f %%", r.windowServer);
-            std::printf ("    %-26s %7.3f %7.3f %7.3f %8.1f %% %7.3f %7.3f   %5.1f %%       %s\n", caseName (r.editor, r.after),
+            std::printf ("    %-26s %7.3f %7.3f %7.3f %8.1f %% %7.3f %7.3f   %5.1f %%       %s\n", caseName (r.editor, r.after, r.synchronous),
                          r.wall.median, r.wall.p99, r.wall.worst, 100.0 * r.wall.worst / budget, r.cpu.median, r.cpu.p99,
                          r.restOfProcess, ws);
         }
         std::printf ("    (CPU: %% of one core; the rest of the process includes the editor's painting and, with the dummy, feeding its processor)\n");
-        for (size_t j = i; j < i + 5 && j < results.size(); ++j)
+        for (size_t j = i; j < end; ++j)
         {
             const auto& r = results[j];
             if (r.editor == Editor::none)
@@ -535,13 +587,16 @@ void HitTiming::report()
             if (r.editor != Editor::otherIdle)
                 ran = ran && r.paints.n > 0 && r.layer.n > 0;
             std::printf ("    %-26s paints %3zu, average %.3f ms, worst %.3f ms; marks layer %3zu, average %.3f ms; %3.0f %% of the editor per paint; marks mean %.1f",
-                         caseName (r.editor, false), r.paints.n, r.paints.mean, r.paints.worst, r.layer.n, r.layer.mean, r.areaPercent,
-                         r.marksMean);
+                         caseName (r.editor, false, r.synchronous), r.paints.n, r.paints.mean, r.paints.worst, r.layer.n, r.layer.mean,
+                         r.areaPercent, r.marksMean);
             if (r.editor == Editor::otherFed)
                 std::printf ("; feeding its processor %.1f %%", r.feed);
+            if (r.paintsAfter >= 0)
+                std::printf ("; after the last hit: %d paints in 1 s, its timer %s, process CPU %.1f %%", r.paintsAfter,
+                             r.timerAfter == 0 ? "stopped" : r.timerAfter == 1 ? "STILL RUNNING" : "unknown", r.cpuAfter);
             std::printf ("\n");
         }
-        for (size_t j = i; j < i + 5 && j < results.size(); ++j)
+        for (size_t j = i; j < end; ++j)
         {
             const auto& r = results[j];
             if (r.regionIntoImageMs < 0.0)
@@ -552,6 +607,7 @@ void HitTiming::report()
             std::printf ("    the last paint's region (%s) painted into an image: median %.3f ms; the whole editor: median %.3f ms; %.2f physical pixels per unit\n",
                          r.lastClip.toString().toRawUTF8(), r.regionIntoImageMs, r.editorIntoImageMs, (double) r.scale);
         }
+        i = end;
     }
     std::fflush (stdout);
     results.clear();

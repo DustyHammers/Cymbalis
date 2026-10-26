@@ -5,10 +5,11 @@
 // them. An audio thread plays note-ons in real time, a strike every 24 ms so that 16 marks
 // are active, and processBlock is timed at 44.1 kHz with 256- and 128-sample blocks, with the
 // audio thread at normal priority and as a real-time thread (as a host's audio thread is),
-// in five cases:
+// in these cases:
 //
 //   editor closed (before)     no editor
 //   editor open, hit display   the editor at 1536 x 1024 in a window, its hit display running
+//   hit display, synchronous   the same, the window drawn with synchronous CoreGraphics
 //   editor open, dummy paint   instead, the editor of a second processor that this tool feeds
 //                              the same hits on the message thread: the same painting,
 //                              sharing nothing with the processor that plays
@@ -17,7 +18,11 @@
 //
 // For each case: processBlock's median, 99th percentile and worst (and the worst as a share
 // of the block's time budget), the audio thread's CPU time per block, the CPU time of the
-// rest of the process, and WindowServer's (macOS). The editors' paint calls are timed too.
+// rest of the process, and WindowServer's (macOS). The editors' paint calls are timed too, and
+// after the last hit the hit display's paints in the following second are counted (none
+// once its marks have ended). The editor's window is drawn as the plugin wrappers draw it
+// (AudioProcessorEditor::wantsLayerBackedView: layer-backed with asynchronous CoreGraphics,
+// or synchronous CoreGraphics).
 // The timing starts once JUCE's splash screen, shown when the first editor opens, has gone.
 
 #include <juce_events/juce_events.h>
@@ -48,9 +53,11 @@ private:
         Editor editor;
         int block;
         bool realtime;
+        bool synchronous; // the window drawn with synchronous CoreGraphics, whatever the editor asks
     };
 
     void timerCallback() override;
+    void finishRun();
     void report();
 
     std::function<void (int)> finished;
@@ -61,4 +68,6 @@ private:
     int phase = 0;
     double phaseStartMs = 0.0;
     double windowServerStartMs = -1.0;
+    size_t lingerPaints = 0;
+    double lingerCpuMs = 0.0;
 };
