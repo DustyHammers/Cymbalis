@@ -106,12 +106,12 @@ Imported 2026-10-17 from `Cymbalis_V8_Package_602_final.zip`, unchanged. SPEAR f
 
 # Raven (20" dry ride)
 
-Built 2026-10-26 in the project session from Kris's SPEAR captures (Bell V1-V4, Bow V1-V7, Edge V1-V7; bow and bell with the stick tip, edge with the shoulder) by `build_raven.py` (kept in the project, not in this repo). SPEAR files excluded. No baseline render check: the plugin is the reference (see `CLAUDE.md`).
+Built 2026-10-26 in the project session from Kris's SPEAR captures (Bell V1-V4, Bow V1-V7, Edge V1-V7; bow and bell with the stick tip, edge with the shoulder) by `build_preset.py` (kept in the project with its documentation, `SPEAR_Preset_Builder.md`, not in this repo). SPEAR files excluded. No baseline render check: the plugin is the reference (see `CLAUDE.md`).
 
 | File | MD5 |
 |---|---|
-| `presets/raven/Raven_Baseline1.json` | `361c7b3b900b440c6cce3a7ea56c20e6` |
-| `presets/raven/data/raven_bell_excitation_ratios.json` | `5456a7a3b0d5e69393a90f37d8ac70da` |
+| `presets/raven/Raven_Baseline1.json` | `f03d08ee5d10cf351a9019c2a876b52e` |
+| `presets/raven/data/raven_bell_excitation_ratios.json` | `bdb90d26d2a9bc1a0119c5aea7fcd1ef` |
 | `presets/raven/data/raven_build_info.json` | `528384e41cdc74e2e9a6715fdf1db33a` |
 | `presets/raven/data/raven_edge_benv_trigger.json` | `0a1f20be7c52c42897acec4b6a01b042` |
 | `presets/raven/data/raven_edge_excitation_ratios_neutral.json` | `d6fbff7aa816a34abc62dcd140ee5175` |
