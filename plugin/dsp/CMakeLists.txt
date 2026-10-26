@@ -42,3 +42,21 @@ endif()
 if(APPLE)
     target_compile_options(cymbalis_fast PRIVATE "SHELL:-Xarch_x86_64 -msse4.1")
 endif()
+
+# cymbalis_fast_profile — cymbalis_fast with its parts timed (EngineProfile.h), for
+# cymbalis_bench_profile only. The plugin never links it.
+add_library(cymbalis_fast_profile STATIC
+    FastEngine.cpp
+    EngineProfile.cpp
+)
+target_link_libraries(cymbalis_fast_profile PUBLIC cymbalis_engine)
+target_compile_definitions(cymbalis_fast_profile PUBLIC CYMBALIS_ENGINE_PROFILE=1)
+if(CYMBALIS_WITH_TUNING)
+    target_compile_definitions(cymbalis_fast_profile PUBLIC CYMBALIS_TUNING=1)
+endif()
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(cymbalis_fast_profile PRIVATE -O3 -ffp-contract=fast -fno-fast-math -Wall -Wextra)
+endif()
+if(APPLE)
+    target_compile_options(cymbalis_fast_profile PRIVATE "SHELL:-Xarch_x86_64 -msse4.1")
+endif()

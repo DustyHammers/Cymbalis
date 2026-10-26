@@ -1,4 +1,5 @@
 #include "FastEngine.h"
+#include "EngineProfile.h"
 
 #include <algorithm>
 #include <climits>
@@ -644,7 +645,9 @@ void FastEngine::process(float* left, float* right, int numSamples) noexcept
     {
         if (activeContacts_ > 0)
         {
+            CYM_PROF_BEGIN(contactSample);
             renderContactSample(left + pos, right + pos);
+            CYM_PROF_END(contactSample);
             ++pos;
         }
         else
@@ -656,7 +659,12 @@ void FastEngine::process(float* left, float* right, int numSamples) noexcept
 
     // Stick clicks, into both channels (lines 1210-1211), before the high-pass as in render().
     if (stickActive_ > 0)
+    {
+        CYM_PROF_BEGIN(stickRender);
         renderStick(left, right, numSamples);
+        CYM_PROF_END(stickRender);
+    }
+    CYM_PROF_BEGIN(highPass);
 
     // Right-channel high-pass (render() line 703; its on/off and frequency are tuning values),
     // direct form II transposed, in double.
@@ -732,6 +740,7 @@ void FastEngine::process(float* left, float* right, int numSamples) noexcept
             }
         outGain_ = g;
     }
+    CYM_PROF_END(highPass);
     clock_ += static_cast<uint64_t>(numSamples);
 }
 
@@ -860,7 +869,11 @@ void FastEngine::endContactSample() noexcept
     activeContacts_ = kept;
     ++sampleNow_;
     if (activeContacts_ == 0)
+    {
+        CYM_PROF_BEGIN(freeStart);
         startFreePhase();
+        CYM_PROF_END(freeStart);
+    }
 }
 
 // Free ring. The control grid starts at the first free-phase sample, so the output does
@@ -880,6 +893,7 @@ void FastEngine::renderFree(float* left, float* right, int n) noexcept
             beginControlBlock();
         }
         const int m = std::min(K_ - j, n - pos);
+        CYM_PROF_BEGIN(kernel);
         std::fill(accL_.begin(), accL_.begin() + 4 * m, 0.0f);
         std::fill(accR_.begin(), accR_.begin() + 4 * m, 0.0f);
         if (nAct_ > 0)
@@ -896,8 +910,13 @@ void FastEngine::renderFree(float* left, float* right, int n) noexcept
             left[pos + k] = (a[0] + a[1]) + (a[2] + a[3]);
             right[pos + k] = (c[0] + c[1]) + (c[2] + c[3]);
         }
+        CYM_PROF_END(kernel);
         if (nKinks_ > 0)
+        {
+            CYM_PROF_BEGIN(kinks);
             renderKinks(left + pos, right + pos, j, m);
+            CYM_PROF_END(kinks);
+        }
         freePos_ += m;
         sampleNow_ += m;
         pos += m;
@@ -1141,6 +1160,7 @@ void FastEngine::dropQuietModes() noexcept
 // into each mode's amplitude at both ends of the block, times the LF/MF gain there.
 void FastEngine::beginControlBlock() noexcept
 {
+    CYM_PROF_BEGIN(controlBlock);
     const BakeData& b = *bake_;
     const double invK = 1.0 / static_cast<double>(K_);
     const int64_t blk = freePos_ / K_;
@@ -1148,11 +1168,24 @@ void FastEngine::beginControlBlock() noexcept
     const double t1 = segTBase_ + static_cast<double>((blk + 1) * K_) / sr_;
 
     if (blkGainOn_ || injOn_)
+    {
+        CYM_PROF_BEGIN(blockCommit);
         commitBlockGains();
+        CYM_PROF_END(blockCommit);
+    }
     if (cascOn_)
+    {
+        CYM_PROF_BEGIN(blockRenorm);
         renormOscillators();
+        CYM_PROF_END(blockRenorm);
+    }
     if (blk % kDropEvery == 0)
+    {
+        CYM_PROF_BEGIN(blockDrop);
         dropQuietModes();
+        CYM_PROF_END(blockDrop);
+    }
+    CYM_PROF_BEGIN(blockWander);
     if (gainPending_)
         startGainRamp();
     const int na = nAct_;
@@ -1188,8 +1221,10 @@ void FastEngine::beginControlBlock() noexcept
         blkRate_ = rate;
         gW = wanderScale_ / rate;
     }
+    CYM_PROF_END(blockWander);
 
     // Shared oscillator.
+    CYM_PROF_BEGIN(blockOscillators);
     {
         double* __restrict Yr = Yr_.data();
         double* __restrict Yi = Yi_.data();
@@ -1251,11 +1286,19 @@ void FastEngine::beginControlBlock() noexcept
             Yi[a] = pr * sK + pi * cK;
         }
     }
+    CYM_PROF_END(blockOscillators);
 
     // Components: each mode's amplitude at both ends of the block.
+    CYM_PROF_BEGIN(blockSum);
     sumComponents(t0, t1);
+    CYM_PROF_END(blockSum);
     if (cascOn_ || dampOn_)
+    {
+        CYM_PROF_BEGIN(blockBands);
         bandBlock();
+        CYM_PROF_END(blockBands);
+    }
+    CYM_PROF_BEGIN(blockGains);
 
     // Cymbal-wide LF/MF gains at the block's ends (lines 914-919), then the per-sample increment.
     for (int a = 0; a < na; ++a)
@@ -1270,6 +1313,8 @@ void FastEngine::beginControlBlock() noexcept
         dar_[s] = static_cast<float>((A1r_[k] * g1 - r0) * invK);
         dai_[s] = static_cast<float>((A1i_[k] * g1 - i0) * invK);
     }
+    CYM_PROF_END(blockGains);
+    CYM_PROF_END(controlBlock);
 }
 
 // Accumulator value at t: decayed with tau since its last strike; 0 before the first.
@@ -1800,6 +1845,7 @@ void FastEngine::setDecay(Component& c, int mode) noexcept
 // dropped (used only when no settled pair exists).
 void FastEngine::mergeComponents(Component& into, Component& from, bool dropEnvelopes) noexcept
 {
+    CYM_PROF_BEGIN(merge);
     double eInto = 0.0, eFrom = 0.0;
     for (int k = 0; k < n_; ++k)
     {
@@ -1840,6 +1886,7 @@ void FastEngine::mergeComponents(Component& into, Component& from, bool dropEnve
         into.settled = true;
     }
     from.used = false;
+    CYM_PROF_END(merge);
 }
 
 // A free component slot. When the pool is full, the two settled components with the
@@ -1849,6 +1896,7 @@ FastEngine::Component& FastEngine::allocateComponent() noexcept
     for (auto& c : components_)
         if (!c.used)
             return c;
+    CYM_PROF_COUNT(poolFull);
     Component* a = nullptr;
     Component* b = nullptr;
     double best = 1e300;
@@ -1886,8 +1934,13 @@ FastEngine::Component& FastEngine::allocateComponent() noexcept
             if (x.order < oldest->order)
                 oldest = &x;
         oldest->used = false;
+        CYM_PROF_COUNT(reuseOldest);
         return *oldest;
     }
+    if (dropEnvelopes)
+        CYM_PROF_COUNT(mergeOldest);
+    else
+        CYM_PROF_COUNT(mergeSettled);
     // Keep the newer one's identity in `into` so the freed slot is the other.
     mergeComponents(*a, *b, dropEnvelopes);
     return *b;
@@ -2917,29 +2970,39 @@ bool FastEngine::isSilent() const noexcept
 void FastEngine::strike(int slotIndex, double velocity, double position) noexcept
 {
     if (!isPrepared() || slotIndex < 0 || slotIndex >= numSlots()) return;
+    CYM_PROF_BEGIN(strike);
     const SlotData& s = bake_->slots[size_t(slotIndex)];
     const BakeData& b = *bake_;
     const EngineParams& p = params_;
     const size_t n = size_t(n_);
     sampleNow_ = static_cast<int64_t>(clock_);
 
+    CYM_PROF_BEGIN(strikeRebase);
     if (gainRamp_)
         interruptGainRamp();
     if (freeStarted_)
         rebaseComponents();
+    CYM_PROF_END(strikeRebase);
     const double strikeTime = timeSeconds();
+    CYM_PROF_BEGIN(strikeCymbalWide);
     cymbalWideAtStrike(strikeTime);
+    CYM_PROF_END(strikeCymbalWide);
 
+    CYM_PROF_BEGIN(strikePhases);
     const double range = b.phaseHigh - b.phaseLow;
     for (size_t i = 0; i < n; ++i)
         scratchPhase_[i] = rng_.uniform(b.phaseLow, range);
+    CYM_PROF_END(strikePhases);
 
+    CYM_PROF_BEGIN(strikeVelocity);
     const double v = clamp01(velocity);
     if (s.hasBowVp)
         velocityParticipation(s.bowVp, v, scratchVel_.data());
     else
         hertzVelocity(velocity, scratchVel_.data()); // line 979
+    CYM_PROF_END(strikeVelocity);
 
+    CYM_PROF_BEGIN(strikePosition);
     const double pos = clamp01(position);
     const double edgeFrac = clamp01(1.0 - pos / 0.5);
     if (pos <= 0.5)
@@ -2956,10 +3019,12 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     }
     if (pos > 0.5 && s.hasBellVp)
     {
+        CYM_PROF_BEGIN(strikeVelocity); // the bell blend, counted with the velocity law
         const double bellFracV = clamp01((pos - 0.5) / 0.5);
         velocityParticipation(s.bellVp, v, scratchBellVel_.data());
         for (size_t i = 0; i < n; ++i)
             scratchVel_[i] = (1.0 - bellFracV) * scratchVel_[i] + bellFracV * scratchBellVel_[i];
+        CYM_PROF_END(strikeVelocity);
     }
     if (s.edgeLevelBoost > 1.0 && edgeFrac > 0.0)
     {
@@ -2967,25 +3032,32 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
         for (size_t i = 0; i < n; ++i)
             scratchPosW_[i] = scratchPosW_[i] * g;
     }
+    CYM_PROF_END(strikePosition);
 
     // The slot's calibration level, its level trim and its velocity curve (docs/TUNING.md)
     // scale its own strike.
     const double curveDb = velocityCurveDb(slotCurve_[size_t(slotIndex)], velocity);
     const double calib =
         s.calibScalar * slotTrim_[size_t(slotIndex)] * (curveDb != 0.0 ? std::pow(10.0, curveDb / 20.0) : 1.0);
+    CYM_PROF_BEGIN(strikeAlloc);
     Component& comp = allocateComponent();
     comp.used = true;
     comp.cascade = false;
     comp.rhoOn = false;
     comp.rho0 = comp.rho1 = 1.0f;
+    CYM_PROF_END(strikeAlloc);
+    CYM_PROF_BEGIN(strikeRehit);
     startRehit(comp, slotIndex, velocity);
+    CYM_PROF_END(strikeRehit);
     comp.order = ++componentOrder_;
     comp.contactStart = sampleNow_;
+    CYM_PROF_BEGIN(strikeContact);
     Contact* contact = nullptr;
     if (p.contactPermode)
     {
         if (activeContacts_ == kMaxContacts)
         {
+            CYM_PROF_COUNT(contactFlush);
             // Pool full: the oldest contact's remaining force goes in at once.
             Contact& old = contactPool_[0];
             const size_t len = size_t(contactLen_);
@@ -3004,17 +3076,21 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
         contact->k = 0;
     }
     comp.pending = contact != nullptr;
+    CYM_PROF_END(strikeContact);
     // Lines 1043-1061: an edge strike of a preset with NPZ data takes its coupling from the
     // velw tables, with a second set of random phases (Python draws both).
     const bool npzEdge = b.edgeNpz.present && edgeFrac > 0.1 && b.edgeNpz.useVelw;
     double npzLevel = 0.0;
     if (npzEdge)
     {
+        CYM_PROF_BEGIN(strikeNpz);
         npzCoupling(velocity, scratchBellVel_.data());
         npzLevel = numpyScalarPower(velocity, b.edgeNpz.levelVelGainPower);
         for (size_t i = 0; i < n; ++i)
             scratchPhase_[i] = rng_.uniform(b.phaseLow, range);
+        CYM_PROF_END(strikeNpz);
     }
+    CYM_PROF_BEGIN(strikeCoupling);
     // This articulation's excitation band gains (docs/TUNING.md) scale the energy the strike
     // puts into each mode, whatever the coupling path.
     const float* excGain = excGainOn_[size_t(slotIndex)] != 0 ? excGain_.data() + size_t(slotIndex) * n : nullptr;
@@ -3045,6 +3121,7 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
             zi_[i] += ci;
         }
     }
+    CYM_PROF_END(strikeCoupling);
     // Lines 1114-1125: this strike sets the wander depth and rate scales. The wander phase is
     // integrated, so the change does not make it jump.
     wanderScale_ = 1.0 + velocity * edgeFrac * p.edgeWanderDepth;
@@ -3052,6 +3129,7 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
 
     // Lines 1127-1130: this strike's velocity-dependent decay, T60 / wash_damp. It applies
     // to this strike's energy only, relative to the shared oscillator's T60 / 0.3.
+    CYM_PROF_BEGIN(strikeDecay);
     const double washDamp = std::max(kWashDampFloor, 1.0 + p.velLenTilt * (velocity - p.velLenTiltRef));
     comp.eps = std::max(washDamp - oscWash_, 0.0); // 0 only for a velocity outside 0..1
     for (size_t i = 0; i < n; ++i)
@@ -3059,6 +3137,7 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     if (!comp.pending)
         for (int k = 0; k < n_; ++k) // without a contact phase the decay starts now
             setDecay(comp, k);
+    CYM_PROF_END(strikeDecay);
 
     ++strikesApplied_;
     lastSlot_ = slotIndex;
@@ -3077,7 +3156,12 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     comp.envWindow = envWindowS_;
     comp.frameRestart = frameRestart_;
     if (comp.envOn)
+    {
+        CYM_PROF_BEGIN(strikeEnvelope);
         startEnvelope(comp, velocity);
+        CYM_PROF_END(strikeEnvelope);
+    }
+    CYM_PROF_BEGIN(strikeOnsetShift);
     // This articulation's onset shift (docs/TUNING.md), kept with the strike: a later change
     // applies from the next strike.
     const ArticulationTuning& art = slotCurve_[size_t(slotIndex)];
@@ -3099,6 +3183,8 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
             comp.envDelay[j] = static_cast<float>(dly[j] * 1e-3);
             comp.envSpeed[j] = static_cast<float>(spd[j]);
         }
+    CYM_PROF_END(strikeOnsetShift);
+    CYM_PROF_BEGIN(strikeRamp);
     if (p.bandEnvOnset)
     {
         const double ef = clamp01(1.0 - rawPos / 0.5);
@@ -3158,6 +3244,8 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
         if (comp.rampOn && !baseRamp && comp.ptMax <= 0.0)
             comp.rampOn = false; // the shift leaves every peak at 0: no ramp
     }
+    CYM_PROF_END(strikeRamp);
+    CYM_PROF_BEGIN(strikeAttack);
     // Attack band gains (docs/TUNING.md): this articulation's gain per band at the strike,
     // fading to 0 dB with its attack time (lines 902-913: Nova's onset gains are these). As
     // in Python they do not apply to a bow or bell strike blended to the edge (edge fraction
@@ -3193,10 +3281,14 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
             comp.gm1Max = gm1Max;
         }
     }
+    CYM_PROF_END(strikeAttack);
     comp.settled = !comp.rampOn && !comp.onsetOn && !comp.envOn;
 #if CYMBALIS_TUNING
+    CYM_PROF_BEGIN(strikeOnsetPeaks);
     onsetPeaks(comp, slotIndex);
+    CYM_PROF_END(strikeOnsetPeaks);
 #endif
+    CYM_PROF_BEGIN(strikeAccum);
 
     // render() lines 652-688: the LF and MF accumulators. This strike's contribution is
     // added after its scale is taken, as in Python: until the next strike the scales follow
@@ -3211,15 +3303,23 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     // The LFO time runs at the new rate from here (line 670 with the new accumulator value).
     if (wanderOn_)
         tauRate_ = params_.wanderRateHz * wanderRate(strikeTime);
+    CYM_PROF_END(strikeAccum);
 
     // render() line 620: the stick click follows the strike (its noise after the strike's
     // phases in the random sequence), at the strike's level.
+    CYM_PROF_BEGIN(strikeStick);
     startStick(slotIndex, velocity, rawPos, calib);
+    CYM_PROF_END(strikeStick);
 
     freeStarted_ = false;
     freePos_ = 0;
     if (activeContacts_ == 0)
+    {
+        CYM_PROF_BEGIN(strikeFreeStart);
         startFreePhase();
+        CYM_PROF_END(strikeFreeStart);
+    }
+    CYM_PROF_END(strike);
 }
 
 // The stick click of a strike (_add_transient lines 1194-1211): a noise burst of the
@@ -3404,6 +3504,7 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
     // Older components step (undamped, as the contact phase did) to this sample; new ones
     // take their contact's response (coupling x H x step^extra, extra: samples since the
     // contact ended); then every component's own decay restarts here.
+    CYM_PROF_BEGIN(freeStartRotate);
     bool older = false;
     for (const auto& c : components_)
         older = older || (c.used && !c.pending);
@@ -3424,6 +3525,8 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
                     multiplyAmplitudes(c.Er.data(), c.Ei.data(), rotR_.data(), rotI_.data());
             }
     }
+    CYM_PROF_END(freeStartRotate);
+    CYM_PROF_BEGIN(freeStartPending);
     for (auto& c : components_)
     {
         if (!c.used || !c.pending)
@@ -3445,6 +3548,8 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
             c.Bi[s] = static_cast<float>(cr * hi + ci * hr);
         }
     }
+    CYM_PROF_END(freeStartPending);
+    CYM_PROF_BEGIN(freeStartDecay);
     const double tFree = timeBase_ + static_cast<double>(sampleNow_) / sr_;
     for (auto& c : components_)
     {
@@ -3468,6 +3573,8 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
             c.rhoT0 = tFree;
     }
     baseSample_ = sampleNow_;
+    CYM_PROF_END(freeStartDecay);
+    CYM_PROF_BEGIN(freeStartModes);
 
     segThreshold_ = threshold;
     const double tBase = timeBase_ + static_cast<double>(sampleNow_) / sr_;
@@ -3559,6 +3666,7 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
     freeStarted_ = true;
     freePos_ = 0;
     freeStartSample_ = sampleNow_;
+    CYM_PROF_END(freeStartModes);
 }
 
 } // namespace cymbalis
