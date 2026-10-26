@@ -558,6 +558,21 @@ private:
 
     // Per-strike scratch (preallocated).
     std::vector<double> scratchPhase_, scratchVel_, scratchBellVel_, scratchPosW_, scratchPkT_;
+
+    // The next strike's random phases, drawn ahead from the strike-phase sequence (which does
+    // not depend on the strike) with their cos and sin, a share in each process() call
+    // (drawPhasesAhead): strike() then has them. They hold while rng_ is still at aheadFrom_;
+    // aheadRng_ is the sequence after them. phaseCos_ / phaseSin_ hold the phases the strike's
+    // coupling uses.
+    void drawPhasesAhead(int count) noexcept;
+    Pcg64 aheadFrom_, aheadRng_;
+    int aheadDone_ = 0; // phases drawn ahead so far
+    std::vector<double> phaseCos_, phaseSin_;
+
+    // Per-mode arguments and results of exp, sin and cos, evaluated two at a time
+    // (VecMath.h) in the strike's per-mode loops (preallocated, n each).
+    std::vector<double> vmArg_, vmArg2_, vmExp_, vmSin_, vmCos_, vmSin2_, vmCos2_;
+    void setDecayAll(Component& c) noexcept; // setDecay for every mode
 };
 
 } // namespace cymbalis

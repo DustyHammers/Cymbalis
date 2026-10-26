@@ -64,7 +64,7 @@ jobs:
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
-        run: cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU CymbalisUiTest cymbalis_bench cymbalis_trims --parallel
+        run: cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU CymbalisUiTest cymbalis_bench cymbalis_bench_profile cymbalis_trims --parallel
 
       # CPU cost of the real-time engine on this runner (Apple Silicon), every slot playing.
       # Printed to the log and the job summary only; nothing is uploaded.
@@ -83,6 +83,28 @@ jobs:
               echo
               "$BENCH" --bake "$BAKE" --seconds 60 --block 64 --sample-rate 48000
             done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          test "${PIPESTATUS[0]}" -eq 0
+
+      # The engine's block times in dense playing (a strike every 24 ms, every preset, 44.1 and
+      # 96 kHz, 128- and 64-sample blocks, real-time thread, each case three times in turn),
+      # then where strike() and the slowest blocks spend their time (profile build, blocks back
+      # to back). Printed to the log and the job summary only; nothing is uploaded.
+      - name: Engine block times in dense playing
+        timeout-minutes: 15
+        run: |
+          BAKES=()
+          for PRESET in nova_ride smoke_flat_ride hammered_thin_ride swish; do
+            BAKES+=(--bake "resources/presets/${PRESET}.bake.json")
+          done
+          {
+            echo "### Engine block times in dense playing"
+            echo
+            build/tools/cymbalis_bench/cymbalis_bench --dense "${BAKES[@]}" --ftz-off
+            echo
+            echo "### Engine parts in dense playing (profile build)"
+            echo
+            build/tools/cymbalis_bench/cymbalis_bench_profile --dense "${BAKES[@]}" --runs 1 --sample-rate 44100 --block 128 --free
           } | tee -a "$GITHUB_STEP_SUMMARY"
           test "${PIPESTATUS[0]}" -eq 0
 

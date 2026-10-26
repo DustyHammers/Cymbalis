@@ -10,7 +10,12 @@
 // (render time / audio time x 100). Denormals are flushed to zero, as in the plugin.
 // It also reports the output's peak and fails if any sample is not finite. Nothing is
 // written to disk.
+//
+//   cymbalis_bench --dense --bake BAKE.json [--bake ...] [options]
+//
+// Dense playing instead: a strike every 24 ms, block times and strike() times (Dense.cpp).
 #include "Bake.h"
+#include "Dense.h"
 #include "FastEngine.h"
 
 #include <algorithm>
@@ -44,6 +49,19 @@ void noDenormals()
 int main(int argc, char** argv)
 {
     noDenormals();
+    for (int i = 1; i < argc; ++i)
+        if (std::string(argv[i]) == "--dense")
+        {
+            try
+            {
+                return runDense(argc, argv);
+            }
+            catch (const std::exception& e)
+            {
+                std::fprintf(stderr, "cymbalis_bench: %s\n", e.what());
+                return 1;
+            }
+        }
     std::string bakePath;
     std::vector<double> rates;
     double seconds = 60.0;
