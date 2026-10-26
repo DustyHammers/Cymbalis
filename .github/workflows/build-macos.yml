@@ -163,10 +163,10 @@ jobs:
       # The hit display (docs/UI_SPEC.md section 10) with 16 marks active at 1536 x 1024:
       # processBlock at 44.1 kHz (256 and 128 samples, normal and real-time audio thread) with
       # the editor closed, open with the hit display, open with a dummy of the same painting,
-      # and open with no hits; the CPU used besides; the editor's paint times. Printed to the
-      # log and the job summary only.
+      # and open with no hits, each three times; the CPU used besides; the editor's paint
+      # times. Printed to the log and the job summary only.
       - name: Hit display timing
-        timeout-minutes: 6
+        timeout-minutes: 10
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
           "$UITEST" hits | tee hits.txt
