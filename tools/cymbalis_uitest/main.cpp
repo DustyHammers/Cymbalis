@@ -39,10 +39,10 @@
 //   CymbalisUiTest motion
 //
 // run no plugin: they time Cymbalis's own processor and editor, compiled into this tool
-// (HitTiming.h), at 1536 x 1024: the editor's paint calls with 16 marks active for 2 s
-// (hits), or with the cymbal moving and marks running together for 4 s (motion), and
-// processBlock for the same MIDI with no editor, with the editor open and with no editor
-// again.
+// (HitTiming.h): processBlock while a strike every 24 ms keeps 16 marks active (hits), or
+// while the cymbal moves and marks run together (motion), with the editor closed, open at
+// 1536 x 1024, open with a dummy of the same painting and open with no hits, and the
+// editor's paint calls.
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
 

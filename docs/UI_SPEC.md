@@ -253,7 +253,7 @@ Approved by Kris, 2026-10-25. UI only: it changes nothing in the sound and adds 
 **Drawing cheaply.**
 - No blur, gradient or path is computed per frame. Each mark shape is rendered once into small coloured images, at the current physical scale:
   - the spot, at radii 7 % apart covering the TIP and SHOULDER sizes;
-  - the ripple ring and the bell ring, also at radii 7 % apart, each kept as the 32 px tiles it passes through;
+  - the ripple ring and the bell ring, also at radii 7 % apart, each as one image (not split into tiles: on macOS every image drawn is a separate GPU upload and submission, so many small tiles cost far more than drawing a ring's empty middle);
   - the edge arc, at velocity 0, 0.2 … 1, with its inner arc.
 - The images are rendered once the editor's size and preset have held for 250 ms after it opens, is resized, moves to a screen with another scale or changes preset (the arcs follow R), so not at every step of a resize; a hit that comes first renders what it needs.
 - A frame only places those images, with a position and an opacity:
