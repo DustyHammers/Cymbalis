@@ -45,7 +45,8 @@
 //     edge data (602, Bettis, Swish) take an edge strike's coupling from the NPZ velw tables
 //     and, with a band envelope, drive that strike's level from it for the onset window
 //     (PORT_MAP, "602 and Bettis", "Swish"). For those the shared oscillator carries no decay
-//     and the control block is 1/7 or 1/8 of the envelope's 20 ms frame.
+//     and the control block is 1/7 or 1/8 of the envelope's 20 ms frame. The ring length
+//     acts on the envelope's decay after each band's peak (PORT_MAP, live-engine decision 20).
 //   - Energy cascade (docs/TUNING.md; PORT_MAP, plugin mechanism 10), off at amount 0: at
 //     every control point the ringing energy of each one-third-octave band is measured; a
 //     band above its threshold gives energy to the bands above it. The source modes are
@@ -205,6 +206,11 @@ private:
         // is read at (t - envDelay[j]) x envSpeed[j] (seconds). Only with envShift.
         bool envShift = false;
         std::array<float, kExcitationBands> envDelay {}, envSpeed {};
+        // Per envelope band: when its envelope peaks (envelope time, s) and that peak, as
+        // envelopeAt gives it; and 1 / its ring factor at the strike (docs/TUNING.md, "Ring
+        // length"). With envRing, after its peak a band's envelope is peak x (env / peak)^(1/x).
+        bool envRing = false;
+        std::vector<double> envPkT, envPk, envRingInv;
         // Per mode, padded to nPad_. The arrays the control loop streams are float.
         std::vector<float> Br, Bi;      // amplitude at the segment's reference time
         std::vector<float> D;           // its own decay since then, at the next control point
@@ -308,6 +314,8 @@ private:
 #endif
     void renderStick(float* left, float* right, int n) noexcept;
     double envelopeAt(const Component& c, int band, double te) const noexcept;
+    double ringEnvelope(const Component& c, int band, double te, double e) const noexcept;
+    void computeEnvRing() noexcept;
     void restartFrames(Component& c, double elapsed) noexcept;
 
     std::shared_ptr<const BakeData> bake_;
@@ -422,6 +430,12 @@ private:
     std::vector<double> remapTable_;       // the NPZ velocities normalised to 0..1, ^ remapExp_ (line 1049)
     std::vector<double> bandVal0_, bandVal1_; // per band, scratch for one block
     std::vector<double> envPeakS_;            // per band: when the latest envelope strike's envelope peaks (s)
+    // The ring length on the band envelope (docs/TUNING.md, "Ring length"): per band 1 / its
+    // ring factor x (ring length x the per-band ring length of its onset-shift band), whether
+    // a band with modes has x other than 1, and the window's multiplier (the largest x, 1..2).
+    std::vector<double> envRingInv_;
+    bool envRingOn_ = false;
+    double envWindowStretch_ = 1.0;
 
     // Contact force at the host rate (contactLen_ x numModes, DC-normalised per mode) and
     // its response H = sum_j f_j step^(len - j): the state a unit coupling leaves at the
