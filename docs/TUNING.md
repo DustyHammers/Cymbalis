@@ -45,7 +45,7 @@ Changes apply live:
 - **Build-up (MF/LF) values** move the cymbal's scales from the next control point, through their 20 ms smoothing.
 - **Wander depth and rate** change at the next control point, without a phase jump.
 - **Output gain** is smoothed (20 ms).
-- **Ring length per band** applies at the next control point. Every ringing strike decays at the new rates from there, without a step in level.
+- **Ring length per band** applies at the next control point. Every ringing strike decays at the new rates from there, without a step in level. An edge strike's band envelope keeps the factors it was struck with; the change reaches the envelope from the next strike ("Ring length" below).
 - **Energy cascade** and **loud-band damping** values apply from the next control point; **re-hit damping** values from the next strike.
 - **Ring length is the exception:** it rebuilds the engine through the preset-switch path. The cymbal stops (30 ms fade) and restarts, and the change applies when the slider is released.
 
@@ -152,7 +152,7 @@ Each articulation also has, per band, an **onset delay** (ms) and an **onset spe
 
 How they act depends on the onset the strike has. The articulation struck decides which values apply, even when a blend knob moves the strike.
 
-- **Band envelope.** This covers 602, Bettis and Raven edge strikes, and on those presets any strike towards the edge (edge fraction above 0.1, such as BOW with Blend 2 past 20 %). Band j's envelope is read at (t − delay) × speed. Before the delay ends it holds its first frame. A negative delay starts that far into the envelope. The 20 ms in-frame decay and the envelope window (`edge_band_env_onset_s`) keep real time. A band slowed below ×1 may therefore still be inside its envelope when the window ends (the 602's envelopes run 9 s and its window 10 s; Bettis 16.2 s and 20 s; Raven 8.7 s and 9.2 s). The strike then rings on from its own decaying level, as at any window end; a longer window lets the envelope finish. The envelope bands are the NPZ bands of the same number: the same thirds, within 0.1 %.
+- **Band envelope.** This covers 602, Bettis and Raven edge strikes, and on those presets any strike towards the edge (edge fraction above 0.1, such as BOW with Blend 2 past 20 %). Band j's envelope is read at (t − delay) × speed. Before the delay ends it holds its first frame. A negative delay starts that far into the envelope; the ring length then acts on the envelope as read ("Ring length"). The 20 ms in-frame decay and the envelope window (`edge_band_env_onset_s`) keep real time. A band slowed below ×1 may therefore still be inside its envelope when the window ends (the 602's envelopes run 9 s and its window 10 s; Bettis 16.2 s and 20 s; Raven 8.7 s and 9.2 s). The strike then rings on from its own decaying level, as at any window end; a longer window lets the envelope finish. The envelope bands are the NPZ bands of the same number: the same thirds, within 0.1 %.
 - **Onset ramp.** This covers Nova edge strikes, and Nova strikes towards the edge (edge fraction above 0.1). Each mode's ramp, from 0.4 of its level (the birth fraction) to full, peaks at peak time / speed + delay, never below 0. A peak time of 1 ms or less means no ramp.
 - **Bow, bell and center strikes at their base positions.** The engine has no onset ramp here: Python skips it for strikes with an edge fraction of 0.1 or less ("skip ramp for bow"). Their peak time is therefore 0:
   - a positive delay ramps the band from 0.4 to full level over the delay;
@@ -206,7 +206,7 @@ In the window, the **BANDS** section below the articulations works like a graphi
 | Cymbal | Output gain | `output_gain_db` | −24 to +12 dB | all | Whole preset, for headroom; before the Volume knob |
 | | Edge capture curve | `edge_velocity_remap_exponent` | 0.25–2.0 | 602, Bettis, Swish, Raven | Exponent of the NPZ velocity remap (0.5 = sqrt). Each capture still maps to itself; this shapes how the velocities between captures are reached |
 | | Bow brightness vs velocity | `tau_ref_ms` | 0.05–8 ms | 602, Bettis, Swish, Raven (no velocity tables) | `hertz_vel_scale` contact time at velocity 1 |
-| | Ring length | `ring_length` | 0.5–2.0 × | all | Multiplier of the baked T60 of every mode (t60_scale). Rebuilds the engine |
+| | Ring length | `ring_length` | 0.5–2.0 × | all | Multiplier of the baked T60 of every mode (t60_scale), and of the decay of an edge strike's band envelope; see "Ring length" below. Rebuilds the engine |
 | | Ring length per band | `ring_length_bands` | ×0.25–×4 per band | all | 22 values, see below. Default ×1 |
 | Stereo | Pan per band | `stereo_pan_bands` | L100 to R100 per band | all | 22 values, −100 (L100) to 100 (R100). Default centre (0). See "Stereo" below |
 | | Width per band | `stereo_width_bands` | 0–200 % per band | all | 22 values. Default 100 % |
@@ -228,7 +228,7 @@ In the window, the **BANDS** section below the articulations works like a graphi
 | | Bow, edge, bell weights | `lf_bow_weight`, `lf_edge_weight`, `lf_bell_weight` | 0–2 | all | |
 | | Wander-rate boost | `lf_wander_rate_boost` | 0–2 | all | The LF accumulator speeds up the wander |
 | Edge envelope | EDGE ONSET ENVELOPE | `edge_band_envelope` | on/off | 602, Bettis, Swish, Raven | On (the bake; for Swish the bake switches it on, `docs/PORT_MAP.md`, "Swish"): an edge strike's level follows the NPZ band envelope for the window. Off: the strike rings from the start, with the onset ramp of its pk_t data, as Python plays Swish. Per strike |
-| | Window | `edge_band_env_onset_s` | 0.1–30 s | 602, Bettis, Swish, Raven | How long an edge strike follows the NPZ band envelope; per strike |
+| | Window | `edge_band_env_onset_s` | 0.1–30 s | 602, Bettis, Swish, Raven | How long an edge strike follows the NPZ band envelope; per strike. A ring length above ×1 lengthens it, up to ×2 ("Ring length") |
 | | 20 ms frame-decay restart | `edge_frame_decay_restart` | on/off | 602, Bettis, Swish, Raven | On (the bake): the in-frame decay restarts every 20 ms (`docs/PORT_MAP.md`, "The in-frame decay is a 50 Hz sawtooth"). Off: no in-frame decay; the level follows the band envelope alone. Per strike |
 | Energy cascade | Amount | `cascade_amount` | 0–1 | all | 0 (default) switches it off. See "Energy cascade" below |
 | | Threshold | `cascade_threshold_db` | −40 to 0 dB | all | Per band, relative to that band's energy after a velocity-1.0 BOW strike. Default −12 dB |
@@ -245,13 +245,31 @@ In the window, the **BANDS** section below the articulations works like a graphi
 
 A slider's range widens to include a baked or loaded value outside it. Values for other presets are hidden.
 
+#### Ring length
+
+**Ring length** multiplies the baked T60 of every mode (`t60_scale`), so every strike rings that much longer or shorter. A change rebuilds the engine when the slider is released ("The values" above).
+
+**Edge strikes with a band envelope.** On SMOKE FLAT RIDE, HAMMERED THIN RIDE, SWISH and RAVEN, an edge strike's level follows its recorded NPZ band envelope for the envelope window (EDGE ONSET ENVELOPE on), not its T60. The T60 alone changes only its 20 ms in-frame decay and its ring after the window. So the ring length also acts on the envelope:
+
+- **The factor.** Each envelope band has a ring factor x = ring length × that band's **Ring length per band** (below). An envelope band takes the per-band value of the one-third-octave band its middle mode is in, as for the onset shift; on the 602, Bettis and Raven that is the band of the same number. SWISH's 20 envelope bands are its own, so there the values of the 225–283 Hz, 898–1131 Hz, 7.2–9.1 kHz and 9.1–11.4 kHz bands reach no envelope (they still set those modes' T60).
+- **The onset is unchanged.** Up to the band's peak the envelope is the recording.
+- **The decay.** After the peak, the envelope's level relative to the peak, in dB, is divided by x: peak × (recorded envelope / peak)^(1/x). So the recorded decay's T60 is x times as long, like the modes' own. At ×2, a moment where the recording is 40 dB below the band's peak plays 20 dB below it; at ×0.5, 80 dB below it.
+- **With the onset shift.** The envelope is read at (t − delay) × speed, then the ring length acts on it.
+- **The window.** With a factor above 1, the stretched tail may still be audible when the window would end. The strike's window is then the **Window** times the largest factor of its bands, at most ×2: at ring length ×2, RAVEN's 9.2 s window becomes 18.4 s. With no factor above 1 the window is unchanged.
+- **When.** Each strike takes the factors when it is struck, like the onset shift. A change applies from the next strike.
+- **At ×1** in every band nothing changes: every preset plays exactly as before.
+
+Where a band's envelope data end before the window, its last frame is held until the window ends, as before. The stretch raises that held level, and a lengthened window holds it longer (`docs/PORT_MAP.md`, live-engine decision 20).
+
+On every other strike, and on NOVA RIDE's edge, the ring length acts through the T60 alone.
+
 #### Ring length per band
 
-Each of the 22 one-third-octave bands of the band gains has a ring-length multiplier, ×0.25 to ×4 (default ×1). It multiplies the T60 of every mode in the band, on top of **Ring length**: T60 = baked T60 × ring length × the band's multiplier. Modes belong to bands by their frequency, as for the band gains. It acts on every articulation: the T60 belongs to the mode, not to the strike.
+Each of the 22 one-third-octave bands of the band gains has a ring-length multiplier, ×0.25 to ×4 (default ×1). It multiplies the T60 of every mode in the band, on top of **Ring length**: T60 = baked T60 × ring length × the band's multiplier. Modes belong to bands by their frequency, as for the band gains. It acts on every articulation: the T60 belongs to the mode, not to the strike. On an edge strike with a band envelope it also stretches the envelope's decay after its peak, the onset unchanged, with the factor ring length × the band's multiplier ("Ring length" above).
 
 In the window it is the **RING LENGTH PER BAND** row in the CYMBAL group: 22 vertical sliders on a logarithmic scale with ×1 in the middle, numeric entry, a per-band reset and FLAT (every band to ×1).
 
-A change applies live, at the next control point (about 2.8 ms). The new decay coefficients are computed off the audio thread and handed over; there the ringing state is re-anchored, as a strike does without its contact, and every ringing strike decays at the new rates from that sample. Nothing steps. With every band at ×1 nothing changes and nothing is computed.
+A change applies live, at the next control point (about 2.8 ms). The new decay coefficients are computed off the audio thread and handed over; there the ringing state is re-anchored, as a strike does without its contact, and every ringing strike decays at the new rates from that sample. Nothing steps. A band envelope keeps the factors of its strike; the change reaches the envelopes of the strikes after it. With every band at ×1 nothing changes and nothing is computed.
 
 #### Stereo
 

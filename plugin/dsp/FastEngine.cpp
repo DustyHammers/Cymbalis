@@ -396,6 +396,8 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
                                     ? modeBand_[size_t((bandStart_[bs] + bandEnd_[bs] - 1) / 2)]
                                     : static_cast<uint8_t>(std::min(band, kExcitationBands - 1));
         }
+        envRingInv_.assign(size_t(z.numBands), 1.0);
+        computeEnvRing();
     }
     if (p.contactPermode)
     {
@@ -415,8 +417,12 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
         for (auto* v : {&c.epsK, &c.pt})
             v->assign(np, 0.0);
         if (envBake_)
+        {
             for (auto* v : {&c.Er, &c.Ei, &c.fd, &c.em0, &c.em1, &c.emax})
                 v->assign(np, 0.0f);
+            for (auto* v : {&c.envPkT, &c.envPk, &c.envRingInv})
+                v->assign(size_t(z.numBands), 0.0);
+        }
     }
 
     actIdx_.assign(np, 0);
@@ -1577,10 +1583,15 @@ void FastEngine::sumComponents(double t0, double t1) noexcept
                 te0 = (te0 - static_cast<double>(c.envDelay[j])) * static_cast<double>(c.envSpeed[j]);
                 te1 = (te1 - static_cast<double>(c.envDelay[j])) * static_cast<double>(c.envSpeed[j]);
             }
-            std::fill(c.em0.begin() + bandStart_[bs], c.em0.begin() + bandEnd_[bs],
-                      static_cast<float>(envelopeAt(c, band, te0)));
-            std::fill(c.em1.begin() + bandStart_[bs], c.em1.begin() + bandEnd_[bs],
-                      static_cast<float>(envelopeAt(c, band, te1)));
+            // Then the ring length acts on the envelope as read (ringEnvelope).
+            double e0 = envelopeAt(c, band, te0), e1 = envelopeAt(c, band, te1);
+            if (c.envRing)
+            {
+                e0 = ringEnvelope(c, band, te0, e0);
+                e1 = ringEnvelope(c, band, te1, e1);
+            }
+            std::fill(c.em0.begin() + bandStart_[bs], c.em0.begin() + bandEnd_[bs], static_cast<float>(e0));
+            std::fill(c.em1.begin() + bandStart_[bs], c.em1.begin() + bandEnd_[bs], static_cast<float>(e1));
         }
     }
     rhoAny_ = rho;
@@ -2149,7 +2160,10 @@ void FastEngine::startEnvelope(Component& c, double velocity) noexcept
             }
         }
         envPeakS_[size_t(band)] = kPeak * z.frameDurS;
-        m *= c.envScale * (z.rmsCorrection.empty() ? 1.0 : z.rmsCorrection[size_t(band)]);
+        const double corr = z.rmsCorrection.empty() ? 1.0 : z.rmsCorrection[size_t(band)];
+        c.envPkT[size_t(band)] = kPeak * z.frameDurS;
+        c.envPk[size_t(band)] = m * c.envScale * corr; // as envelopeAt scales it
+        m *= c.envScale * corr;
         std::fill(c.emax.begin() + bandStart_[size_t(band)], c.emax.begin() + bandEnd_[size_t(band)],
                   static_cast<float>(m));
     }
@@ -2177,6 +2191,38 @@ double FastEngine::envelopeAt(const Component& c, int band, double te) const noe
     };
     const double corr = z.rmsCorrection.empty() ? 1.0 : z.rmsCorrection[size_t(band)];
     return (at(k0) * (1.0 - fr) + at(k1) * fr) * c.envScale * corr;
+}
+
+// The ring length on a band envelope (docs/TUNING.md, "Ring length"): e = envelopeAt(c, band,
+// te), unchanged up to the band's peak; after it, its level relative to the peak in dB divided
+// by the band's ring factor x, peak x (e / peak)^(1/x): the recorded decay's T60 times x.
+double FastEngine::ringEnvelope(const Component& c, int band, double te, double e) const noexcept
+{
+    const size_t bs = size_t(band);
+    const double inv = c.envRingInv[bs], pk = c.envPk[bs];
+    if (inv == 1.0 || te <= c.envPkT[bs] || ! (pk > 0.0))
+        return e;
+    return pk * std::pow(std::min(e / pk, 1.0), inv);
+}
+
+// Each envelope band's ring factor: the ring length x the per-band ring length of its
+// onset-shift band (that of its middle mode). A strike takes them (envRingOn_), and its window
+// is the Window times the largest factor of a band with modes, within 1 .. 2.
+void FastEngine::computeEnvRing() noexcept
+{
+    envRingOn_ = false;
+    double xMax = 1.0;
+    for (size_t band = 0; band < envRingInv_.size(); ++band)
+    {
+        const double x = ringLengthBuilt_ * ringBandNow_[npzShiftBand_[band]];
+        envRingInv_[band] = 1.0 / x;
+        if (x != 1.0 && bandEnd_[band] > bandStart_[band])
+        {
+            envRingOn_ = true;
+            xMax = std::max(xMax, x);
+        }
+    }
+    envWindowStretch_ = std::min(xMax, 2.0);
 }
 
 // The in-frame decay (line 892: exp(-ln1000 (t mod 20 ms) / T60)) at `elapsed` seconds
@@ -2761,7 +2807,7 @@ FastEngine::Component* FastEngine::cascadeComponent() noexcept
     c.order = ++componentOrder_;
     c.contactStart = sampleNow_;
     c.tStrike = timeBase_ + static_cast<double>(sampleNow_) / sr_;
-    c.onsetOn = c.rampOn = c.envOn = c.envShift = false;
+    c.onsetOn = c.rampOn = c.envOn = c.envShift = c.envRing = false;
     c.settled = true;
     c.eps = std::max(1.0 - oscWash_, 0.0); // wash_damp 1: the mode's own T60
     std::fill(c.epsK.begin(), c.epsK.end(), c.eps);
@@ -2900,6 +2946,8 @@ void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecayS
     if (c.ringBand != ringBandNow_ && c.ringLength == ringLengthBuilt_)
     {
         ringBandNow_ = c.ringBand;
+        if (envBake_)
+            computeEnvRing(); // envelope strikes: from the next strike
         // Each mode's decay rate -ln(1000) / T60 with the new factors.
         auto rates = [&](double* out) {
             tunedT60(c, bake_->pythonT60S.data(), bake_->freqHz.data(), n_, out);
@@ -3267,10 +3315,18 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     comp.envOn = envOn_ && edgeFrac > 0.1;
     comp.envWindow = envWindowS_;
     comp.frameRestart = frameRestart_;
+    // The ring length on its envelope, kept with the strike (a later change applies from the
+    // next strike); a factor above 1 lengthens the window with it (docs/TUNING.md).
+    comp.envRing = comp.envOn && envRingOn_;
     if (comp.envOn)
     {
         CYM_PROF_BEGIN(strikeEnvelope);
         startEnvelope(comp, velocity);
+        if (comp.envRing)
+        {
+            std::copy(envRingInv_.begin(), envRingInv_.end(), comp.envRingInv.begin());
+            comp.envWindow = envWindowS_ * envWindowStretch_;
+        }
         CYM_PROF_END(strikeEnvelope);
     }
     CYM_PROF_BEGIN(strikeOnsetShift);
