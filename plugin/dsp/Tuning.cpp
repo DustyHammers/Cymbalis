@@ -17,6 +17,7 @@ const std::vector<CymbalKey>& cymbalKeys()
         { "edge_velocity_remap_exponent", &CymbalTuning::edgeRemapExponent },
         { "tau_ref_ms", &CymbalTuning::tauRefMs },
         { "ring_length", &CymbalTuning::ringLength },
+        { "edge_ring_keep_ms", &CymbalTuning::edgeRingKeepMs },
         { "wander_depth", &CymbalTuning::wanderDepth },
         { "wander_rate_hz", &CymbalTuning::wanderRateHz },
         { "edge_wander_depth", &CymbalTuning::edgeWanderDepth },

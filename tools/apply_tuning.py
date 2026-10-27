@@ -41,7 +41,8 @@ tuning block it already has). Then:
     (ring_length_bands, stereo_pan_bands, stereo_width_bands) as 22 values. The plugin's own mechanisms (energy cascade
     cascade_*, loud-band damping loud_damp_*, re-hit damping rehit_damp_* with its weights
     per articulation, rehit_damp_weights) have a neutral value as the bake's own (amount 0:
-    off; weights 1). A value equal to the bake's own drops out of the block, so applying the
+    off; weights 1), and so does the ring length's kept onset on edge envelopes
+    (edge_ring_keep_ms, 60 ms). A value equal to the bake's own drops out of the block, so applying the
     same file twice gives the same bake.
 
 Nothing else in the bake changes. Running it on resources/presets is a separate task, done
@@ -63,7 +64,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Per-cymbal values (plugin/dsp/Tuning.cpp cymbalKeys) and the bake's own value of each.
 CYMBAL_KEYS = [
-    'output_gain_db', 'edge_velocity_remap_exponent', 'tau_ref_ms', 'ring_length',
+    'output_gain_db', 'edge_velocity_remap_exponent', 'tau_ref_ms', 'ring_length', 'edge_ring_keep_ms',
     'wander_depth', 'wander_rate_hz', 'edge_wander_depth', 'edge_wander_rate',
     'mf_sens_depth', 'mf_sens_tau', 'mf_min_scale', 'mf_max_scale',
     'mf_bow_weight', 'mf_edge_weight', 'mf_bell_weight', 'mf_lo_hz', 'mf_hi_hz',
@@ -79,6 +80,7 @@ CYMBAL_KEYS = [
 # The plugin's own whole-cymbal mechanisms (plugin/dsp/Tuning.h): their neutral values (the
 # bake's own) and allowed ranges; (lo, hi, whole) with whole = a whole number.
 PLUGIN_KEYS = {
+    'edge_ring_keep_ms': (60.0, (0.0, 300.0, False)),
     'cascade_amount': (0.0, (0.0, 1.0, False)),
     'cascade_threshold_db': (-12.0, (-120.0, 40.0, False)),
     'cascade_speed_ms': (100.0, (0.1, 60000.0, False)),
