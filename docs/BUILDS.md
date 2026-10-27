@@ -24,7 +24,7 @@ The plugin is an instrument. Note-ons on MIDI channel 16 (selectable in the edit
 
 ## The compiled-in presets
 
-The plugin plays four presets, baked from the Python engine's data with NL off. Choose one in the CYMBAL box:
+The plugin plays five presets, baked from the Python engine's data with NL off. Choose one in the CYMBAL box:
 
 | Preset | Bake | Source |
 |---|---|---|
@@ -32,19 +32,21 @@ The plugin plays four presets, baked from the Python engine's data with NL off. 
 | SMOKE FLAT RIDE | `resources/presets/smoke_flat_ride.bake.json` | `presets/602/` |
 | HAMMERED THIN RIDE | `resources/presets/hammered_thin_ride.bake.json` | `presets/bettis/` |
 | SWISH | `resources/presets/swish.bake.json` | `presets/swish/` |
+| RAVEN | `resources/presets/raven.bake.json` | `presets/raven/` |
 
 The JSON bakes are the source: `tools/bake_preset.py`, `tools/apply_tuning.py` and the tuning files read and write them. The plugin embeds each bake in a packed form instead (in its binary, through BinaryData): when CMake builds the plugin's binary data, `tools/pack_bake` packs every bake into `<build>/presets/<preset>.bake.pack`. A packed bake (`plugin/PackedBake.h`) is the bake's JSON tree in binary, compressed with zlib: every number as its exact double (or int32 where it is exactly one), so the plugin loads exactly the values the JSON gives. It carries a format version and an FNV-1a checksum; a packed preset that does not match them fails to load with a message, like a bake with another format version. The tool checks each packed bake before writing it: it must unpack to the same JSON, bit for bit, and load as a bake, or the build stops.
 
-After a change to a preset's data, regenerate its bake (`--preset nova`, `602`, `bettis` or `swish`):
+After a change to a preset's data, regenerate its bake (`--preset nova`, `602`, `bettis`, `swish` or `raven`):
 
 ```
 python tools/bake_preset.py --preset nova --overrides '{"nl_amount": 0.0}' --out resources/presets/nova_ride.bake.json
 python tools/bake_preset.py --preset 602 --overrides '{"nl_amount": 0.0}' --out resources/presets/smoke_flat_ride.bake.json
 python tools/bake_preset.py --preset bettis --overrides '{"nl_amount": 0.0}' --out resources/presets/hammered_thin_ride.bake.json
 python tools/bake_preset.py --preset swish --overrides '{"nl_amount": 0.0}' --out resources/presets/swish.bake.json
+python tools/bake_preset.py --preset raven --overrides '{"nl_amount": 0.0}' --out resources/presets/raven.bake.json
 ```
 
-Each bake also holds its slots' level trims, in `slots[].level_trim.gain_db`. The plugin uses only that number; edit it to adjust a slot's level by ear. Re-baking drops the trims. Nova Ride's trims give a velocity-0.9 hit at each slot's base position the same 1-second RMS as one on BOW (tip). The 602, Bettis and Swish trims work at velocity 1.0 over the first 500 ms. BOW, the 602's CENTER (a copy of its BOW) and Swish's BOW_SHOULDER are matched to Nova's BOW (tip); Swish's BELL_SHOULDER takes BELL's SPEAR target. The shoulder copies of the 602 and Bettis, and Nova's EDGE (a copy of BOW2), start with their sources' trims. EDGE and BELL go to the level their SPEAR captures have relative to BOW, capped where one hit would peak above 0.9 before the output gain and the Volume knob (`docs/PORT_MAP.md`, "602 and Bettis", decision 5). To measure trims again with the plugin's engine and store them (`--peak-limit 0.25365` is that 0.9 after the −11 dB output gain, see "Headroom" below):
+Each bake also holds its slots' level trims, in `slots[].level_trim.gain_db`. The plugin uses only that number; edit it to adjust a slot's level by ear. Re-baking drops the trims. Nova Ride's trims give a velocity-0.9 hit at each slot's base position the same 1-second RMS as one on BOW (tip). The 602, Bettis, Swish and Raven trims work at velocity 1.0 over the first 500 ms. BOW, the 602's CENTER (a copy of its BOW) and Swish's BOW_SHOULDER are matched to Nova's BOW (tip); Swish's and Raven's BELL_SHOULDER take BELL's SPEAR target. The shoulder copies of the 602, Bettis and Raven, and Nova's EDGE (a copy of BOW2), start with their sources' trims. EDGE and BELL go to the level their SPEAR captures have relative to BOW, capped where one hit would peak above 0.9 before the output gain and the Volume knob (`docs/PORT_MAP.md`, "602 and Bettis", decision 5). To measure trims again with the plugin's engine and store them (`--peak-limit 0.25365` is that 0.9 after the −11 dB output gain, see "Headroom" below):
 
 ```
 cmake --build build --target cymbalis_trims
@@ -56,9 +58,13 @@ build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/hammered_thin
 python tools/set_level_trims.py resources/presets/hammered_thin_ride.bake.json trims.json
 build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/swish.bake.json --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target BELL=5.3 --spear-target BELL_SHOULDER=5.3 --spear-target EDGE=4.7 --peak-limit 0.25365 --json trims.json
 python tools/set_level_trims.py resources/presets/swish.bake.json trims.json
+build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/raven.bake.json --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target BELL=4.72 --spear-target BELL_SHOULDER=4.72 --spear-target EDGE=16.23 --peak-limit 0.25365 --json trims.json
+python tools/set_level_trims.py resources/presets/raven.bake.json trims.json
 ```
 
-**Headroom (2026-10-25).** The trims match single hits to Nova's BOW (tip) with no headroom, and hits add up while the cymbal rings, so a host's master clipped in normal playing. Every preset therefore has the same cymbal output gain, −11 dB (`output_gain_db` in its tuning block, set with `tools/apply_tuning.py`); the trims, velocity curves and everything else are unchanged. Measured in memory through the plugin at 44.1 kHz, Volume 0 dB, velocity 1.0, with a stress pattern (8 s of BOW (tip) eighth notes at 120 BPM with EDGE on every beat 1, then 4 s of EDGE alone on every quarter note), first run after loading:
+A new preset gets its tuning block (the output gain below, and any velocity curve) before its trims are measured: the trims tool measures the reference, Nova, with its −11 dB, so a bake without it would come out 11 dB too quiet once the block is added (Raven, `docs/PORT_MAP.md`, "Raven").
+
+**Headroom (2026-10-25).** The trims match single hits to Nova's BOW (tip) with no headroom, and hits add up while the cymbal rings, so a host's master clipped in normal playing. Every preset therefore has the same cymbal output gain, −11 dB (`output_gain_db` in its tuning block, set with `tools/apply_tuning.py`); the trims, velocity curves and everything else are unchanged. RAVEN, added later (2026-10-27), has the same −11 dB; it is not in the table below. Measured in memory through the plugin at 44.1 kHz, Volume 0 dB, velocity 1.0, with a stress pattern (8 s of BOW (tip) eighth notes at 120 BPM with EDGE on every beat 1, then 4 s of EDGE alone on every quarter note), first run after loading:
 
 | Preset | Stress peak before | After −11 dB | Worst of 16 phase sequences, after | Loudest single hit (worst of 128), before → after |
 |---|---|---|---|---|

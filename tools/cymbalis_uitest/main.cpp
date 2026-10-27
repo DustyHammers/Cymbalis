@@ -20,6 +20,7 @@
 //   preset    click the CYMBAL box, then HAMMERED THIN RIDE            -> preset hammered_thin_ride
 //   shoulder  (after preset) click the BELL stick box, then SHOULDER  -> stick_hammered_thin_ride_BELL SHOULDER
 //   swish     click the CYMBAL box, then SWISH (the fourth)          -> preset swish
+//   raven     click the CYMBAL box, then RAVEN (the fifth)           -> preset raven
 //   wheel     the scroll wheel over the five knobs, a note box, a stick box, the CYMBAL and
 //             MIDI CHANNEL boxes                                     -> state and parameters unchanged
 //
@@ -369,6 +370,13 @@ private:
             s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + 3.0f * 40.0f + 20.0f), wait };
             s.key = "preset";
             s.expected = "swish";
+        }
+        else if (name == "raven")
+        {
+            // The same list; RAVEN is its fifth row.
+            s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + 4.0f * 40.0f + 20.0f), wait };
+            s.key = "preset";
+            s.expected = "raven";
         }
         else
         {

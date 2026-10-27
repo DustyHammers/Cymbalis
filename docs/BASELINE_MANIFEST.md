@@ -102,3 +102,30 @@ Imported 2026-10-17 from `Cymbalis_V8_Package_602_final.zip`, unchanged. SPEAR f
 - The edge NPZ has 20 bands, 100-10000 Hz, six velocities (0.2-1.0) and one velw for all velocities.
 - `Swish_Baseline1.json` sets no `edge_band_env_path`, so in Python V19 the NPZ band envelopes never run for Swish (the session summary's "_eb_band_scale not active").
 - Photo: `resources/ui/Swish.png` (737 x 747, MD5 `ca66de93c2aae1d2808046f235a1661f`). Recompressed losslessly on 2026-10-24 (oxipng); its decoded pixels are those of the imported file (MD5 `e3b7230754d0a940be6c8e697cabb650`).
+
+
+# Raven (20" dry ride)
+
+Built 2026-10-26 in the project session from Kris's SPEAR captures (Bell V1-V4, Bow V1-V7, Edge V1-V7; bow and bell with the stick tip, edge with the shoulder) by `build_preset.py` (kept in the project with its documentation, `SPEAR_Preset_Builder.md`, not in this repo). SPEAR files excluded. No baseline render check: the plugin is the reference (see `CLAUDE.md`).
+
+| File | MD5 |
+|---|---|
+| `presets/raven/Raven_Baseline1.json` | `f03d08ee5d10cf351a9019c2a876b52e` |
+| `presets/raven/data/raven_bell_excitation_ratios.json` | `bdb90d26d2a9bc1a0119c5aea7fcd1ef` |
+| `presets/raven/data/raven_build_info.json` | `528384e41cdc74e2e9a6715fdf1db33a` |
+| `presets/raven/data/raven_edge_benv_trigger.json` | `0a1f20be7c52c42897acec4b6a01b042` |
+| `presets/raven/data/raven_edge_excitation_ratios_neutral.json` | `d6fbff7aa816a34abc62dcd140ee5175` |
+| `presets/raven/data/raven_edge_npz_data.json` | `5614a439a80f2a4e47e2ee427743fce5` |
+| `presets/raven/data/raven_edge_vel_tilt.json` | `7ca4b1dfe389f178b93ed34c827464b6` |
+| `presets/raven/data/raven_fingerprint.json` | `30cb99e57c5f501fe5761227473c5242` |
+| `presets/raven/data/raven_pkt_data.json` | `700bda1627e8f58e0e2486f2160efc85` |
+
+## Notes
+
+- Bettis format: fingerprint (900 modes), bell ratios, neutral edge ratios, NPZ edge (7 velocities) with band envelopes, edge pk_t by velocity, edge velocity tilt, and an all-zero edge band envelope file that switches the NPZ envelope on in Python (as the 602's).
+- Mode bank: partials of the bow and edge captures clustered within a 0.3 % span; exc from the bow captures only (80th percentile of each capture's normalised peak amplitude), gamma 0.8, modes below 400 Hz x0.65. 682 modes seen in at least 2 bow captures, plus 218 seen only in the edge captures (exc 0: they sound on edge strikes through the NPZ velw).
+- T60: log-linear decay fits of the partials, amplitude-weighted median per mode, scaled per one-third-octave band so that the modelled band decay matches the SPEAR band decay of the three loudest bow captures; `t60_scale` 1.0.
+- The NPZ edge uses the plugin's 22 one-third-octave bands exactly (89.09 Hz x 2^(j/3)), so the Tuning window's onset-shift bands map one to one. The band envelopes are the SPEAR band levels (loudest band = 1); `edge_rms_correction` divides each band by its velw norm (geometric mean over the velocities, within x0.25-x4), so a band's level follows the SPEAR band level. It acts after the engine normalises the envelope, so a sparse band cannot become the envelope's peak.
+- Velocities from the captures' levels (RMS of the first 500 ms relative to the loudest capture of each articulation), in `data/raven_build_info.json` with the SPEAR level targets: BELL +4.72 dB and EDGE +16.23 dB above BOW (Bell V4, Edge V7 against Bow V7).
+- Build-up (LF and MF) as Bettis and Swish; wander, stick click and NL off. No velocity tables: bell and bow use the hertz law (v^2).
+- Photo: `resources/ui/Raven.png` (712 x 712, transparent, MD5 `cc487ecac64859067d9b978806558763`), made 2026-10-26 from Kris's only photo, which is taken at an angle: the rim ellipse (about 34 degrees of tilt) stretched back to a circle, the bell moved back to the centre by a correction that fades out towards the rim, and the light and colour evened out towards the other photos (Kris chose this version, B). The bell (or centre) zone ends at about 0.29 of the photo's radius.

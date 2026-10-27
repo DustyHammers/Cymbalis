@@ -51,6 +51,11 @@ PRESETS = {
         'slots': [('BELL', None, 1.0), ('BOW', 'bow_tip', 0.5), ('BOW_SHOULDER', 'bow_shoulder', 0.5),
                   ('EDGE', None, 0.0)],
     },
+    'raven': {
+        'preset': os.path.join(REPO, 'presets', 'raven', 'Raven_Baseline1.json'),
+        'articulations': None,
+        'slots': [('BELL', None, 1.0), ('BOW', None, 0.5), ('EDGE', None, 0.0)],
+    },
 }
 
 

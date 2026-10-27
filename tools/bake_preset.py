@@ -25,7 +25,7 @@ can prove that it parsed every value exactly.
     record tau_ref_ms for hertz_vel_scale.
   * copied entries (COPIED_ENTRIES): an entry with another entry's data under its own
     articulation id ("articulation", "copy_of"), tuned on its own in the plugin: the
-    shoulder articulations of the 602 and Bettis, the 602's CENTER (a copy of its BOW) and
+    shoulder articulations of the 602, Bettis and Raven, the 602's CENTER (a copy of its BOW) and
     Nova's EDGE (a copy of BOW2, bow_shoulder, at the edge position). A copy named like an
     existing entry replaces it in place: Nova's EDGE was the base preset at the edge.
   * the edge band envelope switched on by the bake (ENVELOPE_ON): Python builds the NPZ band
@@ -74,6 +74,8 @@ COPIED_ENTRIES = {
     'bettis': [('BELL_SHOULDER', 'bell_shoulder', 'BELL', 1.0),
                ('BOW_SHOULDER', 'bow_shoulder', 'BOW', 0.5)],
     'swish': [('BELL_SHOULDER', 'bell_shoulder', 'BELL', 1.0)],
+    'raven': [('BELL_SHOULDER', 'bell_shoulder', 'BELL', 1.0),
+              ('BOW_SHOULDER', 'bow_shoulder', 'BOW', 0.5)],
 }
 # Presets whose NPZ edge band envelope the bake switches on (docs/PORT_MAP.md, "Swish"):
 # preset -> the reason recorded in edge_npz.envelope_set_by.
