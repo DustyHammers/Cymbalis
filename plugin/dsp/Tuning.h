@@ -98,6 +98,9 @@ struct CymbalTuning
     // Per one-third-octave band: a further multiplier of the T60 of its modes (on top of
     // ringLength). 1 everywhere: no change.
     std::array<double, kExcitationBands> ringBand = kUnitBands;
+    // Kept onset (edge strikes with a band envelope): the ring length scales the envelope's
+    // time after this, k + (t - k) / (ring length x per-band ring length). 0 .. 300 ms.
+    double edgeRingKeepMs = 60.0;
     double wanderDepth = 0.0, wanderRateHz = 1.5;
     double edgeWanderDepth = 0.0, edgeWanderRate = 0.0;
     double mfDepth = 0.0, mfTau = 5.0, mfMin = 0.3, mfMax = 1.0;

@@ -64,6 +64,7 @@ const std::vector<Field>& cymbalFields()
         { "edge_velocity_remap_exponent", "Edge capture curve", "", Group::cymbal, Needs::npzEdge, 0.25, 2.0, 2, &C::edgeRemapExponent, false, Scope::edge },
         { "tau_ref_ms", "Bow brightness vs velocity (tau_ref)", "ms", Group::cymbal, Needs::noVelocityTables, 0.05, 8.0, 2, &C::tauRefMs, false, Scope::hertz },
         { "ring_length", "Ring length (x t60_scale)", "x", Group::cymbal, Needs::always, 0.5, 2.0, 2, &C::ringLength, true },
+        { "edge_ring_keep_ms", "Kept onset (ring length acts after it)", "ms", Group::cymbal, Needs::envelope, 0.0, 300.0, 0, &C::edgeRingKeepMs, false, Scope::edge },
 
         { "stereo_width", "Overall width (x every band's width)", "%", Group::stereo, Needs::always, 0.0, kWidthMax, 0, &C::stereoWidth, false },
         { "right_highpass_hz", "Right-channel high-pass frequency", "Hz", Group::stereo, Needs::always, kHighPassMinHz, kHighPassMaxHz, 0, &C::highPassHz, false },
