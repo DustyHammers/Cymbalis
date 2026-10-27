@@ -750,3 +750,55 @@ Every other key either has its default effect or is not read by the engine: `alp
 - **The calibration does not see the envelope or the click.** The calibration strike (`_compute_calib_scalar`) is an edge strike without the band envelope and without `_add_transient`; the trims make up for the level.
 - **BOW (tip) peaks at 1.45 at velocity 1.0** (99th percentile, with its trim) before the Volume knob, from the click on top of the strike. BOW is never capped, by the rule; BOW_SHOULDER, without the click, peaks at 1.11.
 - **The click is bow-only.** `stick_bell_weight` and `stick_edge_weight` are 0: there is no click at the bell or the edge, and a bow row blended towards the edge clicks less, with its bow fraction.
+
+## Raven (20" dry ride)
+
+Added 2026-10-27. Raven was built from Kris's SPEAR captures (`docs/BASELINE_MANIFEST.md`, Raven) in the Bettis format, and needs no new engine code: every mechanism it uses is one the 602, Bettis and Swish already have. It is baked with `nl_amount = 0`, as its JSON sets. NOVA RIDE, SMOKE FLAT RIDE, HAMMERED THIN RIDE and SWISH bake and play bit for bit as before (checked: re-baked with the new tools they are identical but for `created_utc`, and `tools/cymbalis_identity` finds the engine's output identical to main's in memory).
+
+### What Raven uses
+
+| | Raven (`Raven_Baseline1.json`) |
+|---|---|
+| Modes | 900, 34 Hz–19.8 kHz (none above 22.05 kHz). 682 seen in at least two bow captures; 218 seen only in the edge captures, with `exc` 0: they sound only on edge strikes, through the NPZ velw |
+| Velocity response | `hertz_vel_scale`, `tau_ref_ms` 0.2 (no participation tables) |
+| Edge strikes (`edge_frac > 0.1`) | NPZ velw coupling (7 velocities, 0.119–1.0) and the NPZ band envelope, switched on by the all-zero trigger file (as the 602's): 22 bands, exactly the plugin's thirds, 8.7 s of data, 9.2 s window, `edge_rms_correction` per band, level exponent `vel_gain_power` 1.0 |
+| Bow and bell strikes | standard coupling with the neutral edge ratios (all 1) and the bell ratios (from the bell captures) as position weights |
+| Onset ramp data | bow pk_t, velocity-bracketed edge pk_t (7 velocities), edge velocity tilt (4 bands) |
+| Contact | none (`permode_contact` false, `tip_contact_ms` 0): instantaneous strikes |
+| MF / LF accumulators | MF in boost mode (depth 0.4, tau 3 s, max 1.4, 500 Hz–4 kHz; bow 1, edge 1, bell 0.2); LF in boost mode (depth 0.2, tau 3 s, max 1.7, cutoff 1.5 kHz; bow 0.5, edge 1, bell 0.1), applied as live-engine decision 6. As Swish |
+| Wander, `vel_len_tilt`, onset gains, bloom, sparkle, stick click, attack noise, NL, edge level boost, rate jitter, hammering tilt | off |
+
+Every other key either has its default effect or is not read by the engine (`alpha_contact`, `stick_hp`, `atk_len`, `atk_dec`). With NPZ data, the engine is built as for the 602 and Bettis (their decisions 2 and 3): the shared oscillator carries no decay, and the control block divides the 20 ms frame.
+
+### Bake and plugin
+
+- **Bake** (`tools/bake_preset.py --preset raven`; `tools/ab_common.py` `PRESETS`): `BELL` (1.0), `BOW` (0.5) and `EDGE` (0.0), no overlays, and the copies `BELL_SHOULDER` (`bell_shoulder`, from `BELL`) and `BOW_SHOULDER` (`bow_shoulder`, from `BOW`) (`COPIED_ENTRIES`), as Bettis. No `ENVELOPE_ON` entry: the trigger file switches the envelope on (`edge_npz.envelope_active` true). Every entry has the same calibration scalar, 0.0766 (Python's calibration strike is an edge strike at velocity 1.0).
+- **Preset** RAVEN, after SWISH (`plugin/SlotTable.h`): HAMMERED THIN RIDE's rows (`docs/UI_SPEC.md` section 8); photo `Raven.png`; hit display bell zone 0.29 of the photo's radius, measured from the photo.
+
+### Live-engine decisions for Raven
+
+1. **Slots.** BELL and BELL2 play `bell` (TIP) or `bell_shoulder` (SHOULDER); BOW and BOW2 play `bow` (TIP) or `bow_shoulder` (SHOULDER); EDGE plays `edge` (SHOULDER, fixed). Every row with a choice starts on TIP. Raven has no shoulder captures for the bell and bow: the copies are tip data, to be tuned by ear (`docs/TUNING.md`; they have the NOVA SHOULDER PROFILE button).
+2. **Level trims**, as for the 602, Bettis and Swish (their decision 5): velocity 1.0, the mean level of the first 500 ms. BOW is matched to Nova BOW (tip) and never capped. BELL and EDGE go to their SPEAR targets (Bell V4 and Edge V7 against Bow V7, `data/raven_build_info.json`: BELL +4.72 dB and EDGE +16.23 dB above BOW), capped where one hit (99th percentile of 1024 hits) would peak above 0.9 before the output gain. `bell_shoulder` takes BELL's target; the copies come out with their sources' trims, since they have their data. The tuning block (below) was applied first: the trims tool measures Nova's BOW with Nova's −11 dB output gain, so the cap is 0.25365 after Raven's (0.9 × 10^(−11/20)), and a bake without the block would have been trimmed 11 dB too low. Measured with `tools/cymbalis_trims --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target BELL=4.72 --spear-target BELL_SHOULDER=4.72 --spear-target EDGE=16.23 --peak-limit 0.25365`. Each bake entry records its target, cap and reason (`slots[].level_trim`).
+
+   | Entry | SPEAR target vs BOW | Trim | Level vs BOW | Peak of one hit with trim (99th percentile), before the output gain | Capped |
+   |---|---|---|---|---|---|
+   | BOW | 0 dB | −1.23 dB | 0 dB | 1.26 | no (BOW) |
+   | BOW_SHOULDER | 0 dB (BOW's) | −1.23 dB | 0 dB | 1.26 | no (BOW's target) |
+   | BELL | +4.72 dB | +10.61 dB | −2.44 dB | 0.90 | yes (+17.77 dB would peak at 2.06) |
+   | BELL_SHOULDER | +4.72 dB (BELL's) | +10.61 dB | −2.44 dB | 0.90 | yes (as BELL) |
+   | EDGE | +16.23 dB | +3.77 dB | −0.88 dB | 0.90 | yes (+20.88 dB would peak at 6.46) |
+
+3. **Tuning block** (`tools/apply_tuning.py`), as the other presets have: `output_gain_db` −11.0 (headroom, `docs/BUILDS.md`), and on `bell`, `bow`, `bell_shoulder` and `bow_shoulder` the velocity curve that makes the Hertz law's v² linear (`vel_0.6_db` 4.437, `vel_0.3_db` 10.458; Bettis's decision 7). EDGE is not touched: its NPZ captures are already linear in velocity. At velocity 1.0 the curve is 0 dB, so it does not change the trims.
+4. **Seed.** The strike-phase sequence starts from Raven's seed, 13.
+
+### Things in the Raven data or engine that look wrong (ported as they are)
+
+- **The NPZ envelopes are a little shorter than the window, and some low modes ring far longer.** The envelopes run 8.7 s (435 frames) for a 9.2 s window; the last frame is held to the window's end. The strike then rings from its own decay, which for the longest low modes is far above the held envelope, so their level jumps up 9.2 s after an edge strike. Relative to the strike's coupling, the median mode of band 1 (116–127 Hz) goes from −84 dB to −23 dB, band 4 (224–283 Hz) from −60 dB to −29 dB, and band 9 (713–898 Hz) from nothing to −61 dB. It is the same mechanism as the 602's and Bettis's window ends, but there the envelopes end well before their windows and the low modes ring less.
+- **`edge_rms_correction` caps the lowest bands.** It divides each band by its velw norm, within ×0.25–×4. Bands 0, 2 and 4 would need ×24.4, ×15.6 and ×9.2 and stay at ×4, so on edge strikes they are about 16, 12 and 7 dB below their SPEAR level. Band 1 has ×1.0 where its norm asks ×28.5 (about 29 dB below): at velocity 0.194 neither of its two modes has any velw, which is probably why the build left it at 1. Band 3 (178–224 Hz) has no modes.
+- **Band 1's two modes take turns with velocity.** 115.8 Hz has velw at 0.119, 0.348, 0.528 and 1.0; 127.4 Hz at 0.438 and 0.725; at 0.194 neither. The interpolation between captures crossfades between them.
+- **Five modes have T60 exactly 30 s** (127, 170, 299, 343 and 403 Hz), which looks like a cap in the build's decay fits.
+- **92 modes have bell ratio 0**, 46 of them with `exc` above 0: a bell strike leaves those out; a bow strike plays them.
+- **BELL and EDGE stay well below their SPEAR targets** once capped (BELL −2.44 dB against +4.72, EDGE −0.88 dB against +16.23). EDGE at its target would peak at 6.5 before the output gain; its SPEAR level is that of Edge V7, a much harder strike than the loudest bow capture.
+- **BOW peaks at 1.26 at velocity 1.0** before the output gain (99th percentile, with its trim): BOW is never capped, by the rule.
+- **The pk_t ramps have no effect** with the envelope on (as for Bettis): the edge pk_t and the edge velocity tilt are inaudible, and bow strikes never ramp. With EDGE ONSET ENVELOPE off, edge modes ramp in over up to 8.4 s (the edge pk_t's longest).
+- **The calibration does not see the envelope** (as for the 602, Bettis and Swish); the trims make up for the level.

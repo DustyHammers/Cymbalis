@@ -11,6 +11,7 @@ Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE add
 | `SmokeFlatRide.png` (714×718) | SMOKE FLAT RIDE photo (602) |
 | `HammeredThinRide.png` (709×713) | HAMMERED THIN RIDE photo (Bettis) |
 | `Swish.png` (737×747) | SWISH photo |
+| `Raven.png` (712×712, transparent) | RAVEN photo: a top-down view made from Kris's angled photo (`docs/BASELINE_MANIFEST.md`, Raven) |
 | `knob.png` (128×11648) | Knob filmstrip: 91 frames of 128×128, about 7 o'clock to 5 o'clock, frame 45 at 12 o'clock |
 | `calibril.ttf` | Calibri Light, used for all drawn text. If it is missing, use Carlito Regular (SIL OFL, include its licence file) until Kris adds it |
 
@@ -27,7 +28,7 @@ Layout v3, approved by Kris 2026-10-25 (mockup v3): layout v2 with the MIDI CHAN
 
 | Element | Position | Notes |
 |---|---|---|
-| Cymbal photo | top-left 447,50, size 680×680 (centre 787,390) | Changes per preset. Each photo is fitted into this area with its aspect ratio kept, centred (Nova 674×680, Smoke Flat Ride 676×680, Hammered Thin Ride 676×680, Swish 671×680). Layout v1: 434,94, 707×713 |
+| Cymbal photo | top-left 447,50, size 680×680 (centre 787,390) | Changes per preset. Each photo is fitted into this area with its aspect ratio kept, centred (Nova 674×680, Smoke Flat Ride 676×680, Hammered Thin Ride 676×680, Swish 671×680, Raven 680×680). Layout v1: 434,94, 707×713 |
 | CYMBAL preset dropdown | box 61,371, 277×62 | Shows the preset name, e.g. **NOVA RIDE**. Changing preset changes the name, the photo and the sound. A name too wide to sit centred clear of the arrow is centred between the box's left edge and the arrow, with tighter letter spacing |
 | MIDI CHANNEL dropdown | box 1404,30, 110×36 (centred on x 1459), top right, above the column headers | Channels 1–16, in a 4×4 grid that opens below the box (box bottom + 3), right-aligned with its right edge, so it stays inside the window. The channel number is left-aligned, its ink 12 units in from the box's left edge (where a long preset name starts), in the preset name's font, size and colour. Its label is on the same line, to the left (section 4). Layout v2: 61,501, 277×62 under the CYMBAL box, grid above it; layout v1: 632,936 |
 | TUNING button | box 61,501, 277×62 (the CYMBAL box's size), under the CYMBAL box | Tuning code only (`CYMBALIS_WITH_TUNING`, `docs/TUNING.md`); in a lean build this place is empty. Outlined like the preset and channel boxes (section 5). **TUNING** centred, drawn like the preset name; no arrow and no label above it. Its Tuning window still opens where it did in layout v2: below 1404,30, 110×36 (the button's layout v2 place, now the MIDI CHANNEL box), right-aligned with it. Layout v2: 1404,30, 110×36 |
@@ -104,7 +105,7 @@ Hover, open and selected states use only colours from this table.
 - **No mouse wheel:** the mouse wheel and trackpad scrolling change no value anywhere in the editor: not the knobs, the note boxes or the dropdowns. A value changes only by a deliberate click and drag, a menu choice or MIDI learn (and the host's automation of the five parameters). The wheel still scrolls the note list.
 - **MIDI note box:** vertical drag changes the note. A click opens a menu: MIDI LEARN, RESET DEFAULT, NONE (unassign) and a scrollable list of every note, C-2 (0) to G8 (127), each with its number; the current note is outlined and in view. No separate Learn button is added.
 - **Stick box:** where the preset has both stick versions, a click opens a TIP / SHOULDER popup. In every preset the bell and bow rows (BELL, BOW, BELL2, BOW2) have both; section 8 lists what each plays. EDGE is SHOULDER only in every preset: its box shows SHOULDER and opens nothing. Which rows offer the choice comes from the slot table (`StickDisplay::choice` in `plugin/SlotTable.h`). Each preset keeps its own choices: picking SHOULDER on a row in one preset leaves the other presets' rows as they are. The choices are saved with the session (section 9); they are not automatable parameters.
-- **Dropdowns:** the preset dropdown is a list of NOVA RIDE, SMOKE FLAT RIDE, HAMMERED THIN RIDE and SWISH, below its box; the channel dropdown is a 4×4 grid below its box, right-aligned with it. A choice sets the preset or the channel.
+- **Dropdowns:** the preset dropdown is a list of NOVA RIDE, SMOKE FLAT RIDE, HAMMERED THIN RIDE, SWISH and RAVEN, below its box; the channel dropdown is a 4×4 grid below its box, right-aligned with it. A choice sets the preset or the channel.
 - **TUNING button** (tuning code only): a click opens the Tuning window, a second click closes it; while it is open the button has the open outline `#A5A299`, and the bronze `#76624C` on hover otherwise. Cmd-click on the CYMBALIS logo opens it too (`docs/TUNING.md`).
 - **Preset switch:** the chosen preset's data is loaded into the one cymbal engine and plays from the next audio block (PORT_MAP, "602 and Bettis", decision 6). If the old cymbal is still ringing it fades out over 30 ms; it does not carry over. Notes, the MIDI channel and the knobs stay as they are; the rows play the stick choices of the chosen preset.
 - Knob value readout while dragging: Velocity "100%", Volume "+0.0 dB", Pan "C" (or "L 35", "R 35"), Blend 1 "BELL 100 · 0 BOW", Blend 2 "BOW 100 · 0 EDGE".
@@ -197,6 +198,18 @@ Each copy has its own level trim, initialised to its source's. In both presets e
 
 Every row with a choice starts on TIP. bell_shoulder has its own level trim, measured with BELL's target (`docs/PORT_MAP.md`, "Swish").
 
+**RAVEN** (20" dry ride, `resources/presets/raven.bake.json`): as HAMMERED THIN RIDE, no overlays. The existing bell and bow are TIP. Their SHOULDER versions, **bell_shoulder** and **bow_shoulder**, are copies of them, tuned on their own; untuned they play exactly as their TIP versions.
+
+| Slot | TIP (default) | SHOULDER | Stick box |
+|---|---|---|---|
+| BELL | bell (`BELL`) | bell_shoulder (`BELL_SHOULDER`: a copy of `BELL`) | TIP / SHOULDER popup |
+| BOW | bow (`BOW`) | bow_shoulder (`BOW_SHOULDER`: a copy of `BOW`) | TIP / SHOULDER popup |
+| EDGE | — | edge (`EDGE`) | SHOULDER (fixed) |
+| BELL2 | bell | bell_shoulder | TIP / SHOULDER popup |
+| BOW2 | bow | bow_shoulder | TIP / SHOULDER popup |
+
+Every row with a choice starts on TIP. Each copy starts with its source's level trim (`docs/PORT_MAP.md`, "Raven").
+
 ## 9. Parameters — exactly these five, no others
 Placeholder ranges until Kris revises them. At the defaults the plugin sounds the same as the Python engine.
 
@@ -231,7 +244,7 @@ Approved by Kris, 2026-10-25. UI only: it changes nothing in the sound and adds 
 - The editor reads the FIFO on its timer and keeps up to 16 active marks; when full, the oldest is dropped. The hit layer's own timer runs at 30 Hz only while a mark is active and stops when none is. While none is, the editor's existing 30 Hz timer (notes, MIDI learn) reads the FIFO, and a hit starts the layer's timer.
 
 **Where a mark goes.**
-- Each preset has a bell (or centre) zone as a fraction of the photo's radius, `bellRadius` in the slot table (`plugin/SlotTable.h`): NOVA RIDE 0.40, SMOKE FLAT RIDE 0.16 (centre zone), HAMMERED THIN RIDE 0.40, SWISH 0.22. Kris may adjust them.
+- Each preset has a bell (or centre) zone as a fraction of the photo's radius, `bellRadius` in the slot table (`plugin/SlotTable.h`): NOVA RIDE 0.40, SMOKE FLAT RIDE 0.16 (centre zone), HAMMERED THIN RIDE 0.40, SWISH 0.22, RAVEN 0.29 (measured from its photo). Kris may adjust them.
 - The photo's radius R = 0.495 × the fitted photo's width; the centre is the photo area's centre (787,390).
 - Radius fraction from strike position p, linear between p = 1.0 → 0.6 × bellRadius, p = 0.5 → (bellRadius + 0.95) / 2, and p = 0.0 → 0.97.
 - Angle: 4 to 5 o'clock, 45° clockwise from 3 o'clock plus a random offset uniform in ±12°. The editor draws the random number, never the audio thread.
