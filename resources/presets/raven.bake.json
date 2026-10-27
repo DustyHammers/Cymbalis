@@ -381,7 +381,32 @@
         "mf_bell_weight": 0.2,
         "nl_amount": 0.0
       },
-      "contact_force_python": null
+      "contact_force_python": null,
+      "level_trim": {
+        "gain_db": 10.61,
+        "spear_target_db": 4.72,
+        "capped": true,
+        "capped_level_db": -2.44249771229374,
+        "cap_reason": "At its SPEAR target (+4.7 dB vs BOW, trim +17.77 dB) one velocity-1.0 hit would peak at 0.58 (99th percentile of 1024 hits) before the Volume knob, above the 0.25 limit; capped to the largest trim that keeps that peak at 0.25.",
+        "uncapped_gain_db": 17.77249771229374,
+        "measured_gain_db": 10.61,
+        "level_db": -2.44249771229374,
+        "measured_by": "tools/cymbalis_trims (FastEngine)",
+        "sample_rate": 44100,
+        "velocity": 1.0,
+        "strike_time_s": 0.0,
+        "window_s": 0.5,
+        "position": 1.0,
+        "rms": 0.00747586058398456,
+        "reference_slot": "Nova BOW",
+        "reference_rms": 0.03359588448412165,
+        "peak": 0.253401711460576,
+        "first_hit_peak": 0.17437696063386526,
+        "peak_limit": 0.25365,
+        "peak_hits": 1024,
+        "peak_percentile": 99.0,
+        "peak_window_s": 1.0
+      }
     },
     {
       "name": "BOW",
@@ -524,7 +549,28 @@
         "mf_bell_weight": 0.2,
         "nl_amount": 0.0
       },
-      "contact_force_python": null
+      "contact_force_python": null,
+      "level_trim": {
+        "gain_db": -1.23,
+        "spear_target_db": 0,
+        "measured_gain_db": -1.2296332383686202,
+        "level_db": 0.0,
+        "measured_by": "tools/cymbalis_trims (FastEngine)",
+        "sample_rate": 44100,
+        "velocity": 1.0,
+        "strike_time_s": 0.0,
+        "window_s": 0.5,
+        "position": 0.5,
+        "rms": 0.038705059661665826,
+        "reference_slot": "Nova BOW",
+        "reference_rms": 0.03359588448412165,
+        "peak": 0.35410641379604735,
+        "first_hit_peak": 0.19349646464052433,
+        "peak_limit": 0.25365,
+        "peak_hits": 1024,
+        "peak_percentile": 99.0,
+        "peak_window_s": 1.0
+      }
     },
     {
       "name": "EDGE",
@@ -667,7 +713,32 @@
         "mf_bell_weight": 0.2,
         "nl_amount": 0.0
       },
-      "contact_force_python": null
+      "contact_force_python": null,
+      "level_trim": {
+        "gain_db": 3.77,
+        "spear_target_db": 16.23,
+        "capped": true,
+        "capped_level_db": -0.8823935846099444,
+        "cap_reason": "At its SPEAR target (+16.2 dB vs BOW, trim +20.88 dB) one velocity-1.0 hit would peak at 1.82 (99th percentile of 1024 hits) before the Volume knob, above the 0.25 limit; capped to the largest trim that keeps that peak at 0.25.",
+        "uncapped_gain_db": 20.882393584609943,
+        "measured_gain_db": 3.77,
+        "level_db": -0.8823935846099444,
+        "measured_by": "tools/cymbalis_trims (FastEngine)",
+        "sample_rate": 44100,
+        "velocity": 1.0,
+        "strike_time_s": 0.0,
+        "window_s": 0.5,
+        "position": 0.0,
+        "rms": 0.019663752536383847,
+        "reference_slot": "Nova BOW",
+        "reference_rms": 0.03359588448412165,
+        "peak": 0.25359850408787393,
+        "first_hit_peak": 0.15702539501218304,
+        "peak_limit": 0.25365,
+        "peak_hits": 1024,
+        "peak_percentile": 99.0,
+        "peak_window_s": 1.0
+      }
     },
     {
       "name": "BELL_SHOULDER",
@@ -812,7 +883,32 @@
         "mf_bell_weight": 0.2,
         "nl_amount": 0.0
       },
-      "contact_force_python": null
+      "contact_force_python": null,
+      "level_trim": {
+        "gain_db": 10.61,
+        "spear_target_db": 4.72,
+        "capped": true,
+        "capped_level_db": -2.44249771229374,
+        "cap_reason": "At its SPEAR target (+4.7 dB vs BOW, trim +17.77 dB) one velocity-1.0 hit would peak at 0.58 (99th percentile of 1024 hits) before the Volume knob, above the 0.25 limit; capped to the largest trim that keeps that peak at 0.25.",
+        "uncapped_gain_db": 17.77249771229374,
+        "measured_gain_db": 10.61,
+        "level_db": -2.44249771229374,
+        "measured_by": "tools/cymbalis_trims (FastEngine)",
+        "sample_rate": 44100,
+        "velocity": 1.0,
+        "strike_time_s": 0.0,
+        "window_s": 0.5,
+        "position": 1.0,
+        "rms": 0.00747586058398456,
+        "reference_slot": "Nova BOW",
+        "reference_rms": 0.03359588448412165,
+        "peak": 0.253401711460576,
+        "first_hit_peak": 0.17437696063386526,
+        "peak_limit": 0.25365,
+        "peak_hits": 1024,
+        "peak_percentile": 99.0,
+        "peak_window_s": 1.0
+      }
     },
     {
       "name": "BOW_SHOULDER",
@@ -957,7 +1053,28 @@
         "mf_bell_weight": 0.2,
         "nl_amount": 0.0
       },
-      "contact_force_python": null
+      "contact_force_python": null,
+      "level_trim": {
+        "gain_db": -1.23,
+        "spear_target_db": 0,
+        "measured_gain_db": -1.2296332383686202,
+        "level_db": 0.0,
+        "measured_by": "tools/cymbalis_trims (FastEngine)",
+        "sample_rate": 44100,
+        "velocity": 1.0,
+        "strike_time_s": 0.0,
+        "window_s": 0.5,
+        "position": 0.5,
+        "rms": 0.038705059661665826,
+        "reference_slot": "Nova BOW",
+        "reference_rms": 0.03359588448412165,
+        "peak": 0.35410641379604735,
+        "first_hit_peak": 0.19349646464052433,
+        "peak_limit": 0.25365,
+        "peak_hits": 1024,
+        "peak_percentile": 99.0,
+        "peak_window_s": 1.0
+      }
     }
   ],
   "sources": {
@@ -1060,5 +1177,34 @@
     "envelope_active": true,
     "onset_s": 9.2,
     "frame_decay_period_s": 0.02
+  },
+  "tuning": {
+    "format": "cymbalis-tuning",
+    "version": 1,
+    "applied_by": "tools/apply_tuning.py",
+    "applied_utc": "2026-10-27T00:14:26Z",
+    "source": "raven.tuning.json",
+    "source_date": "2026-10-27T00:00:00.000+00:00",
+    "cymbal": {
+      "output_gain_db": -11.0
+    },
+    "articulations": {
+      "bell": {
+        "vel_0.6_db": 4.437,
+        "vel_0.3_db": 10.458
+      },
+      "bow": {
+        "vel_0.6_db": 4.437,
+        "vel_0.3_db": 10.458
+      },
+      "bell_shoulder": {
+        "vel_0.6_db": 4.437,
+        "vel_0.3_db": 10.458
+      },
+      "bow_shoulder": {
+        "vel_0.6_db": 4.437,
+        "vel_0.3_db": 10.458
+      }
+    }
   }
 }
