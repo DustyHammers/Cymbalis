@@ -74,7 +74,7 @@ jobs:
           BENCH=build/tools/cymbalis_bench/cymbalis_bench
           {
             echo "### Fast engine CPU on ${CPU}"
-            for PRESET in nova_ride smoke_flat_ride hammered_thin_ride swish; do
+            for PRESET in nova_ride smoke_flat_ride hammered_thin_ride swish raven; do
               BAKE="resources/presets/${PRESET}.bake.json"
               echo
               echo "#### ${PRESET}"
@@ -94,7 +94,7 @@ jobs:
         timeout-minutes: 15
         run: |
           BAKES=()
-          for PRESET in nova_ride smoke_flat_ride hammered_thin_ride swish; do
+          for PRESET in nova_ride smoke_flat_ride hammered_thin_ride swish raven; do
             BAKES+=(--bake "resources/presets/${PRESET}.bake.json")
           done
           {
@@ -167,8 +167,8 @@ jobs:
 
       # Real mouse events through the AU and VST3 wrappers: EDGE's default note (64), then change
       # the MIDI channel, the slot notes (drag, menu, RESET DEFAULT, note list), a stick, the
-      # preset and a stick of that preset, then SWISH, in the editor, and check the plugin's
-      # saved state; the scroll wheel over the knobs and boxes must change nothing. Then click
+      # preset and a stick of that preset, then SWISH and RAVEN, in the editor, and check the
+      # plugin's saved state; the scroll wheel over the knobs and boxes must change nothing. Then click
       # TUNING: the Tuning window must be visible, in front of the editor and attached to it;
       # the wheel over its sliders and numeric boxes must change nothing; a second click hides
       # it (tools/cymbalis_uitest).
@@ -176,7 +176,7 @@ jobs:
         timeout-minutes: 5
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
-          STEPS="edge channel drag reset none edgereset list stick preset shoulder swish wheel tuning wheeltuning tuningclose"
+          STEPS="edge channel drag reset none edgereset list stick preset shoulder swish raven wheel tuning wheeltuning tuningclose"
           echo "--- VST3 ---"
           "$UITEST" "$PWD/$VST3" $STEPS
           echo "--- AU ---"
