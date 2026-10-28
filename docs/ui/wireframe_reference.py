@@ -15,6 +15,10 @@ History:
   - HAMMERED THIN RIDE's dented mesh is simplified once per preset (Cymbal2._simplify_lines):
     about 12,000 segments instead of 32,300, with no visible change.
   SWISH and RAVEN are unchanged.
+- 2026-10-28, approved by Kris (round 3): SWISH from his new photos: gold lathing (2.1-5.7" and
+  8.2" to the rim), a copper bell (edge 2.1", top 1.85") and a copper hammered band (5.7-8.2"),
+  the hammering pressed into the mesh in three packed zones (dent_zones), shallow (dent_depth
+  1.5), with the flange's lathe lines following the dents (lines_follow_dents).
 """
 import math
 import numpy as np
@@ -33,6 +37,8 @@ from scipy.interpolate import PchipInterpolator
 NOVA_PHOTO_LUM = [4.7, 5.1, 6.1, 6.9, 7.7, 60.5, 121.6, 110.4, 112.0, 109.3, 110.9, 111.9, 108.7, 107.5, 117.0, 92.3, 98.7, 97.3, 95.5, 95.1, 93.8, 94.1, 93.4, 92.3, 93.8, 92.6, 93.7, 91.8, 92.4, 89.3, 91.6, 92.1, 93.9, 92.9, 96.1, 99.1, 101.5, 104.0, 106.7, 110.1, 112.7, 116.4, 123.9, 118.9, 102.3, 97.4, 96.7, 97.1, 98.7, 98.6, 98.0, 101.7, 100.2, 101.5, 103.2, 102.8, 103.0, 105.6, 105.7, 105.2, 108.0, 108.3, 108.5, 109.8, 110.7, 110.4, 110.0, 111.2, 114.5, 115.2, 128.3, 108.1, 77.0, 79.6, 80.5, 109.5, 120.5, 115.0, 119.5, 94.6, 64.8, 62.6, 60.5, 58.4, 57.0, 56.1, 55.0, 54.9, 54.8, 55.0, 55.0, 55.6, 55.7, 55.7, 55.6, 55.3, 54.8, 55.4, 54.7, 54.9, 55.7, 56.0, 56.2, 56.3, 56.6, 57.0, 57.5, 57.9, 58.8, 59.4, 59.7, 60.4, 60.5, 61.5, 62.2, 63.0, 63.4, 64.3, 65.3, 65.3, 65.5, 66.6, 67.9, 68.6, 69.7, 70.2, 71.0, 72.5, 73.0, 72.8, 73.8, 74.2, 75.9, 76.2, 78.5, 80.6, 80.6, 81.8, 82.7, 83.9, 83.2, 83.0, 82.4, 81.8, 81.5, 80.8, 81.0, 82.3, 83.2, 82.3, 82.3, 82.7, 83.6, 82.7, 83.7, 82.9, 84.1, 83.1, 83.9, 83.6, 83.9, 83.0, 82.4, 81.7, 81.1, 81.1, 80.5, 80.2, 78.8, 78.5, 77.6, 76.7, 76.6, 76.0, 75.6, 73.9, 73.1, 71.4, 73.0, 72.6, 72.1, 71.3, 72.6, 71.3, 71.3, 69.7, 69.4, 68.6, 68.6, 67.9, 67.7, 67.6, 73.4, 93.1, 93.8, 92.2, 91.5, 89.9, 87.3, 90.4]
 HAMMERED_PHOTO_LUM = [0, 0, 0, 0, 0, 83.2, 81.7, 77.1, 79.7, 76.9, 76.9, 76.2, 79.3, 76.0, 81.8, 77.0, 66.3, 72.0, 71.3, 68.9, 70.3, 66.7, 67.7, 72.4, 70.2, 63.4, 65.0, 62.7, 64.5, 64.6, 65.1, 64.5, 65.8, 66.5, 69.8, 68.5, 73.5, 76.0, 76.8, 78.6, 79.7, 84.0, 80.3, 78.7, 77.7, 77.9, 78.5, 80.1, 80.4, 78.2, 78.6, 78.9, 77.2, 77.6, 76.1, 72.7, 73.6, 72.7, 73.7, 73.1, 71.9, 71.3, 76.6, 77.1, 76.5, 77.4, 75.8, 73.3, 71.6, 71.8, 72.4, 73.3, 75.2, 72.7, 73.7, 72.1, 71.6, 70.4, 71.9, 73.4, 71.5, 67.3, 62.9, 59.8, 56.2, 52.6, 54.8, 55.2, 54.5, 55.9, 55.1, 55.8, 54.9, 52.9, 53.6, 52.6, 53.1, 52.7, 51.1, 52.2, 50.7, 50.7, 51.9, 51.2, 53.6, 54.7, 54.7, 54.6, 54.2, 54.4, 55.3, 54.3, 55.1, 55.2, 55.3, 54.9, 54.5, 55.9, 56.3, 55.9, 55.2, 55.6, 55.3, 55.8, 56.0, 57.4, 57.0, 56.6, 57.5, 57.5, 57.4, 57.6, 57.6, 56.7, 56.6, 57.4, 59.3, 58.7, 58.9, 60.0, 59.3, 59.5, 59.5, 60.1, 58.8, 57.8, 57.0, 57.2, 56.7, 56.7, 56.8, 57.8, 57.9, 58.2, 59.2, 59.0, 59.2, 61.7, 62.6, 63.2, 63.7, 63.6, 64.6, 63.3, 63.8, 64.6, 62.9, 62.1, 61.9, 60.4, 60.5, 60.3, 58.6, 57.9, 57.5, 56.7, 57.8, 57.9, 57.9, 58.3, 60.8, 64.2, 65.2, 66.5, 67.4, 70.8, 70.5, 70.0, 69.7, 69.8, 69.8, 69.4, 68.9, 67.6, 66.8, 66.4, 66.5, 66.7, 63.8, 68.0]
 SMOKE_PHOTO_LUM = [0, 0, 0, 0, 0, 68.1, 100.8, 100.0, 89.0, 79.4, 81.0, 82.2, 82.5, 82.4, 79.8, 78.0, 76.7, 77.0, 77.1, 81.6, 83.3, 85.9, 88.0, 90.2, 95.5, 101.5, 102.0, 102.3, 99.8, 99.4, 102.5, 106.7, 106.4, 106.9, 107.6, 109.4, 112.4, 114.3, 115.3, 114.6, 115.1, 116.9, 118.9, 119.8, 119.4, 120.7, 119.9, 121.0, 122.9, 123.4, 122.8, 118.9, 119.1, 118.6, 119.9, 119.7, 119.6, 120.0, 120.0, 119.9, 122.6, 121.6, 121.3, 121.4, 123.0, 120.4, 122.2, 120.5, 120.5, 118.7, 116.7, 116.2, 116.7, 115.6, 113.9, 113.3, 112.6, 113.4, 115.0, 115.0, 114.3, 114.9, 113.6, 114.7, 113.5, 114.0, 112.6, 113.0, 112.3, 111.6, 111.3, 111.7, 110.6, 108.7, 106.9, 107.3, 107.2, 108.2, 106.2, 104.3, 104.1, 103.2, 102.4, 102.5, 103.0, 103.7, 103.4, 102.0, 101.4, 100.5, 99.9, 98.6, 98.8, 97.9, 97.5, 96.5, 95.6, 94.7, 95.0, 93.3, 92.0, 90.5, 89.7, 89.6, 89.3, 89.1, 87.5, 87.6, 87.1, 86.6, 85.7, 85.5, 85.7, 84.0, 82.7, 80.7, 79.2, 79.4, 78.5, 78.4, 77.5, 76.9, 75.8, 76.0, 75.3, 76.1, 76.7, 76.6, 76.4, 74.6, 74.4, 74.0, 73.7, 73.3, 72.9, 72.8, 71.7, 70.8, 70.5, 70.4, 71.3, 71.4, 70.6, 69.5, 70.1, 69.7, 69.0, 69.3, 70.0, 70.2, 69.3, 68.4, 56.3, 44.3, 39.1, 59.7, 87.6, 99.7, 91.3, 68.5, 47.7, 40.5, 39.5, 39.2, 38.5, 37.7, 37.3, 37.6, 37.5, 37.7, 38.3, 48.2, 79.2, 91.0, 73.0, 49.8, 40.9, 39.4, 39.5, 43.5]
+
+SWISH_PHOTO_LUM = [83.9, 85.2, 85.7, 89.1, 85.2, 71.3, 66.8, 73.0, 69.6, 68.4, 61.0, 62.6, 67.2, 65.9, 61.9, 61.0, 66.8, 75.4, 75.4, 73.7, 68.6, 66.7, 70.7, 72.5, 72.5, 74.3, 75.8, 76.5, 77.5, 84.6, 89.1, 90.4, 91.1, 90.1, 96.8, 93.6, 94.9, 102.8, 119.7, 118.6, 118.2, 121.1, 118.2, 121.4, 121.3, 119.3, 117.1, 116.3, 116.2, 116.6, 118.5, 115.6, 119.1, 117.6, 118.2, 117.8, 116.6, 118.9, 116.9, 117.6, 117.8, 117.2, 115.4, 116.9, 115.0, 114.9, 114.2, 114.6, 116.4, 114.9, 117.6, 117.5, 117.7, 115.8, 116.5, 116.0, 117.7, 119.6, 121.0, 120.0, 120.4, 120.2, 119.1, 120.3, 119.9, 119.6, 120.1, 120.8, 121.5, 120.2, 120.9, 118.6, 117.9, 119.4, 121.4, 120.0, 118.0, 116.2, 115.6, 116.2, 114.6, 117.9, 114.8, 99.2, 73.9, 68.5, 68.7, 67.3, 70.2, 72.0, 67.8, 64.8, 66.0, 66.9, 69.4, 67.0, 69.5, 72.5, 73.1, 74.4, 71.5, 72.6, 72.7, 72.7, 69.6, 71.8, 70.8, 69.4, 69.0, 69.2, 69.3, 75.9, 67.8, 70.3, 68.8, 64.2, 69.4, 67.0, 64.6, 64.1, 69.6, 74.5, 73.6, 68.1, 67.3, 69.5, 71.5, 72.9, 82.6, 97.5, 108.9, 109.0, 107.2, 107.8, 108.1, 105.8, 105.1, 107.1, 106.5, 106.8, 107.5, 111.5, 118.2, 115.4, 117.9, 122.4, 127.1, 133.6, 132.4, 130.0, 126.4, 122.1, 119.5, 120.6, 120.5, 119.7, 117.7, 121.3, 125.2, 134.1, 128.0, 133.8, 127.2, 128.9, 131.4, 130.7, 129.9, 124.9, 122.7, 118.4, 122.8, 122.9, 126.4, 120.6, 118.5, 115.8, 114.3, 115.3, 127.6, 56.2]   # from Kris's 2026-10-28 photo, left and right radii
 
 CYMBALS = {
     'nova': dict(title='NOVA RIDE', R=10.0, bell=0.22, hammer='scale', hammer_zone=(0.43, 0.925),
@@ -74,12 +80,22 @@ CYMBALS = {
                   zone_edges=False, gold_step=0.004, photo_lum=SMOKE_PHOTO_LUM, lum_smooth=1, bell_line=False),
     # 22" china: a small squat bell with steep sides, a straight bow sloping down, then the outer
     # flange (last ~2.5") turned up. Lathed all over, no hammering.
-    'swish': dict(title='SWISH', R=11.0, bell=0.22, hammer=None, hammer_zone=(0, 0),
-                  profile=[(0.0, 1.55), (1.4, 1.48), (2.0, 1.25), (2.35, 0.92), (2.6, 0.80), (4.5, 0.66),
+    # Lathing measured 2026-10-28 from Kris's new top-down photo (hole centre, horizontal radii,
+    # rim 238 px = 11"): the bell is unlathed dark copper to 2.1"; a gold lathed ring 2.1-5.7"; a dark
+    # hammered copper band 5.7-8.2"; the outer flange gold and lathed from 8.2" to the rim, with
+    # hammer marks near the rim. The hammering is pressed into the mesh (Cymbal2, dent_zones).
+    'swish': dict(title='SWISH', R=11.0, bell=0.19, hammer=None, hammer_zone=(0, 0),
+                  # the bell's edge at 2.1", where the photo's copper dome ends (Kris 2026-10-28)
+                  profile=[(0.0, 1.85), (0.6, 1.81), (1.2, 1.63), (1.6, 1.33), (1.9, 1.02), (2.1, 0.86), (2.3, 0.79), (4.5, 0.66),
                            (7.0, 0.42), (8.4, 0.24), (8.75, 0.22), (9.4, 0.30), (10.2, 0.50), (11.0, 0.78)],
-                  lathe=[(0.0, 1.0)], fine_lathe=[(0.03, 0.21), (0.24, 0.78), (0.80, 1.0)]),
-    # Raven, 20" dry ride: a small lathed bell, a moderately high bow with scale-shaped hammering,
-    # two bright lathed rings at the edge.
+                  lathe=[], fine_lathe=[], gold=[(0.19, 0.52), (0.745, 1.0)],
+                  gold_step=0.014, photo_lum=SWISH_PHOTO_LUM, bell_line=False, dent_contrast=6.0, dent_depth=1.5,
+                  ring_step=5, lines_follow_dents=True,
+                  copper=[(0.0, 0.19), (0.52, 0.745)],      # the hammered copper patina: the bell and the band
+                  # dents: (from, to, how many to try to place, size range a, b/a range, depth scale)
+                  dent_zones=[(0.04, 0.185, 60, (0.017, 0.024), (0.6, 0.95), 1.0),     # the bell
+                              (0.525, 0.74, 400, (0.019, 0.027), (0.55, 0.95), 1.0),   # the dark band
+                              (0.83, 0.985, 160, (0.022, 0.034), (0.45, 0.8), 0.8)]),  # near the rim
     # (Kris: smaller, shorter bell with its own deep lathing; larger hammer scales running in a
     # spiral around the surface.)
     'raven': dict(title='RAVEN', R=10.0, bell=0.22, hammer='spiral', hammer_zone=(0.25, 0.93),
@@ -92,6 +108,7 @@ ROSE_DARK = np.array([58, 74, 112], np.float32)     # BGR: deep rose bronze
 ROSE_LIGHT = np.array([150, 176, 222], np.float32)  # BGR: light rose gold (top, under the spotlight)
 LATHE = np.array([110, 160, 205], np.float32)       # BGR: lathed bright bronze
 GOLD = np.array([140, 200, 236], np.float32)        # BGR: pale gold of a deep-lathed bell
+COPPER = np.array([66, 110, 196], np.float32)       # BGR: hammered copper patina (SWISH)
 HOT = np.array([215, 238, 255], np.float32)         # warm white for the lit pattern
 ARC_T = np.linspace(0, 1, 6)
 
@@ -383,7 +400,7 @@ class Cymbal:
 # sampled finely (197 radial x 480 around) so the rings and spokes bend through each dent; the
 # lighting picks out the dent walls. The defaults are the approved values.
 # =====================================================================================
-DENTED = {'hammered'}
+DENTED = {'hammered', 'swish'}
 
 
 
@@ -400,11 +417,14 @@ class Cymbal2:
         self.tf = np.linspace(0, 2 * np.pi, nt, endpoint=False)
         self.RR, self.TT = np.meshgrid(self.rf, self.tf, indexing='ij')
         self.XX, self.YY = self.RR * np.cos(self.TT), self.RR * np.sin(self.TT)
-        self.dent_depth = dent_depth; self.dent_size = dent_size; self.lip = lip; self.dent_light = dent_light; self.dent_contrast = dent_contrast; self.small_dents = small_dents; self.simplify = simplify
+        self.dent_depth = dent_depth; self.dent_size = dent_size; self.lip = lip
+        dent_contrast = c.get('dent_contrast', dent_contrast)
+        self.dent_depth = c.get('dent_depth', self.dent_depth); self.dent_light = dent_light; self.dent_contrast = dent_contrast; self.small_dents = small_dents; self.simplify = simplify
         self.dents = self._make_dents()
         self.DZ = self._dz(self.XX, self.YY)
         self.Z0 = self.height(self.RR) + self.DZ
         # rings drawn: every ring_step-th radial sample, plus the bell edge and the rim
+        ring_step = c.get('ring_step', ring_step)
         idx = set(range(0, len(self.rf), ring_step)) | {len(self.rf) - 1}
         self.bell_ring = int(np.argmin(np.abs(self.rf - b))); idx.add(self.bell_ring)
         self.ring_idx = sorted(idx)
@@ -418,6 +438,9 @@ class Cymbal2:
         for z in c.get('gold', []):
             self.gold_mask |= (self.RR >= z[0]) & (self.RR <= z[1])
         self.lumR = np.array([self.lum(r) * self.gold_k(r) for r in self.rf])[:, None] * np.ones((1, nt))
+        self.copper_mask = np.zeros_like(self.RR, bool)
+        for z in c.get('copper', []):
+            self.copper_mask |= (self.RR >= z[0]) & (self.RR <= z[1])
         self._lines()
         # modal shapes: radial parts precomputed on the fine grid
         self.Jr = [jv(m, z * self.rf) for (m, n, z) in MODES]
@@ -432,10 +455,6 @@ class Cymbal2:
         A ring keeps at least every 6th sample (80 around) and a spoke every 5th, so the flex
         stays smooth. simplify=None keeps every sample."""
         nr, nt = len(self.rf), self.NTf
-        if not self.simplify:
-            self.ring_keep = {i: np.arange(nt) for i in self.ring_idx}
-            self.spoke_keep = {j: np.arange(nr) for j in self.spoke_idx}
-            return
         LGT = np.array([0.0, -0.55, 0.83])
         def shade_of(Zs):
             dzr = np.gradient(Zs, self.rf, axis=0)
@@ -443,7 +462,11 @@ class Cymbal2:
             ny_ = -(dzr * np.sin(self.TT) + dzt * np.cos(self.TT))
             return np.clip((ny_ * LGT[1] + LGT[2]) / np.sqrt(dzr ** 2 + dzt ** 2 + 1), 0, 1)
         f = np.clip(1 + self.dent_contrast * (shade_of(self.Z0) - shade_of(self.Z0 - self.DZ)), 0.25, 1.9)
+        self.f_rest = f
         U = self.SCALE
+        if not self.simplify:
+            self.ring_keep = {i: np.arange(nt) for i in self.ring_idx}
+            self.spoke_keep = {j: np.arange(nr) for j in self.spoke_idx}
         def keep(P, floor):
             k = np.zeros(len(P), bool); k[0] = k[-1] = True; k[::floor] = True; st = [(0, len(P) - 1)]
             while st:
@@ -462,7 +485,24 @@ class Cymbal2:
         for j in self.spoke_idx:
             P = np.stack([self.XX[:, j] * U, self.YY[:, j] * U, self.Z0[:, j] * U, 4 * f[:, j]], 1)
             self.spoke_keep[j] = keep(P, 5)
-        self.segments = sum(len(v) for v in self.ring_keep.values()) + sum(len(v) - 1 for v in self.spoke_keep.values())
+        if self.simplify:
+            self.segments = sum(len(v) for v in self.ring_keep.values()) + sum(len(v) - 1 for v in self.spoke_keep.values())
+        # surface lines (lathe rings, edge lines, bell grooves) follow the dents: sampled on the
+        # mesh's 480 angles at the nearest mesh radius, with the dent height and dent light,
+        # simplified like the rings (80 points at least)
+        self.tex_fit = []
+        for (kind, r, inten) in self.tex:
+            ir = int(np.argmin(np.abs(self.rf - r)))
+            dz = self.DZ[ir]; fr = f[ir]
+            if not self.c.get('lines_follow_dents', False):
+                ks = np.arange(0, nt, 10); self.tex_fit.append((kind, r, inten, ks, np.zeros(len(ks)), np.ones(len(ks)))); continue
+            if self.simplify and np.abs(dz).max() > 1e-6:
+                P = np.stack([r * np.cos(self.tf) * U, r * np.sin(self.tf) * U, dz * U, 4 * fr], 1)
+                ks = keep(np.vstack([P, P[:1]]), 6); ks = ks[ks < nt]
+            else:
+                ks = np.arange(0, nt, 6)
+            self.tex_fit.append((kind, r, inten, ks, dz[ks], fr[ks]))
+        self.segments_lines = sum(len(t[3]) for t in self.tex_fit)
 
     def lum(self, r):
         if not hasattr(self, '_lum'):
@@ -490,6 +530,20 @@ class Cymbal2:
         """(x, y, a (along), b (across), rot, depth) in units of R."""
         rng = np.random.default_rng(11)
         c = self.c; h = c['hammer']; z0, z1 = c['hammer_zone']; D = []
+        if 'dent_zones' in c:
+            # packed zones of dents (SWISH): random places, no overlap, as many as fit up to n
+            for (q0, q1, n, (amin, amax), (bmin, bmax), dk) in c['dent_zones']:
+                placed, tries = 0, 0
+                while placed < n and tries < 40 * n:
+                    tries += 1
+                    r = math.sqrt(rng.uniform(q0 ** 2, q1 ** 2)); t = rng.uniform(0, 2 * np.pi)
+                    a = rng.uniform(amin, amax); bb = a * rng.uniform(bmin, bmax)
+                    x, y = r * math.cos(t), r * math.sin(t)
+                    if any(math.hypot(x - d[0], y - d[1]) < 0.85 * (a + d[2]) for d in D):
+                        continue
+                    D.append((x, y, a, bb, t + rng.uniform(-0.6, 0.6), 0.0042 * (a / 0.03) ** 0.7 * rng.uniform(0.7, 1.1) * dk))
+                    placed += 1
+            return D
         if h == 'dimple':
             area = np.pi * (z1 ** 2 - z0 ** 2); n = int(area / 0.011 / self.dent_size ** 1.5)
             for _ in range(n):
@@ -644,6 +698,8 @@ class Cymbal2:
         C = np.where(self.lathe_mask[..., None], Cl, C)
         Cg = C * 0.25 + GOLD * ((0.42 + 0.48 * light) * self.lumR)[..., None]
         C = np.where(self.gold_mask[..., None], Cg, C)
+        Cc = np.minimum(COPPER * (0.95 + 0.55 * light)[..., None], 255)
+        C = np.where(self.copper_mask[..., None], Cc, C)
         # dent walls: shadowed sides fade, lit sides brighten toward the highlight
         f = np.clip(1 + self.dent_contrast * dshade, 0.25, 1.9)[..., None]
         C = np.where(f > 1, C + (ROSE_LIGHT * 1.15 - C) * np.clip(f - 1, 0, 1), C * f)
@@ -665,16 +721,17 @@ class Cymbal2:
                 col = 0.5 * (C[i, j] + C[i2, j])
                 cv2.line(layer, tuple(Pj[i]), tuple(Pj[i2]), tuple(float(x) for x in col), 1, cv2.LINE_AA, shift=2)
         # lathe lines and bell grooves (follow the tilt, spin and profile)
-        tq = np.linspace(0, 2 * np.pi, 97)
-        for (kind, r, inten) in self.tex:
+        for (kind, r, inten, ks, dzl, frl) in self.tex_fit:
+            tq = np.append(self.tf[ks], self.tf[ks[0]] + 2 * np.pi); dzl = np.append(dzl, dzl[0]); frl = np.append(frl, frl[0])
             x = r * np.cos(tq); y = r * np.sin(tq)
             X2, Y2 = x * cs - y * sn, x * sn + y * cs
-            Z2 = self.height(r) + 0.0015 + np.zeros_like(tq)
+            Z2 = self.height(r) + 0.0015 + dzl
             if k > 1e-6:
                 Z2 = Z2 - 2.2 * (X2 * T[0] + Y2 * T[1])
             px, py, pz = self.project(X2, Y2, Z2)
             yt = 1 - (py - ytop) / max(ybot - ytop, 1)
-            for q in range(0, len(px) - 2, 2):
+            for q in range(0, len(px) - 1):
+                fq = 0.5 * (frl[q] + frl[q + 1]) if kind != 'E' else 1.0   # zone edges stay whole
                 if kind == 'g':
                     c = GOLD * (0.30 + 0.32 * yt[q]) * inten; th = 2
                 elif kind == 'G':
@@ -684,7 +741,8 @@ class Cymbal2:
                 else:
                     lt = np.clip(0.2 * yt[q], 0, 1); base_c = ROSE_DARK + (ROSE_LIGHT - ROSE_DARK) * (0.25 + 0.75 * lt) ** 1.4
                     c = (base_c * 0.55 + LATHE * (0.30 + 0.35 * lt)) * (0.30 + 0.25 * yt[q]); th = 1
-                cv2.line(layer, (int(px[q] * 4), int(py[q] * 4)), (int(px[q + 2] * 4), int(py[q + 2] * 4)),
+                c = c + (HOT * 0.95 - c) * min(fq - 1, 1) if fq > 1 else c * fq     # the dent walls, as the mesh
+                cv2.line(layer, (int(px[q] * 4), int(py[q] * 4)), (int(px[q + 1] * 4), int(py[q + 1] * 4)),
                          tuple(float(v) for v in c), th, cv2.LINE_AA, shift=2)
         bloom = cv2.GaussianBlur(layer, (0, 0), 3.0)
         img = np.maximum(img, layer) + 0.5 * bloom * (layer.max(axis=2, keepdims=True) > 150)
