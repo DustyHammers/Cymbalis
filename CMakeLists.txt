@@ -103,18 +103,14 @@ foreach(preset nova_ride smoke_flat_ride hammered_thin_ride swish raven)
 endforeach()
 
 # ---------------------------------------------------------------------------
-# Compiled-in resources: the packed presets, their photos, and the UI artwork and font.
-# Calibri Light is used when resources/ui/calibril.ttf exists; Carlito Regular stands in
-# until then.
+# Compiled-in resources: the packed presets, and the UI artwork and font. The presets' photos
+# in resources/ui/ are references only: the editor draws a wireframe cymbal instead
+# (docs/UI_SPEC.md section 11). Calibri Light is used when resources/ui/calibril.ttf exists;
+# Carlito Regular stands in until then.
 # ---------------------------------------------------------------------------
 set(CYMBALIS_RESOURCES
     ${CYMBALIS_PACKED_PRESETS}
     resources/ui/CYMBALIS_Background_logo.png
-    resources/ui/Nova.png
-    resources/ui/SmokeFlatRide.png
-    resources/ui/HammeredThinRide.png
-    resources/ui/Swish.png
-    resources/ui/Raven.png
     resources/ui/knob.png
     resources/ui/Carlito-Regular.ttf
 )
@@ -132,6 +128,8 @@ set(CYMBALIS_PLUGIN_SOURCES
     plugin/PluginProcessor.cpp
     plugin/PluginEditor.cpp
     plugin/PackedBake.cpp
+    plugin/ui/CymbalModel.cpp
+    plugin/ui/CymbalView.cpp
     plugin/ui/HitDisplay.cpp
     plugin/ui/UiAssets.cpp
 )
@@ -173,6 +171,7 @@ target_link_libraries(Cymbalis
         juce::juce_audio_utils
         juce::juce_audio_processors
         juce::juce_dsp
+        juce::juce_opengl
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
@@ -180,8 +179,8 @@ target_link_libraries(Cymbalis
 )
 
 # ---------------------------------------------------------------------------
-# CymbalisSnapshot: renders the editor to PNG (CI uploads 1536x1024 and 960x640, and one
-# 1536x1024 PNG per preset)
+# CymbalisSnapshot: renders the editor to PNG, 1536x1024 and 960x640 and one 1536x1024 PNG per
+# preset (not run in CI; the cymbal drawn still, without OpenGL)
 # ---------------------------------------------------------------------------
 juce_add_console_app(CymbalisSnapshot)
 target_sources(CymbalisSnapshot PRIVATE tools/cymbalis_snapshot/main.cpp ${CYMBALIS_PLUGIN_SOURCES})
@@ -200,6 +199,7 @@ target_link_libraries(CymbalisSnapshot
         cymbalis_fast
         juce::juce_audio_utils
         juce::juce_audio_processors
+        juce::juce_opengl
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags
@@ -236,6 +236,7 @@ if(APPLE)
             juce::juce_audio_utils
             juce::juce_audio_processors
             juce::juce_dsp
+            juce::juce_opengl
         PUBLIC
             juce::juce_recommended_config_flags
             juce::juce_recommended_warning_flags

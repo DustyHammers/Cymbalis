@@ -10,6 +10,9 @@
 // JUCE shows its splash logo in the editors a process opens during the two seconds after
 // the first one is painted. The first editor here is painted only to start that time and
 // let it pass, so the snapshots show the editor itself.
+//
+// A snapshot cannot capture OpenGL, so the wireframe cymbal is drawn still, with JUCE's
+// drawing (docs/UI_SPEC.md section 11).
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
 
@@ -24,6 +27,7 @@ int main (int argc, char** argv)
         return 2;
     }
     juce::ScopedJuceInitialiser_GUI gui;
+    cymbalis::ui::CymbalView::setOpenGLAllowed (false);
     const juce::File dir = juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]);
     const juce::String prefix = argc > 2 ? juce::String (argv[2]) : juce::String ("Cymbalis-editor");
     dir.createDirectory();

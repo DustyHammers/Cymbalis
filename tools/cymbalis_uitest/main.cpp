@@ -39,9 +39,9 @@
 //   CymbalisUiTest hits
 //
 // runs no plugin: it times Cymbalis's own processor and editor, compiled into this tool
-// (HitTiming.h): processBlock while a strike every 24 ms keeps 16 marks active, with the
-// editor closed, open at 1536 x 1024 with the hit display, open with a dummy of the same
-// painting and open with no hits, and the editor's paint calls.
+// (HitTiming.h): processBlock while a strike every 24 ms keeps 16 hits moving the cymbal,
+// with the editor closed, open at 1536 x 1024 and idle, and open with the hits; the editor's
+// paint calls and the cymbal's OpenGL frames.
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
 

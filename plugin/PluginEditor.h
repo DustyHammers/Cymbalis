@@ -115,22 +115,6 @@ private:
     bool lit = false;
 };
 
-// The photo area (UI_SPEC section 3): the background under it and the preset's photo,
-// fitted, or the preset's load error. Opaque and cached as an image where it sits on whole
-// pixels (the maximum editor size), so that the hit display's repaints over it only copy
-// that image; elsewhere it draws as it would without a cache.
-class PhotoArea final : public juce::Component
-{
-public:
-    PhotoArea (CymbalisProcessor& p, const Assets& assets);
-    void paint (juce::Graphics& g) override;
-
-private:
-    class Cache;
-    CymbalisProcessor& processor;
-    const Assets& assets;
-};
-
 // The note box's menu: MIDI LEARN, RESET DEFAULT and NONE, then a scrollable list of every
 // note, C-2 (0) to G8 (127), with its number. The current note is selected and in view.
 class NoteMenu final : public juce::Component
@@ -236,15 +220,14 @@ private:
     void paintLabels (juce::Graphics& g);
     void paintRows (juce::Graphics& g);
     void paintLines (juce::Graphics& g);
-    void setHitDisc();
     juce::Rectangle<int> rowLabelArea (int slot) const;
 
     CymbalisProcessor& processor;
     Assets assets;
 
-    // The photo, and the hit display over it (under every control).
-    std::unique_ptr<PhotoArea> photoArea;
-    std::unique_ptr<HitLayer> hitLayer;
+    // The wireframe cymbal (under every control), and the hits it moves with.
+    std::unique_ptr<CymbalView> cymbalView;
+    std::unique_ptr<HitTracker> hitTracker;
 
     std::array<KnobSpec, 5> knobSpecs;
     std::array<std::unique_ptr<Knob>, 5> knobs;
@@ -270,6 +253,7 @@ private:
     std::array<int, kNumSlots> shownSticks {};
     int shownChannel = -1;
     int shownPreset = -1;
+    juce::String shownError;
     int shownLearn = -1;
     double learnStartMs = 0.0;
 #if CYMBALIS_TUNING
