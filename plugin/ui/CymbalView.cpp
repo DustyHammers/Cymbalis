@@ -60,9 +60,9 @@ vec2 project (float r, float theta, float z)
 float topToBottom (float sy) { return 1.0 - (sy - uY.x) / max (uY.y - uY.x, 1.0); }
 )";
 
-// A line segment as a quad in pixels, built in the vertex shader (no geometry shader: Apple's
-// OpenGL runs those on the CPU): each segment is 4 vertices, each knowing both ends; `aCorner` is
-// (0 at the first end or 1 at the second, -1 or 1 across). The quad reaches `uHalf` either side
+// A line segment as a quad in pixels, built in the vertex shader (no geometry shader): each
+// segment is 4 vertices, each knowing both ends; `aCorner` is (0 at the first end or 1 at the
+// second, -1 or 1 across). The quad reaches `uHalf` either side
 // of the line and `uCap` past its ends (so that the joints of a ring close).
 const char* const kQuadGlsl = R"(uniform vec2 uViewPx;
 uniform float uHalf;
