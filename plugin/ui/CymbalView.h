@@ -2,8 +2,9 @@
 
 // The wireframe cymbal (docs/UI_SPEC.md section 11): the cymbal area of the editor, drawn over
 // the background image and under every control. It is drawn on the GPU through OpenGL, on the
-// context's own thread: the area's part of the background as a texture, then the mesh and the
-// surface lines, the glow and the flashes. The static geometry is uploaded once per preset;
+// context's own thread: the area's part of the background as a texture, then the lines (the mesh
+// and the surface lines, combined in a layer of their own as the reference does), the glow and
+// the flashes. The static geometry is uploaded once per preset;
 // per frame only the mesh's heights, slopes and glow and a few uniforms change. New frames are
 // drawn only while a hit moves the cymbal (HitTracker asks for them at 30 Hz), and on a resize
 // or a preset change. JUCE's software renderer never draws the moving cymbal, and the message

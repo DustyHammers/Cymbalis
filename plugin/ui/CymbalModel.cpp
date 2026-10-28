@@ -619,18 +619,19 @@ void Geometry::buildDentedMesh()
     }
 }
 
-// The surface lines of _build_texture (Cymbal2._lines for the dented mesh): the hammering, the
-// bell grooves, the edge lines, the fine lathe rings and the gold lathing. Any fixed-seed
-// sequence will do: the pattern matches the reference in size, spacing and spread, not mark for
-// mark. The 2-unit lines (grooves, edges) last.
+// The surface lines of _build_texture (Cymbal2._lines for the dented mesh), in its order: the
+// hammering, the bell grooves, the edge lines, the fine lathe rings and the gold lathing (on the
+// dented mesh the grooves, the gold lathing, then the edge lines). Any fixed-seed sequence will
+// do: the pattern matches the reference in size, spacing and spread, not mark for mark.
 void Geometry::buildSurface()
 {
     Uniform uniform;
-    std::vector<SurfaceVertex> wide;
     const auto vertexAt = [this] (double r, double t, SurfaceKind kind, double param, double metalR) {
         double factor = 1.0;
         const auto metal = metalAt (metalR, factor);
-        return SurfaceVertex { (float) r, (float) t, (float) (height (r) + 0.0015), (float) kind, (float) param, (float) metal, (float) factor };
+        const float width = kind == SurfaceKind::groove || kind == SurfaceKind::edge ? 2.0f : 1.0f;
+        return SurfaceVertex { (float) r, (float) t, (float) (height (r) + 0.0015), (float) kind, (float) param, (float) metal, (float) factor,
+                               width };
     };
     // A polyline, its metal that at its mean radius.
     const auto polyline = [&] (const double* r, const double* t, int count, SurfaceKind kind, double param) {
@@ -643,10 +644,10 @@ void Geometry::buildSurface()
                 surface.push_back (vertexAt (r[e], t[e], kind, param, mean));
     };
     // A full ring at r, 48 segments (the reference's 97 points, every second one).
-    const auto fullRing = [&] (std::vector<SurfaceVertex>& into, double r, SurfaceKind kind, double param) {
+    const auto fullRing = [&] (double r, SurfaceKind kind, double param) {
         for (int q = 0; q < 48; ++q)
             for (int e : { q, q + 1 })
-                into.push_back (vertexAt (r, twoPi * e / 48.0, kind, param, r));
+                surface.push_back (vertexAt (r, twoPi * e / 48.0, kind, param, r));
     };
     // The edge lines: the gold zones' bounds between `low` and 0.999 (with zoneEdges), and the
     // goldLines; GOLD x (0.55 + 0.40 ytl) x the zone's strength, 2 units.
@@ -661,19 +662,24 @@ void Geometry::buildSurface()
         std::sort (at.begin(), at.end());
         at.erase (std::unique (at.begin(), at.end()), at.end());
         for (double r : at)
-            fullRing (wide, r, SurfaceKind::edge, strengthAt (r));
+            fullRing (r, SurfaceKind::edge, strengthAt (r));
+    };
+    // RAVEN's deep lathe grooves on the bell: irregular spacing, bold, in a paler gold.
+    const auto grooves = [&] {
+        if (shape.hasBellGrooves)
+            for (double r = shape.bellGrooves.from; r < shape.bellGrooves.to; r += uniform (0.011, 0.026))
+                fullRing (r, SurfaceKind::groove, uniform (0.55, 1.0));
     };
 
     if (shape.dented)
     {
         // The dents replace the drawn hammering. Gold lathing (GOLD x (0.50 + 0.35 ytl) x lum x
-        // strength) and its edges, whose bounds count from 0.03 (as Cymbal2._lines).
+        // strength), then its edges, whose bounds count from 0.03 (as Cymbal2._lines).
+        grooves();
         for (int k = 0; k < shape.numGold; ++k)
             for (double r : arange (shape.gold[(size_t) k].from, shape.gold[(size_t) k].to, shape.goldStep))
-                fullRing (surface, r, SurfaceKind::goldLine, lum (r) * strengthAt (r));
+                fullRing (r, SurfaceKind::goldLine, lum (r) * strengthAt (r));
         edges (0.03, true);
-        numThinSurface = (int) surface.size();
-        surface.insert (surface.end(), wide.begin(), wide.end());
         return;
     }
 
@@ -758,22 +764,15 @@ void Geometry::buildSurface()
         }
         case Hammer::none: break;
     }
-    if (shape.hasBellGrooves)
-    {
-        // deep lathe grooves on the bell: irregular spacing, bold, in a paler gold
-        for (double r = shape.bellGrooves.from; r < shape.bellGrooves.to; r += uniform (0.011, 0.026))
-            fullRing (wide, r, SurfaceKind::groove, uniform (0.55, 1.0));
-    }
+    grooves();
     edges (0.02, shape.zoneEdges);
     for (int z = 0; z < shape.numFineLathe; ++z)
         for (double r : arange (shape.fineLathe[(size_t) z].from, shape.fineLathe[(size_t) z].to, 0.012))
-            fullRing (surface, r, SurfaceKind::lathe, 0.0);
+            fullRing (r, SurfaceKind::lathe, 0.0);
     // the gold lathing: the surface colour x (0.50 + 0.35 ytl) x lum(r)
     for (int k = 0; k < shape.numGold; ++k)
         for (double r : arange (shape.gold[(size_t) k].from, shape.gold[(size_t) k].to, shape.goldStep))
-            fullRing (surface, r, SurfaceKind::goldLathe, lum (r));
-    numThinSurface = (int) surface.size();
-    surface.insert (surface.end(), wide.begin(), wide.end());
+            fullRing (r, SurfaceKind::goldLathe, lum (r));
 }
 
 void Geometry::buildModes()

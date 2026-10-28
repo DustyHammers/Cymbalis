@@ -84,7 +84,8 @@ enum class Zone : std::uint8_t
 };
 
 // A surface line vertex (pairs are segments). They follow the cymbal's tilt and spin, not its
-// flex, at the profile's height + 0.0015.
+// flex, at the profile's height + 0.0015. In the reference they are drawn in order into a layer
+// of their own, each over those before it (where they cross, the later one shows).
 enum class SurfaceKind : std::uint8_t
 {
     hammer = 0,    // the surface colour x param (0.8; 1.0 for the spiral)
@@ -99,6 +100,7 @@ struct SurfaceVertex
     float r, theta, z;
     float kind, param;
     float metal, factor; // the surface's Metal and factor there (see bronze)
+    float width;         // design units: 1, or 2 for grooves and edge lines
 };
 
 // Everything about a preset's cymbal that does not move: built once per preset.
@@ -151,9 +153,11 @@ public:
     int numDents = 0;
     int segmentsBeforeSimplifying = 0;
 
-    // Surface lines as vertex pairs: 1-unit lines first, then the 2-unit ones (grooves, edges).
+    // Surface lines as vertex pairs, in the reference's drawing order (each over those before it):
+    // the hammer marks, grooves, edge lines, fine lathe and gold lathing (_build_texture); on the
+    // dented mesh grooves, fine lathe, gold lathing and edge lines (Cymbal2._lines), all over the
+    // mesh there.
     std::vector<SurfaceVertex> surface;
-    int numThinSurface = 0;
 
     // Per mode: its normalisation (the largest |J_m(z r)| for r in 0 .. 1), and J_m(z r) / that
     // at every ring (radial[k * numRings + i]); for the dented mesh at every fine radius, with

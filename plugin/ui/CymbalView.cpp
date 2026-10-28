@@ -68,20 +68,18 @@ float topToBottom (float sy) { return 1.0 - (sy - uY.x) / max (uY.y - uY.x, 1.0)
 
 // A line segment as a quad in pixels, built in the vertex shader (no geometry shader): each
 // segment is 4 vertices, each knowing both ends; `aCorner` is (0 at the first end or 1 at the
-// second, -1 or 1 across). The quad reaches `uHalf` either side
-// of the line and `uCap` past its ends (so that the joints of a ring close).
+// second, -1 or 1 across). The quad reaches `across` either side of the line and `beyond` past
+// its ends (so that the joints of a ring close).
 const char* const kQuadGlsl = R"(uniform vec2 uViewPx;
-uniform float uHalf;
-uniform float uCap;
 in vec2 aCorner;
 out vec3 vColour;
 out float vAcross;
-vec4 quadCorner (vec2 a, vec2 b)
+vec4 quadCorner (vec2 a, vec2 b, float across, float beyond)
 {
     vec2 d = b - a;
     float len = length (d);
     vec2 dir = len > 1.0e-4 ? d / len : vec2 (1.0, 0.0);
-    vec2 n = vec2 (-dir.y, dir.x) * uHalf, e = dir * uCap;
+    vec2 n = vec2 (-dir.y, dir.x) * across, e = dir * beyond;
     vec2 q = (aCorner.x < 0.5 ? a - e : b + e) + n * aCorner.y;
     vAcross = aCorner.y;
     return vec4 (q.x / uViewPx.x * 2.0 - 1.0, 1.0 - q.y / uViewPx.y * 2.0, 0.0, 1.0);
@@ -100,6 +98,8 @@ uniform sampler2D uStatic;
 uniform sampler2D uState;
 uniform float uPerVertex;
 uniform float uGlowGain;
+uniform float uHalf; // pixels either side of the line
+uniform float uCap;  // pixels past its ends
 struct End
 {
     vec2 p;
@@ -146,7 +146,7 @@ void main()
         c *= uGlowGain;
     }
     vColour = c;
-    gl_Position = quadCorner (a.p, b.p);
+    gl_Position = quadCorner (a.p, b.p, uHalf, uCap);
 }
 )";
 
@@ -154,7 +154,8 @@ void main()
 // kind (wire::SurfaceKind), colour from the ends' average.
 const char* const kSurfaceVertex = R"(in vec3 aA;
 in vec3 aB;
-in vec4 aKind; // kind, its factor, the surface's metal and factor there
+in vec4 aKind;   // kind, its factor, the surface's metal and factor there
+in float aWidth; // design units
 vec3 colourAt (vec3 e, out vec2 p)
 {
     vec2 s = project (e.x, e.y, e.z);
@@ -178,7 +179,7 @@ void main()
     vec2 pa, pb;
     vec3 ca = colourAt (aA, pa), cb = colourAt (aB, pb);
     vColour = 0.5 * (ca + cb);
-    gl_Position = quadCorner (pa, pb);
+    gl_Position = quadCorner (pa, pb, 0.5 * aWidth * uPx, 0.5 * aWidth * uPx);
 }
 )";
 
@@ -194,11 +195,14 @@ void main()
 }
 )";
 
+// A texture over the whole view: the background (its top row first), or the lines' layer (an
+// OpenGL framebuffer's, bottom row first: uFlip).
 const char* const kBackgroundVertex = R"(in vec2 aPos; // 0 .. 1 from the top-left
+uniform float uFlip;
 out vec2 vUv;
 void main()
 {
-    vUv = aPos;
+    vUv = vec2 (aPos.x, uFlip > 0.5 ? 1.0 - aPos.y : aPos.y);
     gl_Position = vec4 (aPos.x * 2.0 - 1.0, 1.0 - aPos.y * 2.0, 0.0, 1.0);
 }
 )";
@@ -247,9 +251,13 @@ struct CymbalView::Gpu
     GLuint surfaceVao = 0, surfaceVbo = 0, surfaceIndex = 0;
     GLuint quadVao = 0, quadVbo = 0, flashVao = 0, flashVbo = 0;
     GLuint texture = 0;
+    // The lines' layer: multisampled, then resolved into a texture (layerTexture).
+    GLuint layerFbo = 0, layerSamples = 0, resolveFbo = 0, layerTexture = 0;
+    int layerW = 0, layerH = 0;
+    bool layerOk = false;
 
     std::shared_ptr<const wire::Geometry> geometry;
-    int meshSegments = 0, thinMeshSegments = 0, surfaceSegments = 0, thinSurfaceSegments = 0;
+    int meshSegments = 0, thinMeshSegments = 0, surfaceSegments = 0;
     int textureRows = 0;
     wire::Frame frame;
     std::vector<float> disp, state;
@@ -356,23 +364,22 @@ struct CymbalView::Gpu
         glUniform1i (at (*mesh, "uState"), 2);
         glUniform1f (at (*mesh, "uPerVertex"), geo.perVertexColour ? 1.0f : 0.0f);
 
-        // The surface lines: per quad corner, the corner, both ends and the segment's kind.
+        // The surface lines: per quad corner, the corner, both ends, the segment's kind and width.
         surfaceSegments = (int) geo.surface.size() / 2;
-        thinSurfaceSegments = geo.numThinSurface / 2;
         std::vector<float> lines;
-        lines.reserve ((size_t) surfaceSegments * 48);
+        lines.reserve ((size_t) surfaceSegments * 52);
         for (int k = 0; k < surfaceSegments; ++k)
         {
             const auto& a = geo.surface[(size_t) (2 * k)];
             const auto& b = geo.surface[(size_t) (2 * k + 1)];
             for (const auto& c : corners)
-                for (float v : { c[0], c[1], a.r, a.theta, a.z, b.r, b.theta, b.z, a.kind, a.param, a.metal, a.factor })
+                for (float v : { c[0], c[1], a.r, a.theta, a.z, b.r, b.theta, b.z, a.kind, a.param, a.metal, a.factor, a.width })
                     lines.push_back (v);
         }
         glBindVertexArray (surfaceVao);
         glBindBuffer (GL_ARRAY_BUFFER, surfaceVbo);
         glBufferData (GL_ARRAY_BUFFER, (GLsizeiptr) (lines.size() * sizeof (float)), lines.data(), GL_STATIC_DRAW);
-        const auto stride = (GLsizei) (12 * sizeof (float));
+        const auto stride = (GLsizei) (13 * sizeof (float));
         glEnableVertexAttribArray (0);
         glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, stride, nullptr);
         for (GLuint a = 1; a <= 3; ++a)
@@ -380,13 +387,64 @@ struct CymbalView::Gpu
             glEnableVertexAttribArray (a);
             glVertexAttribPointer (a, a < 3 ? 3 : 4, GL_FLOAT, GL_FALSE, stride, (const void*) ((size_t) (2 + 3 * (a - 1)) * sizeof (float)));
         }
+        glEnableVertexAttribArray (4);
+        glVertexAttribPointer (4, 1, GL_FLOAT, GL_FALSE, stride, (const void*) (12 * sizeof (float)));
         uploadQuadIndices (surfaceIndex, surfaceSegments);
         glBindVertexArray (0);
         glUseProgram (0);
     }
 
+    // The lines' layer at the view's size, multisampled (as the view's own framebuffer) and
+    // resolved into a texture. False if the driver refuses it: the lines are then drawn straight
+    // over the background.
+    bool prepareLayer (int w, int h)
+    {
+        if (w == layerW && h == layerH)
+            return layerOk;
+        releaseLayer();
+        layerW = w;
+        layerH = h;
+        GLint maxSamples = 0;
+        glGetIntegerv (GL_MAX_SAMPLES, &maxSamples);
+        glGenFramebuffers (1, &layerFbo);
+        glGenRenderbuffers (1, &layerSamples);
+        glBindRenderbuffer (GL_RENDERBUFFER, layerSamples);
+        glRenderbufferStorageMultisample (GL_RENDERBUFFER, juce::jmin (4, (int) maxSamples), GL_RGBA8, w, h);
+        glBindFramebuffer (GL_FRAMEBUFFER, layerFbo);
+        glFramebufferRenderbuffer (GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, layerSamples);
+        layerOk = glCheckFramebufferStatus (GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        glGenTextures (1, &layerTexture);
+        glBindTexture (GL_TEXTURE_2D, layerTexture);
+        glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture (GL_TEXTURE_2D, 0);
+        glGenFramebuffers (1, &resolveFbo);
+        glBindFramebuffer (GL_FRAMEBUFFER, resolveFbo);
+        glFramebufferTexture2D (GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, layerTexture, 0);
+        layerOk = layerOk && glCheckFramebufferStatus (GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        return layerOk;
+    }
+
+    void releaseLayer()
+    {
+        for (auto* f : { &layerFbo, &resolveFbo })
+            if (*f != 0)
+                glDeleteFramebuffers (1, f);
+        if (layerSamples != 0)
+            glDeleteRenderbuffers (1, &layerSamples);
+        if (layerTexture != 0)
+            glDeleteTextures (1, &layerTexture);
+        layerFbo = layerSamples = resolveFbo = layerTexture = 0;
+        layerW = layerH = 0;
+        layerOk = false;
+    }
+
     void release()
     {
+        releaseLayer();
         for (auto* vao : { &meshVao, &surfaceVao, &quadVao, &flashVao })
             if (*vao != 0)
                 glDeleteVertexArrays (1, vao);
@@ -563,7 +621,7 @@ void CymbalView::newOpenGLContextCreated()
     auto g = std::make_unique<Gpu>();
     const juce::String common = "const int kTexWidth = " + juce::String (kTexWidth) + ";\n" + bronzeGlsl() + kProjectGlsl + kQuadGlsl;
     g->mesh = Gpu::build (context, common + kMeshVertex, kLineFragment, { "aCorner", "aEnds", "aMetal" });
-    g->surface = Gpu::build (context, common + kSurfaceVertex, kLineFragment, { "aCorner", "aA", "aB", "aKind" });
+    g->surface = Gpu::build (context, common + kSurfaceVertex, kLineFragment, { "aCorner", "aA", "aB", "aKind", "aWidth" });
     g->back = Gpu::build (context, kBackgroundVertex, kBackgroundFragment, { "aPos" });
     g->flash = Gpu::build (context, kFlashVertex, kFlashFragment, { "aPos" });
     if (g->mesh == nullptr || g->surface == nullptr || g->back == nullptr || g->flash == nullptr)
@@ -654,8 +712,9 @@ void CymbalView::renderOpenGL()
     if (newGeometry != nullptr)
         g.upload (std::move (newGeometry));
 
-    GLint viewport[4] = {};
+    GLint viewport[4] = {}, target = 0;
     glGetIntegerv (GL_VIEWPORT, viewport);
+    glGetIntegerv (GL_FRAMEBUFFER_BINDING, &target); // the view's framebuffer
     const float viewW = (float) viewport[2], viewH = (float) viewport[3];
     const float px = (float) context.getRenderingScale(); // physical pixels per design unit
 
@@ -665,15 +724,20 @@ void CymbalView::renderOpenGL()
     glClearColor (0.0f, 0.0f, 0.0f, 1.0f);
     glClear (GL_COLOR_BUFFER_BIT);
 
-    // The background.
-    g.back->use();
-    glActiveTexture (GL_TEXTURE0);
-    glBindTexture (GL_TEXTURE_2D, g.texture);
-    glUniform1i (Gpu::at (*g.back, "uTexture"), 0);
-    glBindVertexArray (g.quadVao);
-    glDrawArrays (GL_TRIANGLE_STRIP, 0, 4);
+    // A texture over the whole view.
+    const auto drawTexture = [&] (GLuint texture, bool flip) {
+        g.back->use();
+        glActiveTexture (GL_TEXTURE0);
+        glBindTexture (GL_TEXTURE_2D, texture);
+        glUniform1i (Gpu::at (*g.back, "uTexture"), 0);
+        glUniform1f (Gpu::at (*g.back, "uFlip"), flip ? 1.0f : 0.0f);
+        glBindVertexArray (g.quadVao);
+        glDrawArrays (GL_TRIANGLE_STRIP, 0, 4);
+    };
 
-    if (g.geometry != nullptr)
+    if (g.geometry == nullptr)
+        drawTexture (g.texture, false);
+    else
     {
         const auto& geo = *g.geometry;
         wire::evaluate (geo, g.hits.data(), g.numHits, juce::Time::getMillisecondCounterHiRes(), g.frame, g.disp);
@@ -703,47 +767,89 @@ void CymbalView::renderOpenGL()
             glUniform2f (Gpu::at (p, "uY"), (float) f.yTop, (float) f.yBottom);
             glUniform2f (Gpu::at (p, "uViewPx"), viewW, viewH);
         };
-        const auto lines = [&] (const juce::OpenGLShaderProgram& p, float widthUnits, float glowGain) {
-            const float half = glowGain > 0.0f ? kGlowHalf : 0.5f * widthUnits;
-            glUniform1f (Gpu::at (p, "uHalf"), half * px);
-            glUniform1f (Gpu::at (p, "uCap"), glowGain > 0.0f ? 0.0f : 0.5f * widthUnits * px);
-            glUniform1f (Gpu::at (p, "uGlowGain"), glowGain);
-        };
-
         // Segments first to first + count of a quad buffer: two triangles each.
         const auto segments = [] (int first, int count) {
             glDrawElements (GL_TRIANGLES, 6 * count, GL_UNSIGNED_INT, (const void*) ((size_t) first * 6 * sizeof (std::uint32_t)));
         };
+        // The mesh, 1 and 2 units wide; with a glow gain, its glow instead.
+        const auto drawMesh = [&] (float glowGain) {
+            g.mesh->use();
+            common (*g.mesh);
+            glBindVertexArray (g.meshVao);
+            for (const bool wide : { false, true })
+            {
+                const float width = wide ? 2.0f : 1.0f, gain = glowGain * width;
+                glUniform1f (Gpu::at (*g.mesh, "uHalf"), (gain > 0.0f ? kGlowHalf : 0.5f * width) * px);
+                glUniform1f (Gpu::at (*g.mesh, "uCap"), gain > 0.0f ? 0.0f : 0.5f * width * px);
+                glUniform1f (Gpu::at (*g.mesh, "uGlowGain"), gain);
+                if (wide)
+                    segments (g.thinMeshSegments, g.meshSegments - g.thinMeshSegments);
+                else
+                    segments (0, g.thinMeshSegments);
+            }
+        };
+        // The surface lines in their order, each over those before it.
+        const auto drawSurface = [&] {
+            g.surface->use();
+            common (*g.surface);
+            glUniform1f (Gpu::at (*g.surface, "uGlowGain"), 0.0f);
+            glBindVertexArray (g.surfaceVao);
+            segments (0, g.surfaceSegments);
+        };
 
-        // The mesh and the surface lines, lighten (max) over the background: 1 and 2 units wide.
-        glEnable (GL_BLEND);
+        // The lines' layer, as the reference draws it: the surface lines over one another in their
+        // order, lightened (max) by the mesh; on the dented mesh, the surface lines over the mesh.
+        // Then the layer lightens the background. (Without a layer, everything lightens the
+        // background directly.)
+        const bool layered = g.prepareLayer (viewport[2], viewport[3]);
+        if (layered)
+        {
+            glBindFramebuffer (GL_FRAMEBUFFER, g.layerFbo);
+            glViewport (0, 0, viewport[2], viewport[3]);
+            glClear (GL_COLOR_BUFFER_BIT);
+        }
+        else
+            drawTexture (g.texture, false);
         glBlendFunc (GL_ONE, GL_ONE);
         glBlendEquation (GL_MAX);
-        g.mesh->use();
-        common (*g.mesh);
-        glBindVertexArray (g.meshVao);
-        lines (*g.mesh, 1.0f, 0.0f);
-        segments (0, g.thinMeshSegments);
-        lines (*g.mesh, 2.0f, 0.0f);
-        segments (g.thinMeshSegments, g.meshSegments - g.thinMeshSegments);
-
-        g.surface->use();
-        common (*g.surface);
-        glUniform1f (Gpu::at (*g.surface, "uGlowGain"), 0.0f);
-        glBindVertexArray (g.surfaceVao);
-        lines (*g.surface, 1.0f, 0.0f);
-        segments (0, g.thinSurfaceSegments);
-        lines (*g.surface, 2.0f, 0.0f);
-        segments (g.thinSurfaceSegments, g.surfaceSegments - g.thinSurfaceSegments);
+        const auto overwrite = [layered] {
+            if (layered)
+                glDisable (GL_BLEND);
+            else
+                glEnable (GL_BLEND);
+        };
+        if (geo.perVertexColour)
+        {
+            glEnable (GL_BLEND);
+            drawMesh (0.0f);
+            overwrite();
+            drawSurface();
+        }
+        else
+        {
+            overwrite();
+            drawSurface();
+            glEnable (GL_BLEND);
+            drawMesh (0.0f);
+        }
+        if (layered)
+        {
+            glBindFramebuffer (GL_READ_FRAMEBUFFER, g.layerFbo);
+            glBindFramebuffer (GL_DRAW_FRAMEBUFFER, g.resolveFbo);
+            glBlitFramebuffer (0, 0, viewport[2], viewport[3], 0, 0, viewport[2], viewport[3], GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            glBindFramebuffer (GL_FRAMEBUFFER, (GLuint) target);
+            glViewport (viewport[0], viewport[1], viewport[2], viewport[3]);
+            glDisable (GL_BLEND);
+            drawTexture (g.texture, false);
+            glEnable (GL_BLEND);
+            glBlendEquation (GL_MAX);
+            drawTexture (g.layerTexture, true);
+        }
 
         // The glow around the bright mesh lines, added.
+        glEnable (GL_BLEND);
         glBlendEquation (GL_FUNC_ADD);
-        g.mesh->use();
-        glBindVertexArray (g.meshVao);
-        lines (*g.mesh, 1.0f, kGlowPerUnit);
-        segments (0, g.thinMeshSegments);
-        lines (*g.mesh, 2.0f, 2.0f * kGlowPerUnit);
-        segments (g.thinMeshSegments, g.meshSegments - g.thinMeshSegments);
+        drawMesh (kGlowPerUnit);
 
         // The flashes where the hits struck, added.
         if (f.numFlashes > 0)
@@ -840,7 +946,10 @@ juce::Image CymbalView::renderStill (float scale) const
         return juce::Colour (u8 (c.r), u8 (c.g), u8 (c.b));
     };
 
-    juce::Image layer (juce::Image::ARGB, w, h, true);
+    // The lines' layer, as in renderOpenGL: the mesh; the surface lines over one another in
+    // their order, in a layer of their own that the mesh lightens (on the dented mesh, over the
+    // mesh).
+    juce::Image layer (juce::Image::ARGB, w, h, true), surfaceLayer;
     {
         juce::Graphics lg (layer);
         lg.fillAll (juce::Colours::black);
@@ -851,6 +960,15 @@ juce::Image CymbalView::renderStill (float scale) const
             lg.setColour (toColour (wire::segmentColour (geo, f, k, shade[a], ytl (at[a].y), shade[b], ytl (at[b].y))));
             lg.drawLine ({ at[a], at[b] }, 2 * k < geo.numThinIndices ? 1.0f : 2.0f);
         }
+    }
+    if (! geo.perVertexColour)
+    {
+        surfaceLayer = juce::Image (juce::Image::ARGB, w, h, true);
+        juce::Graphics (surfaceLayer).fillAll (juce::Colours::black);
+    }
+    {
+        juce::Graphics lg (geo.perVertexColour ? layer : surfaceLayer);
+        lg.addTransform (juce::AffineTransform::scale (scale));
         for (size_t k = 0; k < geo.surface.size(); k += 2)
         {
             juce::Point<float> p[2];
@@ -863,20 +981,25 @@ juce::Image CymbalView::renderStill (float scale) const
                 c[e] = wire::surfaceColour (geo.surface[k + e], ytl (sy - origin.y));
             }
             lg.setColour (toColour ({ 0.5f * (c[0].r + c[1].r), 0.5f * (c[0].g + c[1].g), 0.5f * (c[0].b + c[1].b) }));
-            lg.drawLine ({ p[0], p[1] }, (int) k < geo.numThinSurface ? 1.0f : 2.0f);
+            lg.drawLine ({ p[0], p[1] }, geo.surface[k].width);
         }
     }
 
     // Lighten: the brighter of the background and the lines, per channel.
     juce::Image::BitmapData out (image, juce::Image::BitmapData::readWrite);
-    const juce::Image::BitmapData in (layer, juce::Image::BitmapData::readOnly);
-    for (int y = 0; y < h; ++y)
-        for (int x = 0; x < w; ++x)
-        {
-            const auto a = out.getPixelColour (x, y), b = in.getPixelColour (x, y);
-            out.setPixelColour (x, y, juce::Colour (std::max (a.getRed(), b.getRed()), std::max (a.getGreen(), b.getGreen()),
-                                                    std::max (a.getBlue(), b.getBlue())));
-        }
+    const auto lighten = [&out] (const juce::Image& lines) {
+        const juce::Image::BitmapData in (lines, juce::Image::BitmapData::readOnly);
+        for (int y = 0; y < out.height; ++y)
+            for (int x = 0; x < out.width; ++x)
+            {
+                const auto a = out.getPixelColour (x, y), b = in.getPixelColour (x, y);
+                out.setPixelColour (x, y, juce::Colour (std::max (a.getRed(), b.getRed()), std::max (a.getGreen(), b.getGreen()),
+                                                        std::max (a.getBlue(), b.getBlue())));
+            }
+    };
+    lighten (layer);
+    if (surfaceLayer.isValid())
+        lighten (surfaceLayer);
     return image;
 }
 
