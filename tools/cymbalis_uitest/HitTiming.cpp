@@ -238,6 +238,7 @@ struct HitTiming::Result
     bool openGL = false;                          // OpenGL drew the cymbal
     juce::String renderer;                        // its renderer
     int meshSegments = 0, segmentsBefore = 0, surfaceSegments = 0, dents = 0; // its geometry
+    double buildMs = 0.0;                         // and how long that took to build
     cymbalis::ui::CymbalView::Stats gl;           // its frames over the timed part
     double glWallMs = 0.0;                        // the time they were counted over
     long hitsSum = 0;                             // the hits it showed, sampled every 50 ms
@@ -378,11 +379,12 @@ HitTiming::HitTiming (std::function<void (int)> f) : finished (std::move (f))
                     steps.push_back ({ e, block, realtime, e == Editor::hits && round == 0 && ! realtime && block == kBlocks[0] });
             steps.push_back ({ Editor::none, block, realtime, false });
         }
-    // Once more, with HAMMERED THIN RIDE selected.
-    for (int p = 0; p < cymbalis::kNumPresets; ++p)
-        if (cymbalis::kPresets[(size_t) p].shape == &cymbalis::ui::kHammeredShape)
-            for (const auto e : { Editor::none, Editor::idle, Editor::hits })
-                steps.push_back ({ e, kBlocks[0], false, false, p });
+    // Once more with HAMMERED THIN RIDE selected, and once with SWISH (the dented meshes).
+    for (const auto* shape : { &cymbalis::ui::kHammeredShape, &cymbalis::ui::kSwishShape })
+        for (int p = 0; p < cymbalis::kNumPresets; ++p)
+            if (cymbalis::kPresets[(size_t) p].shape == shape)
+                for (const auto e : { Editor::none, Editor::idle, Editor::hits })
+                    steps.push_back ({ e, kBlocks[0], false, false, p });
     startTimer (50);
 }
 
@@ -465,6 +467,7 @@ void HitTiming::timerCallback()
                     r.segmentsBefore = geo->segmentsBeforeSimplifying;
                     r.surfaceSegments = (int) geo->surface.size() / 2;
                     r.dents = geo->numDents;
+                    r.buildMs = geo->buildMs;
                 }
                 r.gl = c.view->stats();
                 r.glWallMs = now - run->glStartMs;
@@ -548,7 +551,7 @@ void HitTiming::report()
                 std::printf ("    the cymbal: %d mesh segments", r.meshSegments);
                 if (r.segmentsBefore > 0)
                     std::printf (" (%d before simplifying, %d dents)", r.segmentsBefore, r.dents);
-                std::printf (", %d surface line segments\n", r.surfaceSegments);
+                std::printf (", %d surface line segments; built in %.0f ms\n", r.surfaceSegments, r.buildMs);
                 break;
             }
         std::printf ("    %-22s %s\n", "", "processBlock over all runs (ms)     worst of each run (ms)       its CPU (ms)    rest of the   WindowServer");

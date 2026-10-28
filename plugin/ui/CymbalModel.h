@@ -57,23 +57,27 @@ constexpr Rgb roseLight { 0xde / 255.0f, 0xb0 / 255.0f, 0x96 / 255.0f };
 constexpr Rgb lathe { 0xcd / 255.0f, 0xa0 / 255.0f, 0x6e / 255.0f };
 constexpr Rgb gold { 0xec / 255.0f, 0xc8 / 255.0f, 0x8c / 255.0f };
 constexpr Rgb hot { 0xff / 255.0f, 0xee / 255.0f, 0xd7 / 255.0f };
+constexpr Rgb copper { 0xc4 / 255.0f, 0x6e / 255.0f, 0x42 / 255.0f };
 constexpr Rgb flash { 0xff / 255.0f, 0xf5 / 255.0f, 0xe6 / 255.0f };
 } // namespace colour
 
-// What a line is made of at its radius (the reference's colour() zones, in its order): a tint
-// zone (gold metal, no lathe lines), a gold zone (gold lathing), a lathe zone, or plain bronze.
+// What a line is made of at its radius (the reference's colour() zones, in its order): copper
+// patina (SWISH, Cymbal2's copper_mask, over all else), a tint zone (gold metal, no lathe lines),
+// a gold zone (gold lathing), a lathe zone, or plain bronze.
 enum class Metal : std::uint8_t
 {
     plain = 0,
     lathe = 1,
     gold = 2,
-    tint = 3
+    tint = 3,
+    copper = 4
 };
 
 // The colour of a line (the reference's colour(), and Cymbal2's dent light): the light from its
 // shade (the normal against the light) and ytl (1 at the cymbal's top on screen, 0 at its
-// bottom); its metal, `factor` being lum(r) x the zone's strength for gold and lum(r) for tint;
-// the dent light factor `dent` (1: no dent); and the glow g that mixes it toward HOT.
+// bottom); its metal, `factor` being lum(r) x the zone's strength for gold and lum(r) for tint
+// (copper, min (COPPER x (0.95 + 0.55 light), 1), replaces the bronze); the dent light factor
+// `dent` (1: no dent); and the glow g that mixes it toward HOT.
 Rgb bronze (double shade, double ytl, Metal metal, double factor, double dent = 1.0, double glow = 0.0) noexcept;
 
 enum class Zone : std::uint8_t
@@ -84,8 +88,9 @@ enum class Zone : std::uint8_t
 };
 
 // A surface line vertex (pairs are segments). They follow the cymbal's tilt and spin, not its
-// flex, at the profile's height + 0.0015. In the reference they are drawn in order into a layer
-// of their own, each over those before it (where they cross, the later one shows).
+// flex, at the profile's height + 0.0015 (with shape.dents.linesFollowDents plus the dent there,
+// and they take the dent light: see lineDent). In the reference they are drawn in order into a
+// layer of their own, each over those before it (where they cross, the later one shows).
 enum class SurfaceKind : std::uint8_t
 {
     hammer = 0,    // the surface colour x param (0.8; 1.0 for the spiral)
@@ -101,7 +106,12 @@ struct SurfaceVertex
     float kind, param;
     float metal, factor; // the surface's Metal and factor there (see bronze)
     float width;         // design units: 1, or 2 for grooves and edge lines
+    float dent = 1.0f;   // the dent light factor f there (1: none)
 };
+
+// A surface line segment's colour c on the dents (Cymbal2 with lines_follow_dents), f being its
+// ends' average dent light factor: c + (HOT x 0.95 - c) x min (f - 1, 1) where f > 1, else c x f.
+Rgb lineDent (Rgb c, double f) noexcept;
 
 // Everything about a preset's cymbal that does not move: built once per preset.
 class Geometry
@@ -152,6 +162,7 @@ public:
     std::vector<std::uint16_t> vertexRadial, vertexAngle;
     int numDents = 0;
     int segmentsBeforeSimplifying = 0;
+    double buildMs = 0.0; // how long this geometry took to build, milliseconds
 
     // Surface lines as vertex pairs, in the reference's drawing order (each over those before it):
     // the hammer marks, grooves, edge lines, fine lathe and gold lathing (_build_texture); on the
@@ -173,10 +184,14 @@ private:
     std::vector<double> px, py, pd; // PCHIP knots (r / R, z / R) and slopes
     std::array<double, 200> lumTable {};
     bool hasLum = false;
+    // The dented mesh's dents and dent light factor at rest on the whole fine grid (radial i x
+    // around j), for surface lines that follow the dents; freed once those are built.
+    std::vector<double> gridDz, gridDent;
     void buildLum();
     void buildMesh();
     void buildDentedMesh();
     void buildSurface();
+    void followDents (const SurfaceVertex& ring);
     void buildModes();
     double strengthAt (double r) const noexcept;
 };

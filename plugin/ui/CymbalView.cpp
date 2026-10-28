@@ -28,13 +28,15 @@ juce::String bronzeGlsl()
 {
     using namespace wire::colour;
     return "const vec3 kDark = " + vec3Of (roseDark) + ", kLight = " + vec3Of (roseLight) + ", kLathe = " + vec3Of (lathe)
-           + ", kGold = " + vec3Of (gold) + ", kHot = " + vec3Of (hot) + ";\n"
-           + R"(// metal: 0 plain, 1 lathe, 2 gold, 3 tint (wire::Metal); dent: the dent light factor
+           + ", kGold = " + vec3Of (gold) + ", kCopper = " + vec3Of (copper) + ", kHot = " + vec3Of (hot) + ";\n"
+           + R"(// metal: 0 plain, 1 lathe, 2 gold, 3 tint, 4 copper (wire::Metal); dent: the dent light factor
 vec3 bronze (float shade, float ytl, float metal, float factor, float dent, float glow)
 {
     float light = clamp (((shade - 0.86) / 0.14) * 0.8 + 0.2 * ytl, 0.0, 1.0);
     vec3 c = kDark + (kLight - kDark) * pow (0.25 + 0.75 * light, 1.4);
-    if (metal > 2.5)
+    if (metal > 3.5)
+        c = min (kCopper * (0.95 + 0.55 * light), vec3 (1.0));
+    else if (metal > 2.5)
         c = c * 0.15 + kGold * (0.62 + 0.38 * light) * factor;
     else if (metal > 1.5)
         c = c * 0.25 + kGold * (0.42 + 0.48 * light) * factor;
@@ -150,12 +152,13 @@ void main()
 }
 )";
 
-// The surface lines: each segment's ends (radius, angle, height: the profile's, no flex) and its
-// kind (wire::SurfaceKind), colour from the ends' average.
+// The surface lines: each segment's ends (radius, angle, height: the profile's, no flex; on
+// SWISH with the dents) and its kind (wire::SurfaceKind), colour from the ends' average, then
+// the dent light (wire::lineDent) from the ends' average dent light factor.
 const char* const kSurfaceVertex = R"(in vec3 aA;
 in vec3 aB;
-in vec4 aKind;   // kind, its factor, the surface's metal and factor there
-in float aWidth; // design units
+in vec4 aKind;  // kind, its factor, the surface's metal and factor there
+in vec2 aWidth; // design units; the dent light factor
 vec3 colourAt (vec3 e, out vec2 p)
 {
     vec2 s = project (e.x, e.y, e.z);
@@ -177,9 +180,10 @@ vec3 colourAt (vec3 e, out vec2 p)
 void main()
 {
     vec2 pa, pb;
-    vec3 ca = colourAt (aA, pa), cb = colourAt (aB, pb);
-    vColour = 0.5 * (ca + cb);
-    gl_Position = quadCorner (pa, pb, 0.5 * aWidth * uPx, 0.5 * aWidth * uPx);
+    vec3 ca = colourAt (aA, pa), cb = colourAt (aB, pb), c = 0.5 * (ca + cb);
+    float f = aWidth.y;
+    vColour = f > 1.0 ? c + (kHot * 0.95 - c) * min (f - 1.0, 1.0) : c * f;
+    gl_Position = quadCorner (pa, pb, 0.5 * aWidth.x * uPx, 0.5 * aWidth.x * uPx);
 }
 )";
 
@@ -364,22 +368,24 @@ struct CymbalView::Gpu
         glUniform1i (at (*mesh, "uState"), 2);
         glUniform1f (at (*mesh, "uPerVertex"), geo.perVertexColour ? 1.0f : 0.0f);
 
-        // The surface lines: per quad corner, the corner, both ends, the segment's kind and width.
+        // The surface lines: per quad corner, the corner, both ends, the segment's kind, width and
+        // dent light factor (its ends' average).
         surfaceSegments = (int) geo.surface.size() / 2;
         std::vector<float> lines;
-        lines.reserve ((size_t) surfaceSegments * 52);
+        lines.reserve ((size_t) surfaceSegments * 56);
         for (int k = 0; k < surfaceSegments; ++k)
         {
             const auto& a = geo.surface[(size_t) (2 * k)];
             const auto& b = geo.surface[(size_t) (2 * k + 1)];
             for (const auto& c : corners)
-                for (float v : { c[0], c[1], a.r, a.theta, a.z, b.r, b.theta, b.z, a.kind, a.param, a.metal, a.factor, a.width })
+                for (float v : { c[0], c[1], a.r, a.theta, a.z, b.r, b.theta, b.z, a.kind, a.param, a.metal, a.factor, a.width,
+                                 0.5f * (a.dent + b.dent) })
                     lines.push_back (v);
         }
         glBindVertexArray (surfaceVao);
         glBindBuffer (GL_ARRAY_BUFFER, surfaceVbo);
         glBufferData (GL_ARRAY_BUFFER, (GLsizeiptr) (lines.size() * sizeof (float)), lines.data(), GL_STATIC_DRAW);
-        const auto stride = (GLsizei) (13 * sizeof (float));
+        const auto stride = (GLsizei) (14 * sizeof (float));
         glEnableVertexAttribArray (0);
         glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, stride, nullptr);
         for (GLuint a = 1; a <= 3; ++a)
@@ -388,7 +394,7 @@ struct CymbalView::Gpu
             glVertexAttribPointer (a, a < 3 ? 3 : 4, GL_FLOAT, GL_FALSE, stride, (const void*) ((size_t) (2 + 3 * (a - 1)) * sizeof (float)));
         }
         glEnableVertexAttribArray (4);
-        glVertexAttribPointer (4, 1, GL_FLOAT, GL_FALSE, stride, (const void*) (12 * sizeof (float)));
+        glVertexAttribPointer (4, 2, GL_FLOAT, GL_FALSE, stride, (const void*) (12 * sizeof (float)));
         uploadQuadIndices (surfaceIndex, surfaceSegments);
         glBindVertexArray (0);
         glUseProgram (0);
@@ -980,7 +986,8 @@ juce::Image CymbalView::renderStill (float scale) const
                 p[e] = { (float) (sx - origin.x), (float) (sy - origin.y) };
                 c[e] = wire::surfaceColour (geo.surface[k + e], ytl (sy - origin.y));
             }
-            lg.setColour (toColour ({ 0.5f * (c[0].r + c[1].r), 0.5f * (c[0].g + c[1].g), 0.5f * (c[0].b + c[1].b) }));
+            const double dent = 0.5 * (geo.surface[k].dent + geo.surface[k + 1].dent);
+            lg.setColour (toColour (wire::lineDent ({ 0.5f * (c[0].r + c[1].r), 0.5f * (c[0].g + c[1].g), 0.5f * (c[0].b + c[1].b) }, dent)));
             lg.drawLine ({ p[0], p[1] }, geo.surface[k].width);
         }
     }

@@ -4,8 +4,9 @@
 // CYMBALS table of the approved reference, docs/ui/wireframe_reference.py: shapes, lathe zones
 // and hammering approved by Kris on 2026-10-27; NOVA RIDE, HAMMERED THIN RIDE and SMOKE FLAT
 // RIDE changed on 2026-10-28 (gold lathing measured from the photos, Nova's new bell and bow,
-// Hammered's dents, Smoke's lighter gold). Data only: the mesh, the surface lines and the
-// motion are built from it in CymbalModel.
+// Hammered's dents, Smoke's lighter gold), and SWISH the same day (round 3: gold lathing, a
+// copper bell and band, shallow dents in three zones). Data only: the mesh, the surface lines
+// and the motion are built from it in CymbalModel.
 
 #include <array>
 
@@ -39,18 +40,31 @@ struct GoldZone
     double from, to, strength;
 };
 
-// The hammering pressed into the mesh as dents (the reference's Cymbal2, its approved defaults).
+// A zone of dents packed at random without overlap (the reference's dent_zones, SWISH): from,
+// to (fractions of R), how many to place, the range of a (along) and of b/a, and a depth scale.
+struct DentZone
+{
+    double from, to;
+    int count;
+    double aMin, aMax, ratioMin, ratioMax, depthScale;
+};
+
+// The hammering pressed into the mesh as dents (the reference's Cymbal2, its approved defaults;
+// SWISH sets its own depth, contrast, ring step and zones).
 struct Dents
 {
     int radial = 197;        // radial samples from 0.02 to 1.0, 0.005 R apart
     int around = 480;        // samples around
-    int ringStep = 4;        // rings on every 4th radial sample, the bell ring and the rim
+    int ringStep = 4;        // rings on every ringStep-th radial sample, the bell ring and the rim
     int spokeEvery = 12;     // a spoke on every 12th sample around: 40 spokes
     double depth = 2.4;      // dent_depth
-    double size = 2.0;       // dent_size: the large dents' size factor
-    int smallDents = 110;    // small dents in the gaps
+    double size = 2.0;       // dent_size: the large dents' size factor ('dimple')
+    int smallDents = 110;    // small dents in the gaps ('dimple')
     double contrast = 5.0;   // dent_contrast: f = clip(1 + contrast * dshade, 0.25, 1.9)
     double simplify = 0.25;  // Douglas-Peucker tolerance, design units
+    std::array<DentZone, 3> zones {}; // dent_zones: when there are any, they replace the hammering
+    int numZones = 0;
+    bool linesFollowDents = false; // the lathe and edge lines follow the dents (lines_follow_dents)
 };
 
 // Each photo's mean brightness by radius, measured 2026-10-28 from resources/ui/<photo>.png:
@@ -90,6 +104,26 @@ inline constexpr std::array<double, 200> kHammeredPhotoLum { {
     61.9, 60.4, 60.5, 60.3, 58.6, 57.9, 57.5, 56.7, 57.8, 57.9, 57.9, 58.3, 60.8, 64.2,
     65.2, 66.5, 67.4, 70.8, 70.5, 70.0, 69.7, 69.8, 69.8, 69.4, 68.9, 67.6, 66.8, 66.4,
     66.5, 66.7, 63.8, 68.0,
+} };
+
+// SWISH's from Kris's new photo of 2026-10-28 (left and right radii; the reference's
+// SWISH_PHOTO_LUM), not from resources/ui/Swish.png.
+inline constexpr std::array<double, 200> kSwishPhotoLum { {
+    83.9, 85.2, 85.7, 89.1, 85.2, 71.3, 66.8, 73.0, 69.6, 68.4, 61.0, 62.6, 67.2, 65.9,
+    61.9, 61.0, 66.8, 75.4, 75.4, 73.7, 68.6, 66.7, 70.7, 72.5, 72.5, 74.3, 75.8, 76.5,
+    77.5, 84.6, 89.1, 90.4, 91.1, 90.1, 96.8, 93.6, 94.9, 102.8, 119.7, 118.6, 118.2, 121.1,
+    118.2, 121.4, 121.3, 119.3, 117.1, 116.3, 116.2, 116.6, 118.5, 115.6, 119.1, 117.6, 118.2, 117.8,
+    116.6, 118.9, 116.9, 117.6, 117.8, 117.2, 115.4, 116.9, 115.0, 114.9, 114.2, 114.6, 116.4, 114.9,
+    117.6, 117.5, 117.7, 115.8, 116.5, 116.0, 117.7, 119.6, 121.0, 120.0, 120.4, 120.2, 119.1, 120.3,
+    119.9, 119.6, 120.1, 120.8, 121.5, 120.2, 120.9, 118.6, 117.9, 119.4, 121.4, 120.0, 118.0, 116.2,
+    115.6, 116.2, 114.6, 117.9, 114.8, 99.2, 73.9, 68.5, 68.7, 67.3, 70.2, 72.0, 67.8, 64.8,
+    66.0, 66.9, 69.4, 67.0, 69.5, 72.5, 73.1, 74.4, 71.5, 72.6, 72.7, 72.7, 69.6, 71.8,
+    70.8, 69.4, 69.0, 69.2, 69.3, 75.9, 67.8, 70.3, 68.8, 64.2, 69.4, 67.0, 64.6, 64.1,
+    69.6, 74.5, 73.6, 68.1, 67.3, 69.5, 71.5, 72.9, 82.6, 97.5, 108.9, 109.0, 107.2, 107.8,
+    108.1, 105.8, 105.1, 107.1, 106.5, 106.8, 107.5, 111.5, 118.2, 115.4, 117.9, 122.4, 127.1, 133.6,
+    132.4, 130.0, 126.4, 122.1, 119.5, 120.6, 120.5, 119.7, 117.7, 121.3, 125.2, 134.1, 128.0, 133.8,
+    127.2, 128.9, 131.4, 130.7, 129.9, 124.9, 122.7, 118.4, 122.8, 122.9, 126.4, 120.6, 118.5, 115.8,
+    114.3, 115.3, 127.6, 56.2,
 } };
 
 inline constexpr std::array<double, 200> kSmokePhotoLum { {
@@ -135,6 +169,8 @@ struct CymbalShape
     int numGoldLines = 0;
     bool zoneEdges = true;           // edge lines at the gold zones' bounds
     double goldStep = 0.012;         // lathe line spacing in the gold zones
+    std::array<Zone, 2> copper {};   // copper patina (replaces the bronze or gold colour; dented mesh)
+    int numCopper = 0;
     const std::array<double, 200>* photoLum = nullptr; // the photo's brightness by radius
     int lumSmooth = 9;               // its moving-average window
     bool bellLine = true;            // the bell ring 2 units wide (else 1, like the other rings)
@@ -214,16 +250,39 @@ inline constexpr CymbalShape kSmokeShape = [] {
     return s;
 }();
 
-// SWISH (22" china): a small squat bell, a straight bow sloping down, the outer flange turned up.
-// Lathed all over, no hammering. Drawn the same size as the 20" cymbals.
-inline constexpr CymbalShape kSwishShape {
-    "swish", 11.0, 0.22,
-    {{ { 0.0, 1.55 }, { 1.4, 1.48 }, { 2.0, 1.25 }, { 2.35, 0.92 }, { 2.6, 0.80 }, { 4.5, 0.66 },
-       { 7.0, 0.42 }, { 8.4, 0.24 }, { 8.75, 0.22 }, { 9.4, 0.30 }, { 10.2, 0.50 }, { 11.0, 0.78 } }}, 12,
-    {{ { 0.0, 1.0 } }}, 1,
-    {{ { 0.03, 0.21 }, { 0.24, 0.78 }, { 0.80, 1.0 } }}, 3,
-    Hammer::none, { 0.0, 0.0 },
-};
+// SWISH (22" china, round 3, 2026-10-28, from Kris's new photos): a squat copper bell (its edge
+// at 2.1", its top 1.85"), a straight bow sloping down, the outer flange turned up. Gold lathing
+// 2.1-5.7" and 8.2" to the rim, a hammered copper band 5.7-8.2"; the hammering pressed into the
+// mesh in three packed zones, shallow, the lathe lines following the dents. Drawn the same size
+// as the 20" cymbals.
+inline constexpr CymbalShape kSwishShape = [] {
+    CymbalShape s {};
+    s.key = "swish";
+    s.R = 11.0;
+    s.bell = 0.19;
+    s.profile = { { { 0.0, 1.85 }, { 0.6, 1.81 }, { 1.2, 1.63 }, { 1.6, 1.33 }, { 1.9, 1.02 }, { 2.1, 0.86 },
+                    { 2.3, 0.79 }, { 4.5, 0.66 }, { 7.0, 0.42 }, { 8.4, 0.24 }, { 8.75, 0.22 }, { 9.4, 0.30 },
+                    { 10.2, 0.50 }, { 11.0, 0.78 } } };
+    s.numProfile = 14;
+    s.hammer = Hammer::none;
+    s.gold = { { { 0.19, 0.52, 1.0 }, { 0.745, 1.0, 1.0 } } };
+    s.numGold = 2;
+    s.goldStep = 0.014;
+    s.copper = { { { 0.0, 0.19 }, { 0.52, 0.745 } } };
+    s.numCopper = 2;
+    s.photoLum = &kSwishPhotoLum;
+    s.bellLine = false;
+    s.dented = true;
+    s.dents.depth = 1.5;
+    s.dents.contrast = 6.0;
+    s.dents.ringStep = 5;
+    s.dents.zones = { { { 0.04, 0.185, 60, 0.017, 0.024, 0.6, 0.95, 1.0 },    // the bell
+                        { 0.525, 0.74, 400, 0.019, 0.027, 0.55, 0.95, 1.0 },  // the copper band
+                        { 0.83, 0.985, 160, 0.022, 0.034, 0.45, 0.8, 0.8 } } }; // near the rim
+    s.dents.numZones = 3;
+    s.dents.linesFollowDents = true;
+    return s;
+}();
 
 // RAVEN (20" dry ride): a small lathed bell with its own deep grooves, a moderately high bow with
 // large scale-shaped hammering in a spiral, two bright lathed rings at the edge.

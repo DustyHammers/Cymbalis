@@ -1,6 +1,7 @@
 #include "CymbalModel.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <random>
 
@@ -214,10 +215,11 @@ Rgb bronze (double shade, double ytl, Metal metal, double factor, double dent, d
 {
     const double light = std::clamp (((shade - 0.86) / 0.14) * 0.8 + 0.2 * ytl, 0.0, 1.0);
     const double base = std::pow (0.25 + 0.75 * light, 1.4);
-    const auto channel = [&] (float dark, float bright, float lathed, float gold, float hot) {
+    const auto channel = [&] (float dark, float bright, float lathed, float gold, float copper, float hot) {
         double c = dark + (bright - dark) * base;
         switch (metal)
         {
+            case Metal::copper: c = std::min (copper * (0.95 + 0.55 * light), 1.0); break;
             case Metal::tint: c = c * 0.15 + gold * (0.62 + 0.38 * light) * factor; break;
             case Metal::gold: c = c * 0.25 + gold * (0.42 + 0.48 * light) * factor; break;
             case Metal::lathe: c = c * 0.55 + lathed * (0.30 + 0.35 * light); break;
@@ -228,14 +230,23 @@ Rgb bronze (double shade, double ytl, Metal metal, double factor, double dent, d
         return (float) (c + (hot - c) * glow);
     };
     using namespace colour;
-    return { channel (roseDark.r, roseLight.r, colour::lathe.r, colour::gold.r, hot.r),
-             channel (roseDark.g, roseLight.g, colour::lathe.g, colour::gold.g, hot.g),
-             channel (roseDark.b, roseLight.b, colour::lathe.b, colour::gold.b, hot.b) };
+    return { channel (roseDark.r, roseLight.r, colour::lathe.r, colour::gold.r, colour::copper.r, hot.r),
+             channel (roseDark.g, roseLight.g, colour::lathe.g, colour::gold.g, colour::copper.g, hot.g),
+             channel (roseDark.b, roseLight.b, colour::lathe.b, colour::gold.b, colour::copper.b, hot.b) };
+}
+
+Rgb lineDent (Rgb c, double f) noexcept
+{
+    const auto channel = [f] (float v, float hot) {
+        return (float) (f > 1.0 ? v + (hot * 0.95 - v) * std::min (f - 1.0, 1.0) : v * f);
+    };
+    return { channel (c.r, colour::hot.r), channel (c.g, colour::hot.g), channel (c.b, colour::hot.b) };
 }
 
 //==============================================================================
 Geometry::Geometry (const CymbalShape& s) : shape (s), bell (s.bell)
 {
+    const auto started = std::chrono::steady_clock::now();
     // The profile in fractions of R, and scipy's PCHIP slopes (Fritsch-Carlson, with its
     // weighted harmonic mean and end conditions).
     for (int k = 0; k < s.numProfile; ++k)
@@ -272,6 +283,9 @@ Geometry::Geometry (const CymbalShape& s) : shape (s), bell (s.bell)
         buildMesh();
     buildSurface();
     buildModes();
+    gridDz = {};
+    gridDent = {};
+    buildMs = std::chrono::duration<double, std::milli> (std::chrono::steady_clock::now() - started).count();
 }
 
 double Geometry::height (double r) const noexcept
@@ -340,6 +354,9 @@ double Geometry::strengthAt (double r) const noexcept
 Metal Geometry::metalAt (double r, double& factor) const noexcept
 {
     factor = 1.0;
+    for (int k = 0; k < shape.numCopper; ++k)
+        if (shape.copper[(size_t) k].from <= r && r <= shape.copper[(size_t) k].to)
+            return Metal::copper;
     if (shape.hasTint && shape.tint.from <= r && r <= shape.tint.to)
     {
         factor = lum (r);
@@ -422,8 +439,8 @@ void Geometry::buildMesh()
 }
 
 // The hammering pressed into the mesh (the reference's Cymbal2): a fine grid, the dents
-// (_make_dents, 'dimple'), the dent light factor at rest, and the rings and spokes simplified
-// once (_simplify_lines). Each segment is coloured from its two ends.
+// (_make_dents: packed zones, or 'dimple'), the dent light factor at rest, and the rings and
+// spokes simplified once (_simplify_lines). Each segment is coloured from its two ends.
 void Geometry::buildDentedMesh()
 {
     const auto& D = shape.dents;
@@ -446,8 +463,28 @@ void Geometry::buildDentedMesh()
     };
     std::vector<Dent> dents;
     Uniform uniform;
+    const auto apart = [&dents] (double x, double y, double a, double gap) {
+        return std::none_of (dents.begin(), dents.end(), [&] (const Dent& d) { return std::hypot (x - d.x, y - d.y) < gap * (a + d.a); });
+    };
+    // Packed zones (SWISH): random places with no overlap, up to `count` per zone, 40 x count tries.
+    for (int k = 0; k < D.numZones; ++k)
+    {
+        const auto& zone = D.zones[(size_t) k];
+        for (int tries = 0, placed = 0; placed < zone.count && tries < 40 * zone.count; ++tries)
+        {
+            const double r = std::sqrt (uniform (zone.from * zone.from, zone.to * zone.to)), t = uniform (0.0, twoPi);
+            const double a = uniform (zone.aMin, zone.aMax), b = a * uniform (zone.ratioMin, zone.ratioMax);
+            const double x = r * std::cos (t), y = r * std::sin (t);
+            if (! apart (x, y, a, 0.85))
+                continue;
+            const double rot = t + uniform (-0.6, 0.6);
+            dents.push_back ({ x, y, a, b, rot, 0.0042 * std::pow (a / 0.03, 0.7) * uniform (0.7, 1.1) * zone.depthScale });
+            ++placed;
+        }
+    }
+    // Otherwise the 'dimple' hammering: large dents, then smaller ones in the gaps.
     const double z0 = shape.hammerZone.from, z1 = shape.hammerZone.to;
-    const int large = (int) (pi * (z1 * z1 - z0 * z0) / 0.011 / std::pow (D.size, 1.5));
+    const int large = D.numZones > 0 ? 0 : (int) (pi * (z1 * z1 - z0 * z0) / 0.011 / std::pow (D.size, 1.5));
     for (int k = 0; k < large; ++k)
     {
         const double r = std::sqrt (uniform (z0 * z0, z1 * z1)), t = uniform (0.0, twoPi);
@@ -457,14 +494,13 @@ void Geometry::buildDentedMesh()
         dents.push_back ({ r * std::cos (t), r * std::sin (t), a, b, rot, 0.0042 * std::pow (a / 0.03, 0.7) * uniform (0.6, 1.2) });
     }
     // smaller dents in the gaps between the large ones (no overlap)
-    for (int tries = 0, added = 0; added < D.smallDents && tries < 20000; ++tries)
+    for (int tries = 0, added = 0; D.numZones == 0 && added < D.smallDents && tries < 20000; ++tries)
     {
         const double r = std::sqrt (uniform (z0 * z0, z1 * z1)), t = uniform (0.0, twoPi);
         const double grow = (r - z0) / (z1 - z0);
         const double a = uniform (0.018, 0.028) * (0.85 + 0.5 * grow), b = a * uniform (0.5, 0.9);
         const double x = r * std::cos (t), y = r * std::sin (t);
-        if (std::any_of (dents.begin(), dents.end(),
-                         [&] (const Dent& d) { return std::hypot (x - d.x, y - d.y) < 0.9 * (a + d.a); }))
+        if (! apart (x, y, a, 0.9))
             continue;
         const double rot = uniform (0.0, pi);
         dents.push_back ({ x, y, a, b, rot, 0.0042 * std::pow (a / 0.03, 0.7) * uniform (0.6, 1.1) });
@@ -610,6 +646,11 @@ void Geometry::buildDentedMesh()
         segmentMetal.push_back ((float) metal);
         segmentMetal.push_back ((float) factor);
     }
+    if (D.linesFollowDents)
+    {
+        gridDz = std::move (dz);
+        gridDent = std::move (f);
+    }
     for (int i = 0; i < nr; ++i)
     {
         const double raw = (fineR[(size_t) i] - (bell - 0.1)) / 0.15;
@@ -621,8 +662,9 @@ void Geometry::buildDentedMesh()
 
 // The surface lines of _build_texture (Cymbal2._lines for the dented mesh), in its order: the
 // hammering, the bell grooves, the edge lines, the fine lathe rings and the gold lathing (on the
-// dented mesh the grooves, the gold lathing, then the edge lines). Any fixed-seed sequence will
-// do: the pattern matches the reference in size, spacing and spread, not mark for mark.
+// dented mesh the grooves, the gold lathing, then the edge lines, following the dents where
+// shape.dents.linesFollowDents). Any fixed-seed sequence will do: the pattern matches the
+// reference in size, spacing and spread, not mark for mark.
 void Geometry::buildSurface()
 {
     Uniform uniform;
@@ -643,8 +685,14 @@ void Geometry::buildSurface()
             for (int e : { q, q + 1 })
                 surface.push_back (vertexAt (r[e], t[e], kind, param, mean));
     };
-    // A full ring at r, 48 segments (the reference's 97 points, every second one).
+    // A full ring at r, 48 segments (the reference's 97 points, every second one; on the dented
+    // mesh every 10th of its angles).
     const auto fullRing = [&] (double r, SurfaceKind kind, double param) {
+        if (! gridDz.empty())
+        {
+            followDents (vertexAt (r, 0.0, kind, param, r));
+            return;
+        }
         for (int q = 0; q < 48; ++q)
             for (int e : { q, q + 1 })
                 surface.push_back (vertexAt (r, twoPi * e / 48.0, kind, param, r));
@@ -773,6 +821,48 @@ void Geometry::buildSurface()
     for (int k = 0; k < shape.numGold; ++k)
         for (double r : arange (shape.gold[(size_t) k].from, shape.gold[(size_t) k].to, shape.goldStep))
             fullRing (r, SurfaceKind::goldLathe, lum (r));
+}
+
+// A ring that follows the dents (Cymbal2's tex_fit with lines_follow_dents), `v` giving its
+// radius and kind: sampled on the mesh's angles at the nearest mesh radius, with the dents'
+// height and light factor there, and simplified as the mesh rings (Douglas-Peucker on the
+// position in design units plus 4 x f, every 6th sample kept); every 6th sample where that
+// radius has no dents. The zone edge lines follow the dents' height but stay whole (f = 1).
+void Geometry::followDents (const SurfaceVertex& v)
+{
+    const int nr = (int) fineR.size(), nt = around;
+    const double r = v.r, dTheta = twoPi / nt, U = Camera::scale;
+    int ir = 0;
+    for (int i = 1; i < nr; ++i)
+        if (std::abs (fineR[(size_t) i] - r) < std::abs (fineR[(size_t) ir] - r))
+            ir = i;
+    const double* dz = gridDz.data() + (size_t) ir * (size_t) nt;
+    const double* f = gridDent.data() + (size_t) ir * (size_t) nt;
+    std::vector<int> kept;
+    if (std::any_of (dz, dz + nt, [] (double d) { return std::abs (d) > 1.0e-6; }))
+    {
+        std::vector<std::array<double, 4>> P;
+        for (int j = 0; j <= nt; ++j) // closed: the last joins the first
+            P.push_back ({ r * std::cos ((j % nt) * dTheta) * U, r * std::sin ((j % nt) * dTheta) * U, dz[j % nt] * U, 4.0 * f[j % nt] });
+        kept = simplify (P, 6, shape.dents.simplify);
+        kept.pop_back(); // the first again
+    }
+    else
+        for (int j = 0; j < nt; j += 6)
+            kept.push_back (j);
+    const bool whole = (SurfaceKind) (int) v.kind == SurfaceKind::edge;
+    for (size_t q = 0; q < kept.size(); ++q)
+    {
+        const int j0 = kept[q], j1 = kept[(q + 1) % kept.size()];
+        for (const auto& [j, theta] : { std::pair { j0, j0 * dTheta }, std::pair { j1, q + 1 < kept.size() ? j1 * dTheta : j1 * dTheta + twoPi } })
+        {
+            auto e = v;
+            e.theta = (float) theta;
+            e.z = (float) (height (r) + 0.0015 + dz[j]);
+            e.dent = whole ? 1.0f : (float) f[j];
+            surface.push_back (e);
+        }
+    }
 }
 
 void Geometry::buildModes()
