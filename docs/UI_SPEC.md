@@ -1,6 +1,6 @@
 # UI specification — Cymbalis
 
-Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE added 2026-10-15, SWISH 2026-10-17. Layout v2 (mockup v2: a larger, higher photo area, MIDI CHANNEL under CYMBAL, Velocity Sensitivity and Volume in a bottom row) approved by Kris 2026-10-25; the Pan parameter and its knob added 2026-10-25 at Kris's request; the hit display (section 10) approved by Kris 2026-10-25. Layout v3 (mockup v3: the MIDI CHANNEL box and the TUNING button swapped) approved by Kris 2026-10-25. The wireframe cymbal (section 11), replacing the photos and the 2D hit marks, approved by Kris 2026-10-27. All coordinates are in 1536×1024 design units. `docs/ui/reference_mockup.png` shows the original artwork (layout v1).
+Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE added 2026-10-15, SWISH 2026-10-17. Layout v2 (mockup v2: a larger, higher photo area, MIDI CHANNEL under CYMBAL, Velocity Sensitivity and Volume in a bottom row) approved by Kris 2026-10-25; the Pan parameter and its knob added 2026-10-25 at Kris's request; the hit display (section 10) approved by Kris 2026-10-25. Layout v3 (mockup v3: the MIDI CHANNEL box and the TUNING button swapped) approved by Kris 2026-10-25. The wireframe cymbal (section 11), replacing the photos and the 2D hit marks, approved by Kris 2026-10-27; its second round (NOVA RIDE, HAMMERED THIN RIDE and SMOKE FLAT RIDE) 2026-10-28. All coordinates are in 1536×1024 design units. `docs/ui/reference_mockup.png` shows the original artwork (layout v1).
 
 ## 1. Assets (`resources/ui/`)
 
@@ -247,7 +247,7 @@ Approved by Kris, 2026-10-25. UI only: it changes nothing in the sound and adds 
 - The editor reads the FIFO on its timer and keeps up to 16 hits (`HitTracker`, `plugin/ui/HitDisplay.h`); when full, the oldest is dropped, and a hit is dropped once it is older than 6 s. The tracker's own timer runs at 30 Hz only while it keeps a hit and stops when it keeps none; each tick hands the hits to the cymbal, which draws a frame. While it keeps none, the editor's existing 30 Hz timer (notes, MIDI learn) reads the FIFO, and a hit starts the tracker's timer.
 
 **Where a strike lands.**
-- Each preset has a bell (or centre) zone as a fraction of the cymbal's radius: its shape's bell radius (`CymbalShape::bell` in `plugin/ui/CymbalShapes.h`, the slot table's `PresetInfo::shape`): NOVA RIDE 0.40, SMOKE FLAT RIDE 0.16 (centre zone), HAMMERED THIN RIDE 0.19, SWISH 0.22, RAVEN 0.22. Until 2026-10-27 they were the slot table's `bellRadius`, measured on the photos: HAMMERED THIN RIDE 0.40 and RAVEN 0.29, the others as now.
+- Each preset has a bell (or centre) zone as a fraction of the cymbal's radius: its shape's bell radius (`CymbalShape::bell` in `plugin/ui/CymbalShapes.h`, the slot table's `PresetInfo::shape`): NOVA RIDE 0.22, SMOKE FLAT RIDE 0.16 (centre zone), HAMMERED THIN RIDE 0.19, SWISH 0.22, RAVEN 0.22. NOVA RIDE's was 0.40 until its new bell (2026-10-28, section 11). Until 2026-10-27 they were the slot table's `bellRadius`, measured on the photos: HAMMERED THIN RIDE 0.40 and RAVEN 0.29, the others as then.
 - Radius fraction from strike position p, linear between p = 1.0 → 0.6 × bell radius, p = 0.5 → (bell radius + 0.95) / 2, and p = 0.0 → 0.97.
 - Angle: 4 to 5 o'clock, 45° clockwise from 3 o'clock plus a random offset uniform in ±12°. The editor draws the random number, never the audio thread.
 - Zone: bell when the radius fraction is below the bell radius, edge when it is 0.9 or more, bow otherwise. How the cymbal moves and flashes: section 11, "Motion on hits".
@@ -260,7 +260,7 @@ Approved by Kris, 2026-10-25. UI only: it changes nothing in the sound and adds 
 
 ## 11. Wireframe cymbal
 
-Approved by Kris, 2026-10-27, from mockups made with `docs/ui/wireframe_reference.py` (Python, documentation only: not built, not run in CI). UI only: the sound is unchanged and there are no new parameters. It replaces the photos and the 2D hit marks: each preset's cymbal is drawn as a rose-bronze wireframe in three-quarter view. When struck, the cymbal tilts in a slow circle, its plate-mode patterns light up and flex, and a flash appears where it was hit. Each preset has its own shape, lathed zones and hammering.
+Approved by Kris, 2026-10-27, from mockups made with `docs/ui/wireframe_reference.py` (Python, documentation only: not built, not run in CI); its second round approved 2026-10-28 (below: NOVA RIDE's new bell and bow, gold lathing measured from the photos, HAMMERED THIN RIDE's dents, SMOKE FLAT RIDE's lighter gold body). UI only: the sound is unchanged and there are no new parameters. It replaces the photos and the 2D hit marks: each preset's cymbal is drawn as a rose-bronze wireframe in three-quarter view. When struck, the cymbal tilts in a slow circle, its plate-mode patterns light up and flex, and a flash appears where it was hit. Each preset has its own shape, lathed zones and hammering.
 
 The reference's numbers are the specification; its colours are OpenCV BGR, given here as RGB. Code: `plugin/ui/CymbalShapes.h` (the shapes), `plugin/ui/CymbalModel.*` (geometry, colour, motion; plain C++), `plugin/ui/CymbalView.*` (drawing), `plugin/ui/HitDisplay.*` (`HitTracker`: the hits and the lit rows).
 
@@ -269,18 +269,33 @@ The reference's numbers are the specification; its colours are OpenCV BGR, given
 - The cymbal's radius is the same on screen for every preset: SWISH (22") is drawn the size of the 20" cymbals, as its photo was. Heights are fractions of each cymbal's own R.
 - Camera, as the reference's `project()`: elevation 38°, centre 787,400, scale 345 design units per cymbal radius, perspective distance 5 radii. A point X, Y, Z (radius 1) goes to yv = Y sin e − Z cos e, zv = Y cos e + Z sin e, p = 5 / (5 − zv), screen 787 + 345·X·p, 400 + 345·yv·p.
 
-**Geometry per preset.** `plugin/ui/CymbalShapes.h` holds one entry per preset, copied from the reference's `CYMBALS` table: R in inches, the profile points (radius and height in inches), the bell radius fraction, the lathe and fine-lathe zones, the hammering style and zone, and RAVEN's bell grooves. The slot table's `PresetInfo::shape` points to it.
+**Geometry per preset.** `plugin/ui/CymbalShapes.h` holds one entry per preset, copied from the reference's `CYMBALS` table: R in inches, the profile points (radius and height in inches; up to 15), the bell radius fraction, the lathe and fine-lathe zones, the hammering style and zone, RAVEN's bell grooves, and the 2026-10-28 fields below. The slot table's `PresetInfo::shape` points to it.
 
 | Preset | Shape | R (in) | Bell | Hammering, zone | Lathe zones | Fine lathe |
 |---|---|---|---|---|---|---|
-| NOVA RIDE | `nova` | 10 | 0.40 | scale, 0.43–0.925 | 0.27–0.405, 0.935–1.0 | — |
-| SMOKE FLAT RIDE | `smoke` | 10 | 0.16 | radial, 0.03–0.885 | 0.885–1.0 | 0.89–0.95 |
-| HAMMERED THIN RIDE | `hammered` | 10 | 0.19 | dimple, 0.43–0.92 | 0.0–0.405, 0.92–1.0 | 0.03–0.40 |
+| NOVA RIDE | `nova` | 10 | 0.22 | scale, 0.43–0.925 (drawn) | — | — |
+| SMOKE FLAT RIDE | `smoke` | 10 | 0.16 | radial, 0.03–0.855 (drawn) | — | — |
+| HAMMERED THIN RIDE | `hammered` | 10 | 0.19 | dimple, 0.43–0.92 (dents in the mesh) | — | — |
 | SWISH | `swish` | 11 | 0.22 | none | 0.0–1.0 | 0.03–0.21, 0.24–0.78, 0.80–1.0 |
-| RAVEN | `raven` | 10 | 0.22 | spiral, 0.25–0.93 | 0.0–0.225, 0.935–1.0 | — (bell grooves 0.035–0.215) |
+| RAVEN | `raven` | 10 | 0.22 | spiral, 0.25–0.93 (drawn) | 0.0–0.225, 0.935–1.0 | — (bell grooves 0.035–0.215) |
+
+The 2026-10-28 fields (NOVA RIDE, HAMMERED THIN RIDE, SMOKE FLAT RIDE; SWISH and RAVEN keep the defaults: no gold, no tint, edges on, gold step 0.012, no photo table, the bell ring 2 units, not dented):
+
+| Field | NOVA RIDE | HAMMERED THIN RIDE | SMOKE FLAT RIDE |
+|---|---|---|---|
+| `gold` zones (from, to, strength; default strength 1) | 0.025–0.355, 0.373–0.397, 0.958–1.0 | 0.025–0.405, 0.90–1.0 at 0.6 | 0.858–1.0 |
+| `tint` (gold metal, no lathe lines) | — | — | 0.0–0.857 |
+| `goldLines` (extra edge lines) | — | — | 0.885, 0.965 |
+| `zoneEdges` (edge lines at the gold zones' bounds) | yes | yes | no |
+| `goldStep` (lathe lines in the gold zones) | 0.006 | 0.006 | 0.004 |
+| photo brightness table, `lumSmooth` | `kNovaPhotoLum`, 9 | `kHammeredPhotoLum`, 9 | `kSmokePhotoLum`, 1 |
+| `bellLine` | no: the bell ring is 1 unit | no | no |
+| `dented` | no | yes (`Dents`, below) | no |
+
+NOVA RIDE's profile (2026-10-28: a bell like RAVEN's, its edge at 2.2", and a longer, shallower bow down to the flat ring), in inches: 0.0 0.90, 0.5 0.88, 1.3 0.74, 1.8 0.53, 2.05 0.41, 2.25 0.35, 2.45 0.33, 4.1 0.33, 5.0 0.40, 6.0 0.55, 7.0 0.71, 7.85 0.80, 8.45 0.75, 9.2 0.45, 10.0 0.0. The gold zones are measured from the photos (rim radius: Nova 354 px, Hammered 354.5, Smoke 356.5 = 10"): NOVA one lathed area from the hole to 3.55", a narrow ring 3.73–3.97", a band at the rim from 9.58"; HAMMERED one area from the hole to 4.05" (the bell included) and a dimmer band at the rim from 9.0"; SMOKE the lighter gold body to 8.57", then the dark lathed edge band, with bright narrow rings at 8.85" and 9.65".
 
 - **Height** between the profile points (r/R, z/R): monotone cubic, PCHIP (Fritsch–Carlson, as scipy's `PchipInterpolator`, its end slopes included); r is clipped to 0–1.
-- **Mesh** (`Cymbal.__init__`): rings at `linspace(0.03, bell, max(4, int(bell/0.04)))`, then `linspace(bell + 0.035, 0.92, max(6, int((0.92 − bell)/0.035)))`, then 0.94, 0.96, 0.98 and 1.0; 80 samples around each ring, closed; a spoke on every second sample (40 spokes) from the first ring to the rim. Lines are 1 design unit wide; the ring nearest the bell radius and the rim are 2 units.
+- **Mesh** (`Cymbal.__init__`; HAMMERED THIN RIDE's below): rings at `linspace(0.03, bell, max(4, int(bell/0.04)))`, then `linspace(bell + 0.035, 0.92, max(6, int((0.92 − bell)/0.035)))`, then 0.94, 0.96, 0.98 and 1.0; 80 samples around each ring, closed; a spoke on every second sample (40 spokes) from the first ring to the rim. Lines are 1 design unit wide; the rim is 2 units, and so is the ring nearest the bell radius where `bellLine` (SWISH and RAVEN).
 - **Surface lines** (`_build_texture`), on the profile's surface (+0.0015), from a fixed-seed generator (`std::mt19937_64`, seed 11; the pattern matches the mockups in size, spacing and spread, not mark for mark):
   - `scale`: rows of arcs every 0.03 R through the zone; each arc spans 0.82 of a step 0.05/r, steps of 0.92–1.08 × that, rising 0.014 R in the middle, jittered ±0.004 R.
   - `spiral` (RAVEN): scale-shaped marks along an Archimedean spiral of pitch 0.065 R, each 0.105 R wide (0.85 of it drawn), rising 0.032 R in the middle, jittered ±0.005 R per mark.
@@ -288,15 +303,34 @@ The reference's numbers are the specification; its colours are OpenCV BGR, given
   - `radial` (SMOKE FLAT RIDE): one short radial stroke per 0.0025 of the zone's area (from r 0.05), 0.015–0.035 R long.
   - Fine lathe: full rings every 0.012 R through each fine-lathe zone.
   - RAVEN's bell grooves: full rings from 0.035 to 0.215, spaced 0.011–0.026 R at random, each with an intensity 0.55–1.0; 2 units wide.
-  - Dents pressed into the mesh are a later step: the hammering is only drawn on the surface.
+  - Gold lathing (2026-10-28): full rings every `goldStep` across each gold zone (numpy's `arange`, value for value), 1 unit wide.
+  - Edge lines (2026-10-28): full rings at each gold zone's bounds that lie between 0.02 and 0.999 (unless `zoneEdges` is off), and at each `goldLines` radius; 2 units wide.
+  - HAMMERED THIN RIDE draws no hammer marks: its dents are in the mesh (below). NOVA RIDE and SMOKE FLAT RIDE keep theirs drawn.
 
 **Colour and light** (`draw()`).
 - Normal from the height field (profile, flex and tilt); light direction (0, −0.55, 0.83); shade = clip(n·light, 0, 1).
 - light = clip(((shade − 0.86)/0.14)·0.8 + 0.2·ytl, 0, 1), ytl being 1 at the cymbal's top on screen and 0 at its bottom.
-- Base colour c = ROSE_DARK + (ROSE_LIGHT − ROSE_DARK)·(0.25 + 0.75·light)^1.4; in a lathe zone c·0.55 + LATHE·(0.30 + 0.35·light); then mixed toward HOT by the glow g: c + (HOT − c)·g. A mesh segment takes its ends' average shade, ytl and g, and the lathe test at its middle radius.
+- Base colour c = ROSE_DARK + (ROSE_LIGHT − ROSE_DARK)·(0.25 + 0.75·light)^1.4; then, in this order (the first zone that holds r):
+  - tint zone: c·0.15 + GOLD·(0.62 + 0.38·light)·lum(r) (the lighter gold metal);
+  - gold zone: c·0.25 + GOLD·(0.42 + 0.48·light)·lum(r)·strength;
+  - lathe zone: c·0.55 + LATHE·(0.30 + 0.35·light);
+  - then, on HAMMERED THIN RIDE, the dent light (below); then mixed toward HOT by the glow g: c + (HOT − c)·g.
+- A mesh segment takes its ends' average shade, ytl and g, and the zone at its middle radius (the reference's `col()`); on HAMMERED THIN RIDE each end's colour is computed at its own radius and the segment takes their average (`Cymbal2`).
+- **Photo brightness lum(r)** (`Cymbal.lum`), once per preset: the 200-value table (the photo's mean brightness by radius, 0.005 R steps from the centre, measured 2026-10-28; `kNovaPhotoLum`, `kHammeredPhotoLum`, `kSmokePhotoLum` in `CymbalShapes.h`) smoothed with a moving average of `lumSmooth` samples (padded with the edge values), divided by the 98th percentile of entries 5 to 79 (numpy's linear interpolation). lum(r) is entry floor(r/0.005), at most 199, clipped to 0.3–1.15; 1 without a table.
 - Colours (RGB): ROSE_DARK `#704A3A`, ROSE_LIGHT `#DEB096`, LATHE `#CDA06E`, GOLD `#ECC88C`, HOT `#FFEED7`, flash `#FFF5E6`.
-- Surface lines (shade 0.9, no glow): hammer marks the surface colour × 0.8 (RAVEN's spiral × 1.0); fine-lathe rings the surface colour × (0.30 + 0.25·ytl); bell grooves GOLD × (0.30 + 0.32·ytl) × the groove's intensity.
+- Surface lines (shade 0.9, no glow): hammer marks the surface colour (at the mark's mean radius) × 0.8 (RAVEN's spiral × 1.0); fine-lathe rings the surface colour × (0.30 + 0.25·ytl); bell grooves GOLD × (0.30 + 0.32·ytl) × the groove's intensity; gold lathing the surface colour × (0.50 + 0.35·ytl) × lum(r) (on HAMMERED THIN RIDE, as `Cymbal2`: GOLD × (0.50 + 0.35·ytl) × lum(r) × strength); edge lines GOLD × (0.55 + 0.40·ytl) × the zone's strength.
 - Lines lighten the background (max). Glow: around every mesh line brighter than 150/255 (its brightest channel), a soft halo is added: Gaussian across the line, sigma 3 design units, out to 9, peak 0.0665 × the line's colour per unit of its width. That is the reference's 3-unit blur added at 0.5, drawn as a halo instead of blurring the image.
+
+**HAMMERED THIN RIDE: dents in the mesh** (2026-10-28, the reference's `Cymbal2`, `DENTED = {'hammered'}`; `CymbalShape::dents`).
+- Mesh: a fine grid of 197 radial samples from 0.02 to 1.0 (0.005 R apart) by 480 around. Rings are drawn on every 4th radial sample, the bell ring and the rim (51 rings); spokes on every 12th sample around (40), through every radial sample.
+- Dents (`_make_dents`, 'dimple'), from a fixed-seed generator (`std::mt19937_64`, seed 11; the pattern matches in count, sizes and spread, not dent for dent):
+  - large ones: int(area/0.011/2^1.5), area that of the hammer zone 0.43–0.92 (66); at r = sqrt(U(z0², z1²)), a random angle; a = U(0.012, 0.026)·(0.8 + 1.6·grow)·2, b = a·U(0.45, 0.9), a random rotation, depth 0.0042·(a/0.03)^0.7·U(0.6, 1.2); grow = (r − z0)/(z1 − z0);
+  - then 110 small ones in the gaps: a = U(0.018, 0.028)·(0.85 + 0.5·grow), b = a·U(0.5, 0.9), depth 0.0042·(a/0.03)^0.7·U(0.6, 1.1); a candidate is rejected when its centre is closer than 0.9·(its a + the other's a) to any dent placed (at most 20,000 tries). 176 dents in all.
+  - each dent's height: dz = −depth·2.4·exp(−1.6·q), q = (u/a)² + (v/b)² in the dent's rotated frame, within 3a of its centre in x and y. No lip.
+- Rest height: height(r) + dz. The flex, tilt, spin, glow and flashes work as on the other presets, on this mesh.
+- Light: the base light uses the smooth surface (profile, flex and tilt; no dents). The dents add the dent light factor f = clip(1 + 5·dshade, 0.25, 1.9), dshade = shade with the dents − shade without, computed once at rest per vertex: where f > 1, c + (ROSE_LIGHT·1.15 − c)·min(f − 1, 1); else c·f. Before the glow mix.
+- Fewer segments (`_simplify_lines`), once per preset: each drawn ring and spoke is simplified with Douglas–Peucker on its rest position in design units (345 per radius) plus 4·f (so a brightness step of 0.06 counts too), tolerance 0.25 design units: a sample splits a span when its largest coordinate difference from the span's chord, interpolated by sample index, exceeds it. A ring always keeps every 6th sample (80 around) and a spoke every 5th, so the flex stays smooth; rings are closed. This takes HAMMERED THIN RIDE from 32,320 segments to about 12,000 (the plugin: 12,071, from about 11,400 kept samples), with no visible change (Kris approved the comparison on 2026-10-28). Only the kept samples are vertices.
+- Gold lathing as `Cymbal2` (above); its edge lines count the gold zones' bounds from 0.03 (0.405 and 0.90 at 0.6), not 0.02.
 
 **Motion on hits**, from the hit FIFO's events (section 10); v is the event's engine velocity.
 - Strike point: angle 45° + uniform ±12° (the editor draws it); radius fraction and zone as in section 10, with the bell radii above.
@@ -315,7 +349,7 @@ The reference's numbers are the specification; its colours are OpenCV BGR, given
 - Weights, per hit (`set_hits`): |J_m(z r)| / N_k × the zone's preference (bell 1/(1 + m), bow 1/(1 + |m − 2|), edge (1 + m)/7) × the reach exp(−(m + 1.5n)/(2 + 6v)), then divided by the largest of the 21. N_k, the mode's normalisation, is the largest |J_m(z r)| for r in [0, 1] (201 points).
 - Displacement (`modal`): for every mode with weight 0.05 or more, a = v·w·exp(−age/τ)·(1 − exp(−age/0.03)), skipped below 0.001, with τ = 0.25 + 1.2/(1 + m + 2n), the second term × 1.6 on the edge (τ = 0.25 + 1.92/(1 + m + 2n) there; the reference's code); it adds a·J_m(z r)/N_k·cos(m(θ − angle))·cos(2π(2 + 0.8(m + n))·age). The mesh height is the profile's + 0.010·disp·stiff, stiff = clip((r − (bell − 0.1))/0.15, 0.12, 1).
 - Glow g (`draw()`): with d = |disp|·stiff and D its largest value over the mesh, g = (d/D)^1.8 × min(1, D/0.35)^0.5 (none when D is below 0.0001).
-- J_m(x) = (1/π)∫₀^π cos(mτ − x sin τ) dτ, a 64-point midpoint sum (Apple's libc++ has no `std::cyl_bessel_j`). The radial part J_m(z r)/N_k is computed once per preset for every ring and mode; the angular part per hit and frame.
+- J_m(x) = (1/π)∫₀^π cos(mτ − x sin τ) dτ, a 64-point midpoint sum (Apple's libc++ has no `std::cyl_bessel_j`). The radial part J_m(z r)/N_k is computed once per preset for every ring and mode (on HAMMERED THIN RIDE for every fine radius, with its slope z·J_m′(z r)/N_k, J_m′ = (J_(m−1) − J_(m+1))/2); the angular part per hit and frame.
 - Wobble (`wobble()`, the `MOT` table): per zone amplitude A, decay τ (s), frequency f (Hz) and spin S (degrees): bell 0.002, 0.3, 2.6, 0; bow 0.006, 0.5, 2.0, 0; edge 0.025, 1.3, 1.4, 0.15. ramp = (1 − exp(−age/0.02))·exp(−age/τ); with u the strike direction and p ⟂ u, T += A·v·ramp·(cos(2πf·age)·u + 0.85·sin(2πf·age)·p) and spin += S·v·ramp·cos(2πf·age), summed over the hits. The cymbal is spun by spin degrees and tilted: Z −= 2.2·(X·T₀ + Y·T₁).
 - Flash at the strike point, at the cymbal's rest position: a soft round spot in `#FFF5E6`, added on top: as the reference, a filled disc of its radius blurred with a Gaussian of sigma 0.6 × its radius (0.75 of the opacity at its centre, half that at 1.0 radius, nothing left by 3). Since sigma follows the radius, its shape is the same at every radius: a 49-point table out to 3 radii (`wire::flashProfile`), computed once. Radius (10 + 22v) design units, × 1.3 for SHOULDER, shrinking linearly to 0.7 × over T = 0.25 + 0.25v; opacity (0.4 + 0.6v)·k, k = (1 − age/T)².
 - Row highlight: unchanged (section 10). Up to 16 hits, the oldest dropped; a hit is dropped once it is older than 6 s.
@@ -323,13 +357,15 @@ The reference's numbers are the specification; its colours are OpenCV BGR, given
 **Rendering.**
 - The audio thread is unchanged: it only writes the FIFO.
 - `CymbalView` covers the cymbal area only. An `juce::OpenGLContext` (OpenGL 3.2 core, 4× multisampling, component painting off, no continuous repainting) draws it on the context's own thread: the area's part of the background image as a texture (with mipmaps), then the mesh and the surface lines, the glow and the flashes. JUCE's software renderer never draws the moving cymbal, and the message thread paints nothing per frame.
-- Buffers: the static geometry is uploaded once per preset: the mesh's segments (each its two mesh vertices), the ring radii, and the surface lines (each segment its two ends and kind). Per frame only the mesh's heights, slopes and glow (4 floats per vertex, in a float texture of 80 × the rings: 2,240 to 2,320 vertices, 28 or 29 rings) and a few uniforms (tilt, spin, camera, the cymbal's screen extent) change. The surface lines follow the tilt and spin, not the flex.
+- Buffers: the static geometry is uploaded once per preset: the mesh's segments (each its two mesh vertices and their metal), its vertices (radius, angle, dent light factor: a float texture), and the surface lines (each segment its two ends and kind). Per frame only the mesh's heights, the smooth surface's slopes and the glow (4 floats per vertex, in a second float texture: 2,240 to 2,320 vertices on the ring meshes, about 11,400 on HAMMERED THIN RIDE) and a few uniforms (tilt, spin, camera, the cymbal's screen extent) change. On HAMMERED THIN RIDE the flex is summed per frame from a per-radius table (Σ over m of A_m(r)·cos mθ + B_m(r)·sin mθ, and its slopes) at the kept vertices only. The surface lines follow the tilt and spin, not the flex.
+- Size: about 3,440 mesh segments and 2,400 to 10,700 surface line segments on the ring-mesh presets; on HAMMERED THIN RIDE about 12,000 mesh segments and 4,000 surface line segments.
 - Lines: each segment is drawn as a thin quad (two triangles), 1 or 2 design units wide and scaled with the editor, built in the vertex shader from its two ends (the core profile has no wide lines); multisampling antialiases them. No geometry shader is used. Lines lighten with `GL_MAX`; the glow and the flashes are added.
 - Frames: the hit tracker asks for one at 30 Hz while it keeps a hit (any hit younger than 6 s); otherwise none is drawn until the next hit, a resize or a preset change.
-- Fallback: if no OpenGL context starts within 3 s of the view showing, or its shaders fail, the cymbal is drawn at rest (no motion, no glow) with JUCE's drawing, once per preset or size, as an image: the background and the lines at rest, lightening it. Hits then show only as the lit row. `tools/cymbalis_snapshot` (which cannot capture OpenGL) always draws this still cymbal.
+- Fallback: if no OpenGL context starts within 3 s of the view showing, or its shaders fail, the cymbal is drawn at rest (no motion, no glow) with JUCE's drawing, once per preset or size, as an image: the background and the lines at rest (HAMMERED THIN RIDE dented), lightening it. Hits then show only as the lit row. `tools/cymbalis_snapshot` (which cannot capture OpenGL) always draws this still cymbal.
 - A preset that fails to load shows its message in the cymbal area, drawn with JUCE, as before.
 
 **Where the plugin differs from the reference's code**, all within the specification above:
 - Glow: the reference adds its blurred lines only on pixels where the lines are already brighter than 150, which brightens the bright lines rather than surrounding them; the plugin draws the halo the specification describes.
 - Normalisation: the reference divides each mode's displacement by its largest value on the mesh, and the weights by the largest |J_m| at 50 points of [0, 1]; the plugin uses N_k for both.
 - The slope around a ring wraps around (numpy's `gradient` is one-sided at the seam), and the mode zeros are the 4-decimal table above.
+- HAMMERED THIN RIDE's flex slopes are exact (from J_m′) where the reference differentiates its fine grid numerically (0.005 R apart: the same to the eye), and its glow's largest value D is taken over the kept vertices, not the whole fine grid.

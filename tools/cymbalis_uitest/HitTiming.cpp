@@ -229,7 +229,7 @@ const char* caseName (HitTiming::Editor e)
 struct HitTiming::Result
 {
     Editor editor = Editor::none;
-    int block = 0;
+    int block = 0, preset = -1;
     bool realtime = false, wasRealtime = false;
     std::vector<double> blockMs, blockCpuMs;      // the timed blocks
     double restOfProcess = 0.0, windowServer = -1.0; // % of one core
@@ -237,6 +237,7 @@ struct HitTiming::Result
     double areaShareSum = 0.0;                    // the paints' areas, as shares of the editor
     bool openGL = false;                          // OpenGL drew the cymbal
     juce::String renderer;                        // its renderer
+    int meshSegments = 0, segmentsBefore = 0, surfaceSegments = 0, dents = 0; // its geometry
     cymbalis::ui::CymbalView::Stats gl;           // its frames over the timed part
     double glWallMs = 0.0;                        // the time they were counted over
     long hitsSum = 0;                             // the hits it showed, sampled every 50 ms
@@ -247,9 +248,11 @@ struct HitTiming::Result
 
 struct HitTiming::Run
 {
-    Run (Editor kind, int blockSize, bool rt) : editorKind (kind), block (blockSize), realtime (rt)
+    Run (Editor kind, int blockSize, bool rt, int preset) : editorKind (kind), block (blockSize), realtime (rt)
     {
         processor.prepareToPlay (kRate, block);
+        if (preset >= 0)
+            processor.setPreset (preset);
         if (kind == Editor::none)
             return;
         CymbalisProcessor* shown = &processor;
@@ -257,6 +260,8 @@ struct HitTiming::Run
         {
             other = std::make_unique<CymbalisProcessor>();
             other->prepareToPlay (kRate, block);
+            if (preset >= 0)
+                other->setPreset (preset);
             shown = other.get();
         }
         editor.reset (shown->createEditorIfNeeded());
@@ -373,6 +378,11 @@ HitTiming::HitTiming (std::function<void (int)> f) : finished (std::move (f))
                     steps.push_back ({ e, block, realtime, e == Editor::hits && round == 0 && ! realtime && block == kBlocks[0] });
             steps.push_back ({ Editor::none, block, realtime, false });
         }
+    // Once more, with HAMMERED THIN RIDE selected.
+    for (int p = 0; p < cymbalis::kNumPresets; ++p)
+        if (cymbalis::kPresets[(size_t) p].shape == &cymbalis::ui::kHammeredShape)
+            for (const auto e : { Editor::none, Editor::idle, Editor::hits })
+                steps.push_back ({ e, kBlocks[0], false, false, p });
     startTimer (50);
 }
 
@@ -389,7 +399,7 @@ void HitTiming::timerCallback()
         case 0: // the next run
         {
             const auto& s = steps[next];
-            run = std::make_unique<Run> (s.editor, s.block, s.realtime);
+            run = std::make_unique<Run> (s.editor, s.block, s.realtime, s.preset);
             phaseStartMs = now;
             phase = 1;
             return;
@@ -433,6 +443,7 @@ void HitTiming::timerCallback()
             Result r;
             r.editor = s.editor;
             r.block = s.block;
+            r.preset = s.preset;
             r.realtime = s.realtime;
             r.wasRealtime = run->wasRealtime;
             r.blockMs = run->blockMs;
@@ -448,6 +459,13 @@ void HitTiming::timerCallback()
             {
                 r.openGL = c.view->usesOpenGL();
                 r.renderer = c.view->renderer();
+                if (const auto geo = c.view->geometry())
+                {
+                    r.meshSegments = (int) geo->lineIndices.size() / 2;
+                    r.segmentsBefore = geo->segmentsBeforeSimplifying;
+                    r.surfaceSegments = (int) geo->surface.size() / 2;
+                    r.dents = geo->numDents;
+                }
                 r.gl = c.view->stats();
                 r.glWallMs = now - run->glStartMs;
                 r.hitsSum = run->hitsSum;
@@ -515,12 +533,24 @@ void HitTiming::report()
     {
         const auto& first = results[i];
         size_t end = i;
-        while (end < results.size() && results[end].block == first.block && results[end].realtime == first.realtime)
+        while (end < results.size() && results[end].block == first.block && results[end].realtime == first.realtime
+               && results[end].preset == first.preset)
             ++end;
         const double budget = 1000.0 * first.block / kRate;
-        std::printf ("\n  audio thread %s, %d-sample blocks (budget %.3f ms)\n",
+        std::printf ("\n  %saudio thread %s, %d-sample blocks (budget %.3f ms)\n",
+                     first.preset >= 0 ? (juce::String (cymbalis::kPresets[(size_t) first.preset].name) + " selected: ").toRawUTF8() : "",
                      ! first.realtime ? "at normal priority" : first.wasRealtime ? "real-time" : "real-time REFUSED (normal priority)",
                      first.block, budget);
+        for (size_t j = i; j < end; ++j)
+            if (results[j].meshSegments > 0)
+            {
+                const auto& r = results[j];
+                std::printf ("    the cymbal: %d mesh segments", r.meshSegments);
+                if (r.segmentsBefore > 0)
+                    std::printf (" (%d before simplifying, %d dents)", r.segmentsBefore, r.dents);
+                std::printf (", %d surface line segments\n", r.surfaceSegments);
+                break;
+            }
         std::printf ("    %-22s %s\n", "", "processBlock over all runs (ms)     worst of each run (ms)       its CPU (ms)    rest of the   WindowServer");
         std::printf ("    %-22s %s\n", "case", " median     p99   worst / budget                                 median     p99   process");
         struct Case
