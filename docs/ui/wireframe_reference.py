@@ -19,6 +19,11 @@ History:
   8.2" to the rim), a copper bell (edge 2.1", top 1.85") and a copper hammered band (5.7-8.2"),
   the hammering pressed into the mesh in three packed zones (dent_zones), shallow (dent_depth
   1.5), with the flange's lathe lines following the dents (lines_follow_dents).
+- 2026-10-28, approved by Kris (round 4): RAVEN. Lathing measured from Raven.png (the photo's bell
+  zones scaled onto the wireframe's smaller bell); the power-hammer marks pressed into the mesh as
+  shallow dents along a regular spiral (dent_spiral), each running along the radius and growing
+  toward the edge, with only slight variation. Raven and Nova are power-hammered; Smoke and
+  Hammered are hand-hammered.
 """
 import math
 import numpy as np
@@ -39,6 +44,11 @@ HAMMERED_PHOTO_LUM = [0, 0, 0, 0, 0, 83.2, 81.7, 77.1, 79.7, 76.9, 76.9, 76.2, 7
 SMOKE_PHOTO_LUM = [0, 0, 0, 0, 0, 68.1, 100.8, 100.0, 89.0, 79.4, 81.0, 82.2, 82.5, 82.4, 79.8, 78.0, 76.7, 77.0, 77.1, 81.6, 83.3, 85.9, 88.0, 90.2, 95.5, 101.5, 102.0, 102.3, 99.8, 99.4, 102.5, 106.7, 106.4, 106.9, 107.6, 109.4, 112.4, 114.3, 115.3, 114.6, 115.1, 116.9, 118.9, 119.8, 119.4, 120.7, 119.9, 121.0, 122.9, 123.4, 122.8, 118.9, 119.1, 118.6, 119.9, 119.7, 119.6, 120.0, 120.0, 119.9, 122.6, 121.6, 121.3, 121.4, 123.0, 120.4, 122.2, 120.5, 120.5, 118.7, 116.7, 116.2, 116.7, 115.6, 113.9, 113.3, 112.6, 113.4, 115.0, 115.0, 114.3, 114.9, 113.6, 114.7, 113.5, 114.0, 112.6, 113.0, 112.3, 111.6, 111.3, 111.7, 110.6, 108.7, 106.9, 107.3, 107.2, 108.2, 106.2, 104.3, 104.1, 103.2, 102.4, 102.5, 103.0, 103.7, 103.4, 102.0, 101.4, 100.5, 99.9, 98.6, 98.8, 97.9, 97.5, 96.5, 95.6, 94.7, 95.0, 93.3, 92.0, 90.5, 89.7, 89.6, 89.3, 89.1, 87.5, 87.6, 87.1, 86.6, 85.7, 85.5, 85.7, 84.0, 82.7, 80.7, 79.2, 79.4, 78.5, 78.4, 77.5, 76.9, 75.8, 76.0, 75.3, 76.1, 76.7, 76.6, 76.4, 74.6, 74.4, 74.0, 73.7, 73.3, 72.9, 72.8, 71.7, 70.8, 70.5, 70.4, 71.3, 71.4, 70.6, 69.5, 70.1, 69.7, 69.0, 69.3, 70.0, 70.2, 69.3, 68.4, 56.3, 44.3, 39.1, 59.7, 87.6, 99.7, 91.3, 68.5, 47.7, 40.5, 39.5, 39.2, 38.5, 37.7, 37.3, 37.6, 37.5, 37.7, 38.3, 48.2, 79.2, 91.0, 73.0, 49.8, 40.9, 39.4, 39.5, 43.5]
 
 SWISH_PHOTO_LUM = [83.9, 85.2, 85.7, 89.1, 85.2, 71.3, 66.8, 73.0, 69.6, 68.4, 61.0, 62.6, 67.2, 65.9, 61.9, 61.0, 66.8, 75.4, 75.4, 73.7, 68.6, 66.7, 70.7, 72.5, 72.5, 74.3, 75.8, 76.5, 77.5, 84.6, 89.1, 90.4, 91.1, 90.1, 96.8, 93.6, 94.9, 102.8, 119.7, 118.6, 118.2, 121.1, 118.2, 121.4, 121.3, 119.3, 117.1, 116.3, 116.2, 116.6, 118.5, 115.6, 119.1, 117.6, 118.2, 117.8, 116.6, 118.9, 116.9, 117.6, 117.8, 117.2, 115.4, 116.9, 115.0, 114.9, 114.2, 114.6, 116.4, 114.9, 117.6, 117.5, 117.7, 115.8, 116.5, 116.0, 117.7, 119.6, 121.0, 120.0, 120.4, 120.2, 119.1, 120.3, 119.9, 119.6, 120.1, 120.8, 121.5, 120.2, 120.9, 118.6, 117.9, 119.4, 121.4, 120.0, 118.0, 116.2, 115.6, 116.2, 114.6, 117.9, 114.8, 99.2, 73.9, 68.5, 68.7, 67.3, 70.2, 72.0, 67.8, 64.8, 66.0, 66.9, 69.4, 67.0, 69.5, 72.5, 73.1, 74.4, 71.5, 72.6, 72.7, 72.7, 69.6, 71.8, 70.8, 69.4, 69.0, 69.2, 69.3, 75.9, 67.8, 70.3, 68.8, 64.2, 69.4, 67.0, 64.6, 64.1, 69.6, 74.5, 73.6, 68.1, 67.3, 69.5, 71.5, 72.9, 82.6, 97.5, 108.9, 109.0, 107.2, 107.8, 108.1, 105.8, 105.1, 107.1, 106.5, 106.8, 107.5, 111.5, 118.2, 115.4, 117.9, 122.4, 127.1, 133.6, 132.4, 130.0, 126.4, 122.1, 119.5, 120.6, 120.5, 119.7, 117.7, 121.3, 125.2, 134.1, 128.0, 133.8, 127.2, 128.9, 131.4, 130.7, 129.9, 124.9, 122.7, 118.4, 122.8, 122.9, 126.4, 120.6, 118.5, 115.8, 114.3, 115.3, 127.6, 56.2]   # from Kris's 2026-10-28 photo, left and right radii
+
+# RAVEN.png's brightness by radius (rim centre, rim 353.75 px = 10"), measured 2026-10-28 and
+# remapped to the wireframe: the photo's bell (edge 2.85") scaled onto the wireframe's smaller bell
+# (edge 2.2"), the bow and edge kept.
+RAVEN_PHOTO_LUM = [33.6, 32.7, 35.9, 45.0, 51.5, 50.5, 44.5, 48.2, 81.6, 93.9, 101.9, 114.0, 114.1, 107.3, 95.2, 94.3, 88.0, 90.9, 85.7, 83.3, 86.1, 86.2, 74.9, 95.0, 76.9, 85.6, 78.8, 84.6, 83.0, 79.6, 88.8, 69.8, 75.7, 77.9, 108.7, 111.8, 110.7, 110.0, 108.2, 109.3, 111.5, 110.5, 112.6, 114.3, 87.5, 79.0, 70.4, 64.8, 59.8, 54.8, 49.7, 44.7, 42.6, 43.4, 44.3, 45.1, 45.9, 46.7, 47.5, 48.2, 50.5, 54.1, 55.7, 55.4, 55.2, 55.9, 55.8, 56.6, 57.0, 56.7, 56.1, 56.0, 55.7, 56.3, 56.3, 56.0, 55.6, 54.7, 54.9, 56.7, 58.1, 58.3, 57.6, 56.8, 56.9, 57.0, 56.9, 57.4, 57.3, 57.6, 56.9, 56.2, 56.9, 57.0, 58.2, 59.4, 59.7, 60.8, 60.3, 60.4, 60.7, 61.3, 62.1, 62.1, 62.2, 63.1, 62.9, 63.7, 64.0, 64.7, 65.4, 65.6, 64.9, 64.7, 64.5, 64.6, 63.8, 64.8, 64.5, 65.0, 66.1, 66.9, 66.5, 67.5, 68.5, 69.6, 70.5, 70.8, 71.3, 72.0, 71.6, 70.8, 70.8, 71.8, 72.0, 73.1, 74.5, 74.8, 74.6, 75.1, 74.9, 75.5, 76.8, 77.3, 77.2, 78.0, 77.5, 76.4, 74.9, 74.1, 73.7, 73.7, 74.0, 75.3, 76.7, 77.7, 78.4, 79.1, 79.3, 79.9, 79.7, 78.8, 77.8, 77.9, 77.4, 76.8, 76.8, 76.6, 76.2, 75.8, 75.9, 75.7, 75.9, 75.9, 74.5, 73.0, 72.4, 73.2, 73.5, 72.5, 71.8, 71.4, 71.8, 72.3, 72.3, 72.9, 74.1, 74.8, 74.6, 81.3, 122.3, 107.5, 94.0, 85.2, 71.9, 99.3, 130.5, 141.3, 140.9, 140.4]
 
 CYMBALS = {
     'nova': dict(title='NOVA RIDE', R=10.0, bell=0.22, hammer='scale', hammer_zone=(0.43, 0.925),
@@ -98,10 +108,24 @@ CYMBALS = {
                               (0.83, 0.985, 160, (0.022, 0.034), (0.45, 0.8), 0.8)]),  # near the rim
     # (Kris: smaller, shorter bell with its own deep lathing; larger hammer scales running in a
     # spiral around the surface.)
-    'raven': dict(title='RAVEN', R=10.0, bell=0.22, hammer='spiral', hammer_zone=(0.25, 0.93),
+    # Lathing measured 2026-10-28 from Raven.png (rim centre), the bell's zones scaled onto the
+    # wireframe's smaller bell: a dark ring at the hole; a smooth lathed ring; deep wavy lathe grooves;
+    # a smooth lathed flange to the bell's edge; then the power-hammered bow, its dents pressed into the
+    # mesh along a spiral (Cymbal2, dent_spiral), running along the radius and growing toward the edge,
+    # in a regular pattern with only slight variation, as a power hammer leaves (Kris 2026-10-28);
+    # at the rim a narrow bright lathed ring, a dark groove and a lathed band.
+    'raven': dict(title='RAVEN', R=10.0, bell=0.22, hammer=None, hammer_zone=(0.235, 0.935),
                   profile=[(0.0, 1.22), (0.5, 1.20), (1.3, 1.06), (1.85, 0.86), (2.1, 0.76), (2.3, 0.73),
                            (5.0, 0.58), (7.0, 0.40), (9.0, 0.14), (10.0, 0.0)],
-                  lathe=[(0.0, 0.225), (0.935, 1.0)], fine_lathe=[], bell_grooves=(0.035, 0.215)),
+                  lathe=[], fine_lathe=[], gold=[(0.039, 0.073), (0.170, 0.22), (0.945, 0.965), (0.975, 1.0)],
+                  bell_grooves=(0.073, 0.166), gold_step=0.006, photo_lum=RAVEN_PHOTO_LUM, bell_line=False,
+                  ring_step=4, dent_depth=1.2, dent_contrast=12.0,
+                  # spiral of dents: zone, size k from 0.6 to 1.5 across it; per dent a = 0.032 k, b = 0.018 k,
+                  # one every 0.05 k along the spiral (pitch 0.065 k a turn); randomness: position, size,
+                  # rotation, b/a and an occasional skipped dent
+                  dent_spiral=dict(zone=(0.24, 0.93), k=(0.6, 1.5), a=0.032, b=0.018, spacing=0.05, pitch=0.065,
+                                   jitter_along=0.06, jitter_across=0.04, size=(0.95, 1.05), rot=0.05, skip=0.0,
+                                   step_var=0.02, depth_var=0.05)),
 }
 
 ROSE_DARK = np.array([58, 74, 112], np.float32)     # BGR: deep rose bronze
@@ -400,7 +424,7 @@ class Cymbal:
 # sampled finely (197 radial x 480 around) so the rings and spokes bend through each dent; the
 # lighting picks out the dent walls. The defaults are the approved values.
 # =====================================================================================
-DENTED = {'hammered', 'swish'}
+DENTED = {'hammered', 'swish', 'raven'}
 
 
 
@@ -530,6 +554,25 @@ class Cymbal2:
         """(x, y, a (along), b (across), rot, depth) in units of R."""
         rng = np.random.default_rng(11)
         c = self.c; h = c['hammer']; z0, z1 = c['hammer_zone']; D = []
+        if 'dent_spiral' in c:
+            # power-hammer dents along a spiral (RAVEN): each runs along the radius (its a axis) and
+            # they grow toward the edge, with some randomness
+            sp = c['dent_spiral']; q0, q1 = sp['zone']; k0, k1 = sp['k']
+            th, r = 0.0, q0
+            while r < q1:
+                k = k0 + (k1 - k0) * (r - q0) / (q1 - q0)
+                step = sp['spacing'] * k / max(r, 0.05)
+                if rng.uniform() >= sp['skip']:
+                    tm = th + rng.uniform(-1, 1) * sp['jitter_along'] * step
+                    rm = r + rng.uniform(-1, 1) * sp['jitter_across'] * sp['pitch'] * k
+                    g = rng.uniform(*sp['size'])
+                    a = sp['a'] * k * g; bb = sp['b'] * k * g
+                    dv = sp.get('depth_var', 0.2)
+                    D.append((rm * math.cos(tm), rm * math.sin(tm), a, bb, tm + rng.uniform(-1, 1) * sp['rot'],
+                              0.0042 * (a / 0.03) ** 0.7 * rng.uniform(1 - dv, 1 + dv)))
+                sv = sp.get('step_var', 0.1)
+                th += step * rng.uniform(1 - sv, 1 + sv); r += sp['pitch'] * k * step / (2 * np.pi)
+            return D
         if 'dent_zones' in c:
             # packed zones of dents (SWISH): random places, no overlap, as many as fit up to n
             for (q0, q1, n, (amin, amax), (bmin, bmax), dk) in c['dent_zones']:
