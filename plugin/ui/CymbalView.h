@@ -52,6 +52,7 @@ public:
     };
     Stats stats() const noexcept;
     void resetStats() noexcept;
+    juce::String renderer() const; // the OpenGL renderer's name, once a context has started
 
     // Off: the cymbal is always drawn still with JUCE's drawing (tools/cymbalis_snapshot,
     // which cannot capture OpenGL).
@@ -94,7 +95,8 @@ private:
     std::unique_ptr<Gpu> gpu; // render thread only
 
     mutable juce::SpinLock statsLock;
-    Stats counts; // under statsLock
+    Stats counts;            // under statsLock
+    juce::String glRenderer; // under statsLock
 
     static std::atomic<bool> openGLAllowed;
 

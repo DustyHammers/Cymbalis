@@ -236,6 +236,7 @@ struct HitTiming::Result
     std::vector<double> paintMs;                  // the editor's paint calls
     double areaShareSum = 0.0;                    // the paints' areas, as shares of the editor
     bool openGL = false;                          // OpenGL drew the cymbal
+    juce::String renderer;                        // its renderer
     cymbalis::ui::CymbalView::Stats gl;           // its frames over the timed part
     double glWallMs = 0.0;                        // the time they were counted over
     long hitsSum = 0;                             // the hits it showed, sampled every 50 ms
@@ -446,6 +447,7 @@ void HitTiming::timerCallback()
             if (c.view != nullptr && run->glCounting)
             {
                 r.openGL = c.view->usesOpenGL();
+                r.renderer = c.view->renderer();
                 r.gl = c.view->stats();
                 r.glWallMs = now - run->glStartMs;
                 r.hitsSum = run->hitsSum;
@@ -582,6 +584,7 @@ void HitTiming::report()
             double areaShares = 0.0, glMs = 0.0, glWorst = 0.0, glWallMs = 0.0;
             long frames = 0, hitsSum = 0, hitSamples = 0;
             int hitsMin = 1 << 30, runs = 0, openGL = 0;
+            juce::String renderer;
             const Result* checked = nullptr;
             for (size_t j = i; j < end; ++j)
             {
@@ -592,6 +595,8 @@ void HitTiming::report()
                 paints.insert (paints.end(), r.paintMs.begin(), r.paintMs.end());
                 areaShares += r.areaShareSum;
                 openGL += r.openGL ? 1 : 0;
+                if (r.renderer.isNotEmpty())
+                    renderer = r.renderer;
                 frames += r.gl.frames;
                 glMs += r.gl.totalMs;
                 glWorst = std::max (glWorst, r.gl.worstMs);
@@ -605,9 +610,12 @@ void HitTiming::report()
                     checked = &r;
             }
             const auto p = statsOf (paints);
+            const auto drawn = openGL == runs   ? "OpenGL (" + renderer + ")"
+                               : openGL == 0 ? juce::String ("still drawing (no OpenGL)")
+                                             : "OpenGL in some runs only (" + renderer + ")";
             std::printf ("    %-22s cymbal: %s; editor paints %3zu (average %.3f ms, worst %.3f ms, %3.0f %% of the editor per paint); "
                          "OpenGL frames %4ld (%.1f per second), render average %.3f ms, worst %.3f ms",
-                         caseName (e), openGL == runs ? "OpenGL" : openGL == 0 ? "still drawing (no OpenGL)" : "OpenGL in some runs only",
+                         caseName (e), drawn.toRawUTF8(),
                          p.n, p.mean, p.worst, p.n > 0 ? 100.0 * areaShares / (double) p.n : 0.0, frames,
                          glWallMs > 0.0 ? 1000.0 * (double) frames / glWallMs : 0.0, frames > 0 ? glMs / (double) frames : 0.0, glWorst);
             if (e == Editor::hits)

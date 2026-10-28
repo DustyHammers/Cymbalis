@@ -16,6 +16,7 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr float kGlowHalf = 9.0f;          // the glow's half width: 3 sigma, sigma 3 design units
 constexpr float kGlowPerUnit = 0.0665f;    // its peak per unit of line width: 0.5 / (3 sqrt (2 pi))
 constexpr double kStartTimeoutMs = 3000.0; // no OpenGL context started by then: the still drawing
+constexpr int kMaxRings = 32;              // the most mesh rings the shaders take (the shapes have 28 or 29)
 
 juce::String vec3Of (wire::Rgb c)
 {
@@ -59,118 +60,116 @@ vec2 project (float r, float theta, float z)
 float topToBottom (float sy) { return 1.0 - (sy - uY.x) / max (uY.y - uY.x, 1.0); }
 )";
 
-// The mesh: per vertex its radius and angle (static) and its height, slopes and glow (per frame).
-const char* const kMeshVertex = R"(in vec2 aPolar;
-in vec4 aState;
-out Vert { vec2 p; float r; float shade; float sy; float glow; } o;
-void main()
-{
-    float th = aPolar.y, phi = th + uSpin;
-    vec2 s = project (aPolar.x, th, aState.x);
-    // The normal from the height field, with the tilt's slope (the reference's shade).
-    float dzr = aState.y - 2.2 * (cos (phi) * uTilt.x + sin (phi) * uTilt.y);
-    float dzt = aState.z - 2.2 * (-sin (phi) * uTilt.x + cos (phi) * uTilt.y);
-    float nx = -(dzr * cos (th) - dzt * sin (th)), ny = -(dzr * sin (th) + dzt * cos (th));
-    o.shade = clamp ((ny * -0.55 + 0.83) / sqrt (nx * nx + ny * ny + 1.0), 0.0, 1.0);
-    o.p = (s - uOrigin) * uPx;
-    o.r = aPolar.x;
-    o.sy = s.y;
-    o.glow = aState.w;
-    gl_Position = vec4 (0.0, 0.0, 0.0, 1.0);
-}
-)";
-
-// The surface lines: per vertex its radius, angle, height (the profile's: no flex) and kind.
-const char* const kSurfaceVertex = R"(in vec2 aPolar;
-in float aZ;
-in vec3 aKind; // kind (0 hammer, 1 lathe, 2 groove), its factor, in a lathe zone
-out Vert { vec2 p; vec3 c; } o;
-void main()
-{
-    vec2 s = project (aPolar.x, aPolar.y, aZ);
-    float ytl = topToBottom (s.y);
-    vec3 c;
-    if (aKind.x < 0.5)
-        c = bronze (0.9, ytl, aKind.z > 0.5, 0.0) * aKind.y;
-    else if (aKind.x < 1.5)
-        c = bronze (0.9, ytl, aKind.z > 0.5, 0.0) * (0.30 + 0.25 * ytl);
-    else
-        c = kGold * (0.30 + 0.32 * ytl) * aKind.y;
-    o.p = (s - uOrigin) * uPx;
-    o.c = c;
-    gl_Position = vec4 (0.0, 0.0, 0.0, 1.0);
-}
-)";
-
-// A line segment as a quad in pixels, `uHalf` either side of it, its ends reaching `uCap` past
-// its points (so that the joints of a ring close).
+// A line segment as a quad in pixels, built in the vertex shader (no geometry shader: Apple's
+// OpenGL runs those on the CPU): each segment is 4 vertices, each knowing both ends; `aCorner` is
+// (0 at the first end or 1 at the second, -1 or 1 across). The quad reaches `uHalf` either side
+// of the line and `uCap` past its ends (so that the joints of a ring close).
 const char* const kQuadGlsl = R"(uniform vec2 uViewPx;
 uniform float uHalf;
 uniform float uCap;
-out vec3 gColour;
-out float gAcross;
-void corner (vec2 q, float across, vec3 c)
-{
-    gl_Position = vec4 (q.x / uViewPx.x * 2.0 - 1.0, 1.0 - q.y / uViewPx.y * 2.0, 0.0, 1.0);
-    gColour = c;
-    gAcross = across;
-    EmitVertex();
-}
-void quad (vec2 a, vec2 b, vec3 c)
+in vec2 aCorner;
+out vec3 vColour;
+out float vAcross;
+vec4 quadCorner (vec2 a, vec2 b)
 {
     vec2 d = b - a;
     float len = length (d);
     vec2 dir = len > 1.0e-4 ? d / len : vec2 (1.0, 0.0);
     vec2 n = vec2 (-dir.y, dir.x) * uHalf, e = dir * uCap;
-    corner (a - e - n, -1.0, c);
-    corner (a - e + n, 1.0, c);
-    corner (b + e - n, -1.0, c);
-    corner (b + e + n, 1.0, c);
-    EndPrimitive();
+    vec2 q = (aCorner.x < 0.5 ? a - e : b + e) + n * aCorner.y;
+    vAcross = aCorner.y;
+    return vec4 (q.x / uViewPx.x * 2.0 - 1.0, 1.0 - q.y / uViewPx.y * 2.0, 0.0, 1.0);
 }
 )";
 
-// A mesh segment's colour from its ends' averages (the reference's col()). With uGlowGain above
-// 0 it draws the segment's glow instead, only where the line is brighter than 150/255.
-const char* const kMeshGeometry = R"(layout (lines) in;
-layout (triangle_strip, max_vertices = 4) out;
-in Vert { vec2 p; float r; float shade; float sy; float glow; } v[];
+// The mesh: each segment's ends are mesh vertices, whose height, slopes and glow (per frame) are
+// read from the state texture (column j, row i: ring i, sample j). Its colour from its ends'
+// averages (the reference's col()). With uGlowGain above 0 it draws the segment's glow
+// instead, only where the line is brighter than 150/255.
+const char* const kMeshVertex = R"(in vec2 aEnds; // the ends' mesh vertex indices
+uniform sampler2D uState;
+uniform float uRings[kMaxRings];
 uniform vec4 uLathe; // two lathe zones (from, to)
 uniform float uGlowGain;
+struct End
+{
+    vec2 p;
+    float r, shade, sy, glow;
+};
+End meshEnd (float index)
+{
+    int k = int (index + 0.5), i = k / kSamples, j = k - kSamples * i;
+    vec4 s = texelFetch (uState, ivec2 (j, i), 0);
+    float th = 6.283185307 * float (j) / float (kSamples), phi = th + uSpin;
+    End e;
+    e.r = uRings[i];
+    vec2 q = project (e.r, th, s.x);
+    // The normal from the height field, with the tilt's slope (the reference's shade).
+    float dzr = s.y - 2.2 * (cos (phi) * uTilt.x + sin (phi) * uTilt.y);
+    float dzt = s.z - 2.2 * (-sin (phi) * uTilt.x + cos (phi) * uTilt.y);
+    float nx = -(dzr * cos (th) - dzt * sin (th)), ny = -(dzr * sin (th) + dzt * cos (th));
+    e.shade = clamp ((ny * -0.55 + 0.83) / sqrt (nx * nx + ny * ny + 1.0), 0.0, 1.0);
+    e.p = (q - uOrigin) * uPx;
+    e.sy = q.y;
+    e.glow = s.w;
+    return e;
+}
 void main()
 {
-    float r = 0.5 * (v[0].r + v[1].r);
+    End a = meshEnd (aEnds.x), b = meshEnd (aEnds.y);
+    float r = 0.5 * (a.r + b.r);
     bool lathe = (r >= uLathe.x && r <= uLathe.y) || (r >= uLathe.z && r <= uLathe.w);
-    vec3 c = bronze (0.5 * (v[0].shade + v[1].shade), topToBottom (0.5 * (v[0].sy + v[1].sy)), lathe,
-                     0.5 * (v[0].glow + v[1].glow));
+    vec3 c = bronze (0.5 * (a.shade + b.shade), topToBottom (0.5 * (a.sy + b.sy)), lathe, 0.5 * (a.glow + b.glow));
     if (uGlowGain > 0.0)
     {
         if (max (c.r, max (c.g, c.b)) <= 150.0 / 255.0)
+        {
+            vColour = vec3 (0.0);
+            vAcross = 0.0;
+            gl_Position = vec4 (2.0, 2.0, 2.0, 1.0); // outside: nothing drawn
             return;
+        }
         c *= uGlowGain;
     }
-    quad (v[0].p, v[1].p, c);
+    vColour = c;
+    gl_Position = quadCorner (a.p, b.p);
 }
 )";
 
-const char* const kSurfaceGeometry = R"(layout (lines) in;
-layout (triangle_strip, max_vertices = 4) out;
-in Vert { vec2 p; vec3 c; } v[];
+// The surface lines: each segment's ends (radius, angle, height: the profile's, no flex) and its
+// kind, colour from the ends' average.
+const char* const kSurfaceVertex = R"(in vec3 aA;
+in vec3 aB;
+in vec3 aKind; // kind (0 hammer, 1 lathe, 2 groove), its factor, in a lathe zone
+vec3 colourAt (vec3 e, out vec2 p)
+{
+    vec2 s = project (e.x, e.y, e.z);
+    float ytl = topToBottom (s.y);
+    p = (s - uOrigin) * uPx;
+    if (aKind.x < 0.5)
+        return bronze (0.9, ytl, aKind.z > 0.5, 0.0) * aKind.y;
+    if (aKind.x < 1.5)
+        return bronze (0.9, ytl, aKind.z > 0.5, 0.0) * (0.30 + 0.25 * ytl);
+    return kGold * (0.30 + 0.32 * ytl) * aKind.y;
+}
 void main()
 {
-    quad (v[0].p, v[1].p, 0.5 * (v[0].c + v[1].c));
+    vec2 pa, pb;
+    vec3 ca = colourAt (aA, pa), cb = colourAt (aB, pb);
+    vColour = 0.5 * (ca + cb);
+    gl_Position = quadCorner (pa, pb);
 }
 )";
 
 // A line, or its glow: Gaussian across, sigma a third of the half width.
-const char* const kLineFragment = R"(in vec3 gColour;
-in float gAcross;
+const char* const kLineFragment = R"(in vec3 vColour;
+in float vAcross;
 uniform float uGlowGain;
 out vec4 fragColour;
 void main()
 {
-    float k = uGlowGain > 0.0 ? exp (-4.5 * gAcross * gAcross) : 1.0;
-    fragColour = vec4 (gColour * k, 1.0);
+    float k = uGlowGain > 0.0 ? exp (-4.5 * vAcross * vAcross) : 1.0;
+    fragColour = vec4 (vColour * k, 1.0);
 }
 )";
 
@@ -234,12 +233,13 @@ std::array<float, 4> latheZones (const CymbalShape& s)
 struct CymbalView::Gpu
 {
     std::unique_ptr<juce::OpenGLShaderProgram> mesh, surface, back, flash;
-    GLuint meshVao = 0, meshStatic = 0, meshState = 0, meshIndex = 0;
-    GLuint surfaceVao = 0, surfaceVbo = 0;
+    GLuint meshVao = 0, meshVbo = 0, meshIndex = 0, stateTexture = 0;
+    GLuint surfaceVao = 0, surfaceVbo = 0, surfaceIndex = 0;
     GLuint quadVao = 0, quadVbo = 0, flashVao = 0, flashVbo = 0;
     GLuint texture = 0;
 
     std::shared_ptr<const wire::Geometry> geometry;
+    int meshSegments = 0, thinMeshSegments = 0, surfaceSegments = 0, thinSurfaceSegments = 0;
     wire::Frame frame;
     std::vector<float> disp, state;
     std::array<wire::Hit, wire::kMaxHits> hits {};
@@ -251,15 +251,12 @@ struct CymbalView::Gpu
     }
 
     // A program from its shaders (GLSL 1.50, core profile), its attributes at the locations given.
-    static std::unique_ptr<juce::OpenGLShaderProgram> build (juce::OpenGLContext& c, const juce::String& vertex,
-                                                             const juce::String& geometryShader, const juce::String& fragment,
+    static std::unique_ptr<juce::OpenGLShaderProgram> build (juce::OpenGLContext& c, const juce::String& vertex, const juce::String& fragment,
                                                              std::initializer_list<const char*> attributes)
     {
         auto p = std::make_unique<juce::OpenGLShaderProgram> (c);
         const juce::String version = "#version 150\n";
-        if (! p->addShader (version + vertex, GL_VERTEX_SHADER)
-            || (geometryShader.isNotEmpty() && ! p->addShader (version + geometryShader, GL_GEOMETRY_SHADER))
-            || ! p->addShader (version + fragment, GL_FRAGMENT_SHADER))
+        if (! p->addShader (version + vertex, GL_VERTEX_SHADER) || ! p->addShader (version + fragment, GL_FRAGMENT_SHADER))
         {
             DBG ("CymbalView: " << p->getLastError());
             return nullptr;
@@ -275,48 +272,93 @@ struct CymbalView::Gpu
         return p;
     }
 
+    // Two triangles per segment: its quad's corners 4q .. 4q + 3.
+    static void uploadQuadIndices (GLuint buffer, int segments)
+    {
+        std::vector<std::uint32_t> ix;
+        ix.reserve ((size_t) segments * 6);
+        for (std::uint32_t q = 0; q < (std::uint32_t) segments; ++q)
+            for (std::uint32_t c : { 0u, 1u, 2u, 2u, 1u, 3u })
+                ix.push_back (4 * q + c);
+        glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, buffer);
+        glBufferData (GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr) (ix.size() * sizeof (std::uint32_t)), ix.data(), GL_STATIC_DRAW);
+    }
+
     void upload (std::shared_ptr<const wire::Geometry> g)
     {
         geometry = std::move (g);
         if (geometry == nullptr)
             return;
         const auto& geo = *geometry;
+        if (geo.numRings > kMaxRings)
+        {
+            jassertfalse; // more rings than the mesh shader's uRings holds
+            geometry = nullptr;
+            return;
+        }
         frame.resize (geo);
         disp.assign ((size_t) geo.numVertices(), 0.0f);
         state.assign ((size_t) geo.numVertices() * 4, 0.0f);
+        constexpr float corners[4][2] = { { 0.0f, -1.0f }, { 0.0f, 1.0f }, { 1.0f, -1.0f }, { 1.0f, 1.0f } };
 
-        std::vector<float> polar;
-        for (int i = 0; i < geo.numRings; ++i)
-            for (int j = 0; j < wire::kSamples; ++j)
-            {
-                polar.push_back ((float) geo.rings[(size_t) i]);
-                polar.push_back ((float) (2.0 * kPi * j / wire::kSamples));
-            }
+        // The mesh: per quad corner, the corner and its segment's two mesh vertices.
+        meshSegments = (int) geo.lineIndices.size() / 2;
+        thinMeshSegments = geo.numThinIndices / 2;
+        std::vector<float> quads;
+        quads.reserve ((size_t) meshSegments * 16);
+        for (int k = 0; k < meshSegments; ++k)
+            for (const auto& c : corners)
+                for (float v : { c[0], c[1], (float) geo.lineIndices[(size_t) (2 * k)], (float) geo.lineIndices[(size_t) (2 * k + 1)] })
+                    quads.push_back (v);
         glBindVertexArray (meshVao);
-        glBindBuffer (GL_ARRAY_BUFFER, meshStatic);
-        glBufferData (GL_ARRAY_BUFFER, (GLsizeiptr) (polar.size() * sizeof (float)), polar.data(), GL_STATIC_DRAW);
+        glBindBuffer (GL_ARRAY_BUFFER, meshVbo);
+        glBufferData (GL_ARRAY_BUFFER, (GLsizeiptr) (quads.size() * sizeof (float)), quads.data(), GL_STATIC_DRAW);
         glEnableVertexAttribArray (0);
-        glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
-        glBindBuffer (GL_ARRAY_BUFFER, meshState);
-        glBufferData (GL_ARRAY_BUFFER, (GLsizeiptr) (state.size() * sizeof (float)), nullptr, GL_DYNAMIC_DRAW);
+        glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof (float), nullptr);
         glEnableVertexAttribArray (1);
-        glVertexAttribPointer (1, 4, GL_FLOAT, GL_FALSE, 0, nullptr);
-        glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, meshIndex);
-        glBufferData (GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr) (geo.lineIndices.size() * sizeof (std::uint32_t)), geo.lineIndices.data(),
-                      GL_STATIC_DRAW);
+        glVertexAttribPointer (1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof (float), (const void*) (2 * sizeof (float)));
+        uploadQuadIndices (meshIndex, meshSegments);
 
+        // The mesh's state per frame: one texel per vertex (kSamples x rings).
+        glBindTexture (GL_TEXTURE_2D, stateTexture);
+        glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA32F, wire::kSamples, geo.numRings, 0, GL_RGBA, GL_FLOAT, nullptr);
+        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture (GL_TEXTURE_2D, 0);
+        std::vector<float> rings (geo.rings.begin(), geo.rings.end());
+        mesh->use();
+        glUniform1fv (at (*mesh, "uRings"), geo.numRings, rings.data());
+        glUniform1i (at (*mesh, "uState"), 1);
+
+        // The surface lines: per quad corner, the corner, both ends and the segment's kind.
+        surfaceSegments = (int) geo.surface.size() / 2;
+        thinSurfaceSegments = geo.numThinSurface / 2;
+        std::vector<float> lines;
+        lines.reserve ((size_t) surfaceSegments * 44);
+        for (int k = 0; k < surfaceSegments; ++k)
+        {
+            const auto& a = geo.surface[(size_t) (2 * k)];
+            const auto& b = geo.surface[(size_t) (2 * k + 1)];
+            for (const auto& c : corners)
+                for (float v : { c[0], c[1], a.r, a.theta, a.z, b.r, b.theta, b.z, a.kind, a.param, a.lathe })
+                    lines.push_back (v);
+        }
         glBindVertexArray (surfaceVao);
         glBindBuffer (GL_ARRAY_BUFFER, surfaceVbo);
-        glBufferData (GL_ARRAY_BUFFER, (GLsizeiptr) (geo.surface.size() * sizeof (wire::SurfaceVertex)), geo.surface.data(),
-                      GL_STATIC_DRAW);
-        const auto stride = (GLsizei) sizeof (wire::SurfaceVertex);
+        glBufferData (GL_ARRAY_BUFFER, (GLsizeiptr) (lines.size() * sizeof (float)), lines.data(), GL_STATIC_DRAW);
+        const auto stride = (GLsizei) (11 * sizeof (float));
         glEnableVertexAttribArray (0);
         glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, stride, nullptr);
-        glEnableVertexAttribArray (1);
-        glVertexAttribPointer (1, 1, GL_FLOAT, GL_FALSE, stride, (const void*) (2 * sizeof (float)));
-        glEnableVertexAttribArray (2);
-        glVertexAttribPointer (2, 3, GL_FLOAT, GL_FALSE, stride, (const void*) (3 * sizeof (float)));
+        for (GLuint a = 1; a <= 3; ++a)
+        {
+            glEnableVertexAttribArray (a);
+            glVertexAttribPointer (a, 3, GL_FLOAT, GL_FALSE, stride, (const void*) ((size_t) (2 + 3 * (a - 1)) * sizeof (float)));
+        }
+        uploadQuadIndices (surfaceIndex, surfaceSegments);
         glBindVertexArray (0);
+        glUseProgram (0);
     }
 
     void release()
@@ -324,11 +366,12 @@ struct CymbalView::Gpu
         for (auto* vao : { &meshVao, &surfaceVao, &quadVao, &flashVao })
             if (*vao != 0)
                 glDeleteVertexArrays (1, vao);
-        for (auto* b : { &meshStatic, &meshState, &meshIndex, &surfaceVbo, &quadVbo, &flashVbo })
+        for (auto* b : { &meshVbo, &meshIndex, &surfaceVbo, &surfaceIndex, &quadVbo, &flashVbo })
             if (*b != 0)
                 glDeleteBuffers (1, b);
-        if (texture != 0)
-            glDeleteTextures (1, &texture);
+        for (auto* t : { &texture, &stateTexture })
+            if (*t != 0)
+                glDeleteTextures (1, t);
         mesh.reset();
         surface.reset();
         back.reset();
@@ -466,6 +509,12 @@ void CymbalView::setHits (const wire::Hit* hits, int count)
         context.triggerRepaint();
 }
 
+juce::String CymbalView::renderer() const
+{
+    const juce::SpinLock::ScopedLockType sl (statsLock);
+    return glRenderer;
+}
+
 CymbalView::Stats CymbalView::stats() const noexcept
 {
     const juce::SpinLock::ScopedLockType sl (statsLock);
@@ -483,14 +532,17 @@ void CymbalView::resetStats() noexcept
 void CymbalView::newOpenGLContextCreated()
 {
     glStarted = true;
+    {
+        const juce::SpinLock::ScopedLockType sl (statsLock);
+        glRenderer = juce::String::fromUTF8 ((const char*) glGetString (GL_RENDERER));
+    }
     auto g = std::make_unique<Gpu>();
-    const juce::String common = bronzeGlsl() + kProjectGlsl;
-    g->mesh = Gpu::build (context, common + kMeshVertex, bronzeGlsl() + kProjectGlsl + kQuadGlsl + kMeshGeometry, kLineFragment,
-                          { "aPolar", "aState" });
-    g->surface = Gpu::build (context, common + kSurfaceVertex, juce::String (kQuadGlsl) + kSurfaceGeometry, kLineFragment,
-                             { "aPolar", "aZ", "aKind" });
-    g->back = Gpu::build (context, kBackgroundVertex, {}, kBackgroundFragment, { "aPos" });
-    g->flash = Gpu::build (context, kFlashVertex, {}, kFlashFragment, { "aPos" });
+    const auto constants = "const int kSamples = " + juce::String (wire::kSamples) + ";\nconst int kMaxRings = " + juce::String (kMaxRings) + ";\n";
+    const juce::String common = constants + bronzeGlsl() + kProjectGlsl + kQuadGlsl;
+    g->mesh = Gpu::build (context, common + kMeshVertex, kLineFragment, { "aCorner", "aEnds" });
+    g->surface = Gpu::build (context, common + kSurfaceVertex, kLineFragment, { "aCorner", "aA", "aB", "aKind" });
+    g->back = Gpu::build (context, kBackgroundVertex, kBackgroundFragment, { "aPos" });
+    g->flash = Gpu::build (context, kFlashVertex, kFlashFragment, { "aPos" });
     if (g->mesh == nullptr || g->surface == nullptr || g->back == nullptr || g->flash == nullptr)
     {
         g->release();
@@ -502,8 +554,9 @@ void CymbalView::newOpenGLContextCreated()
     glGenVertexArrays (1, &g->surfaceVao);
     glGenVertexArrays (1, &g->quadVao);
     glGenVertexArrays (1, &g->flashVao);
-    for (auto* b : { &g->meshStatic, &g->meshState, &g->meshIndex, &g->surfaceVbo, &g->quadVbo, &g->flashVbo })
+    for (auto* b : { &g->meshVbo, &g->meshIndex, &g->surfaceVbo, &g->surfaceIndex, &g->quadVbo, &g->flashVbo })
         glGenBuffers (1, b);
+    glGenTextures (1, &g->stateTexture);
 
     const float unit[] = { 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f };
     glBindVertexArray (g->quadVao);
@@ -608,8 +661,10 @@ void CymbalView::renderOpenGL()
             g.state[4 * x + 2] = f.dzt[x];
             g.state[4 * x + 3] = f.glow[x];
         }
-        glBindBuffer (GL_ARRAY_BUFFER, g.meshState);
-        glBufferSubData (GL_ARRAY_BUFFER, 0, (GLsizeiptr) (g.state.size() * sizeof (float)), g.state.data());
+        glActiveTexture (GL_TEXTURE1);
+        glBindTexture (GL_TEXTURE_2D, g.stateTexture);
+        glTexSubImage2D (GL_TEXTURE_2D, 0, 0, 0, wire::kSamples, geo.numRings, GL_RGBA, GL_FLOAT, g.state.data());
+        glActiveTexture (GL_TEXTURE0);
 
         const wire::Camera cam;
         const auto lathe = latheZones (geo.shape);
@@ -630,6 +685,11 @@ void CymbalView::renderOpenGL()
             glUniform1f (Gpu::at (p, "uGlowGain"), glowGain);
         };
 
+        // Segments first to first + count of a quad buffer: two triangles each.
+        const auto segments = [] (int first, int count) {
+            glDrawElements (GL_TRIANGLES, 6 * count, GL_UNSIGNED_INT, (const void*) ((size_t) first * 6 * sizeof (std::uint32_t)));
+        };
+
         // The mesh and the surface lines, lighten (max) over the background: 1 and 2 units wide.
         glEnable (GL_BLEND);
         glBlendFunc (GL_ONE, GL_ONE);
@@ -638,30 +698,28 @@ void CymbalView::renderOpenGL()
         common (*g.mesh);
         glUniform4f (Gpu::at (*g.mesh, "uLathe"), lathe[0], lathe[1], lathe[2], lathe[3]);
         glBindVertexArray (g.meshVao);
-        const auto thin = geo.numThinIndices, all = (int) geo.lineIndices.size();
         lines (*g.mesh, 1.0f, 0.0f);
-        glDrawElements (GL_LINES, thin, GL_UNSIGNED_INT, nullptr);
+        segments (0, g.thinMeshSegments);
         lines (*g.mesh, 2.0f, 0.0f);
-        glDrawElements (GL_LINES, all - thin, GL_UNSIGNED_INT, (const void*) ((size_t) thin * sizeof (std::uint32_t)));
+        segments (g.thinMeshSegments, g.meshSegments - g.thinMeshSegments);
 
         g.surface->use();
         common (*g.surface);
         glUniform1f (Gpu::at (*g.surface, "uGlowGain"), 0.0f);
         glBindVertexArray (g.surfaceVao);
-        const auto thinSurface = geo.numThinSurface, allSurface = (int) geo.surface.size();
         lines (*g.surface, 1.0f, 0.0f);
-        glDrawArrays (GL_LINES, 0, thinSurface);
+        segments (0, g.thinSurfaceSegments);
         lines (*g.surface, 2.0f, 0.0f);
-        glDrawArrays (GL_LINES, thinSurface, allSurface - thinSurface);
+        segments (g.thinSurfaceSegments, g.surfaceSegments - g.thinSurfaceSegments);
 
         // The glow around the bright mesh lines, added.
         glBlendEquation (GL_FUNC_ADD);
         g.mesh->use();
         glBindVertexArray (g.meshVao);
         lines (*g.mesh, 1.0f, kGlowPerUnit);
-        glDrawElements (GL_LINES, thin, GL_UNSIGNED_INT, nullptr);
+        segments (0, g.thinMeshSegments);
         lines (*g.mesh, 2.0f, 2.0f * kGlowPerUnit);
-        glDrawElements (GL_LINES, all - thin, GL_UNSIGNED_INT, (const void*) ((size_t) thin * sizeof (std::uint32_t)));
+        segments (g.thinMeshSegments, g.meshSegments - g.thinMeshSegments);
 
         // The flashes where the hits struck, added.
         if (f.numFlashes > 0)
