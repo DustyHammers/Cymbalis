@@ -397,6 +397,7 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
                                     : static_cast<uint8_t>(std::min(band, kExcitationBands - 1));
         }
         envRingInv_.assign(size_t(z.numBands), 1.0);
+        envRingKeepS_ = std::max(b.tuning.cymbal.edgeRingKeepMs, 0.0) * 1e-3;
         computeEnvRing();
     }
     if (p.contactPermode)
@@ -420,8 +421,7 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
         {
             for (auto* v : {&c.Er, &c.Ei, &c.fd, &c.em0, &c.em1, &c.emax})
                 v->assign(np, 0.0f);
-            for (auto* v : {&c.envPkT, &c.envPk, &c.envRingInv})
-                v->assign(size_t(z.numBands), 0.0);
+            c.envRingInv.assign(size_t(z.numBands), 1.0);
         }
     }
 
@@ -1583,15 +1583,16 @@ void FastEngine::sumComponents(double t0, double t1) noexcept
                 te0 = (te0 - static_cast<double>(c.envDelay[j])) * static_cast<double>(c.envSpeed[j]);
                 te1 = (te1 - static_cast<double>(c.envDelay[j])) * static_cast<double>(c.envSpeed[j]);
             }
-            // Then the ring length acts on the envelope as read (ringEnvelope).
-            double e0 = envelopeAt(c, band, te0), e1 = envelopeAt(c, band, te1);
+            // Then the ring length scales the time after the kept onset (ringTime).
             if (c.envRing)
             {
-                e0 = ringEnvelope(c, band, te0, e0);
-                e1 = ringEnvelope(c, band, te1, e1);
+                te0 = ringTime(c, band, te0);
+                te1 = ringTime(c, band, te1);
             }
-            std::fill(c.em0.begin() + bandStart_[bs], c.em0.begin() + bandEnd_[bs], static_cast<float>(e0));
-            std::fill(c.em1.begin() + bandStart_[bs], c.em1.begin() + bandEnd_[bs], static_cast<float>(e1));
+            std::fill(c.em0.begin() + bandStart_[bs], c.em0.begin() + bandEnd_[bs],
+                      static_cast<float>(envelopeAt(c, band, te0)));
+            std::fill(c.em1.begin() + bandStart_[bs], c.em1.begin() + bandEnd_[bs],
+                      static_cast<float>(envelopeAt(c, band, te1)));
         }
     }
     rhoAny_ = rho;
@@ -2160,10 +2161,7 @@ void FastEngine::startEnvelope(Component& c, double velocity) noexcept
             }
         }
         envPeakS_[size_t(band)] = kPeak * z.frameDurS;
-        const double corr = z.rmsCorrection.empty() ? 1.0 : z.rmsCorrection[size_t(band)];
-        c.envPkT[size_t(band)] = kPeak * z.frameDurS;
-        c.envPk[size_t(band)] = m * c.envScale * corr; // as envelopeAt scales it
-        m *= c.envScale * corr;
+        m *= c.envScale * (z.rmsCorrection.empty() ? 1.0 : z.rmsCorrection[size_t(band)]);
         std::fill(c.emax.begin() + bandStart_[size_t(band)], c.emax.begin() + bandEnd_[size_t(band)],
                   static_cast<float>(m));
     }
@@ -2193,16 +2191,15 @@ double FastEngine::envelopeAt(const Component& c, int band, double te) const noe
     return (at(k0) * (1.0 - fr) + at(k1) * fr) * c.envScale * corr;
 }
 
-// The ring length on a band envelope (docs/TUNING.md, "Ring length"): e = envelopeAt(c, band,
-// te), unchanged up to the band's peak; after it, its level relative to the peak in dB divided
-// by the band's ring factor x, peak x (e / peak)^(1/x): the recorded decay's T60 times x.
-double FastEngine::ringEnvelope(const Component& c, int band, double te, double e) const noexcept
+// The ring length on a band envelope (docs/TUNING.md, "Ring length"): the envelope time te
+// is kept up to the kept onset k and scaled by 1 / the band's ring factor x after it,
+// k + (te - k) / x, so the envelope after k runs x times as long. At x = 1: te.
+double FastEngine::ringTime(const Component& c, int band, double te) const noexcept
 {
-    const size_t bs = size_t(band);
-    const double inv = c.envRingInv[bs], pk = c.envPk[bs];
-    if (inv == 1.0 || te <= c.envPkT[bs] || ! (pk > 0.0))
-        return e;
-    return pk * std::pow(std::min(e / pk, 1.0), inv);
+    const double inv = c.envRingInv[size_t(band)];
+    if (inv == 1.0 || te <= c.envKeep)
+        return te;
+    return c.envKeep + (te - c.envKeep) * inv;
 }
 
 // Each envelope band's ring factor: the ring length x the per-band ring length of its
@@ -2993,6 +2990,7 @@ void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecayS
         computeHertzRef();
     }
     envWindowS_ = c.edgeEnvWindowS;
+    envRingKeepS_ = std::max(c.edgeRingKeepMs, 0.0) * 1e-3; // from the next strike
     frameRestart_ = c.frameDecayRestart;
     envOn_ = envBake_ && c.edgeEnvelope; // from the next strike
     params_.edgeWanderDepth = c.edgeWanderDepth;
@@ -3325,6 +3323,7 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
         if (comp.envRing)
         {
             std::copy(envRingInv_.begin(), envRingInv_.end(), comp.envRingInv.begin());
+            comp.envKeep = envRingKeepS_;
             comp.envWindow = envWindowS_ * envWindowStretch_;
         }
         CYM_PROF_END(strikeEnvelope);
@@ -3578,6 +3577,10 @@ void FastEngine::onsetPeaks(const Component& c, int slot) noexcept
         {
             const size_t band = size_t(bake_->edgeNpz.bandIndex[k]);
             t = envPeakS_[band];
+            // The ring length's time scale, undone: read at k + (te - k) / x, so it peaks at
+            // te = k + (peak - k) x.
+            if (c.envRing && c.envRingInv[band] != 1.0 && t > c.envKeep)
+                t = c.envKeep + (t - c.envKeep) / c.envRingInv[band];
             if (c.envShift)
             {
                 const size_t j = npzShiftBand_[band];
