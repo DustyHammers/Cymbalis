@@ -4,9 +4,10 @@
 // CYMBALS table of the approved reference, docs/ui/wireframe_reference.py: shapes, lathe zones
 // and hammering approved by Kris on 2026-10-27; NOVA RIDE, HAMMERED THIN RIDE and SMOKE FLAT
 // RIDE changed on 2026-10-28 (gold lathing measured from the photos, Nova's new bell and bow,
-// Hammered's dents, Smoke's lighter gold), and SWISH the same day (round 3: gold lathing, a
-// copper bell and band, shallow dents in three zones). Data only: the mesh, the surface lines
-// and the motion are built from it in CymbalModel.
+// Hammered's dents, Smoke's lighter gold), SWISH the same day (round 3: gold lathing, a
+// copper bell and band, shallow dents in three zones) and RAVEN (round 4: measured lathing,
+// power-hammer dents along a spiral). Data only: the mesh, the surface lines and the motion are
+// built from it in CymbalModel.
 
 #include <array>
 
@@ -49,8 +50,27 @@ struct DentZone
     double aMin, aMax, ratioMin, ratioMax, depthScale;
 };
 
+// Power-hammer dents along a spiral (the reference's dent_spiral, RAVEN). From r = zone.from,
+// angle 0, while r < zone.to: the size factor k runs linearly from k0 to k1 across the zone; the
+// step along the spiral is spacing x k / max(r, 0.05); each step places a dent (unless U < skip) at
+// angle + U(-1, 1) x jitterAlong x step and radius + U(-1, 1) x jitterAcross x pitch x k, its
+// a = this->a x k x g and b = this->b x k x g (g = U(sizeMin, sizeMax)), its a axis along the
+// radius (rotation its angle + U(-1, 1) x rot), its depth 0.0042 (a / 0.03)^0.7 x
+// U(1 - depthVar, 1 + depthVar); then the angle grows by step x U(1 - stepVar, 1 + stepVar) and r
+// by pitch x k x step / 2 pi.
+struct DentSpiral
+{
+    double from, to;   // zone, fractions of R
+    double k0, k1;     // size factor at its inner and outer radius
+    double a, b;       // half axes at k = 1: along the radius, across
+    double spacing, pitch;
+    double jitterAlong, jitterAcross;
+    double sizeMin, sizeMax;
+    double rot, skip, stepVar, depthVar;
+};
+
 // The hammering pressed into the mesh as dents (the reference's Cymbal2, its approved defaults;
-// SWISH sets its own depth, contrast, ring step and zones).
+// SWISH and RAVEN set their own depth, contrast, ring step and dents).
 struct Dents
 {
     int radial = 197;        // radial samples from 0.02 to 1.0, 0.005 R apart
@@ -64,6 +84,8 @@ struct Dents
     double simplify = 0.25;  // Douglas-Peucker tolerance, design units
     std::array<DentZone, 3> zones {}; // dent_zones: when there are any, they replace the hammering
     int numZones = 0;
+    bool hasSpiral = false;  // dent_spiral: it replaces the hammering and the zones
+    DentSpiral spiral {};
     bool linesFollowDents = false; // the lathe and edge lines follow the dents (lines_follow_dents)
 };
 
@@ -126,6 +148,27 @@ inline constexpr std::array<double, 200> kSwishPhotoLum { {
     114.3, 115.3, 127.6, 56.2,
 } };
 
+// RAVEN's from Raven.png (rim 353.75 px = 10"), remapped to the wireframe: the photo's bell (edge
+// 2.85") scaled onto the wireframe's smaller bell (edge 2.2"), the bow and edge kept (the
+// reference's RAVEN_PHOTO_LUM, used as it is).
+inline constexpr std::array<double, 200> kRavenPhotoLum { {
+    33.6, 32.7, 35.9, 45.0, 51.5, 50.5, 44.5, 48.2, 81.6, 93.9, 101.9, 114.0, 114.1, 107.3,
+    95.2, 94.3, 88.0, 90.9, 85.7, 83.3, 86.1, 86.2, 74.9, 95.0, 76.9, 85.6, 78.8, 84.6,
+    83.0, 79.6, 88.8, 69.8, 75.7, 77.9, 108.7, 111.8, 110.7, 110.0, 108.2, 109.3, 111.5, 110.5,
+    112.6, 114.3, 87.5, 79.0, 70.4, 64.8, 59.8, 54.8, 49.7, 44.7, 42.6, 43.4, 44.3, 45.1,
+    45.9, 46.7, 47.5, 48.2, 50.5, 54.1, 55.7, 55.4, 55.2, 55.9, 55.8, 56.6, 57.0, 56.7,
+    56.1, 56.0, 55.7, 56.3, 56.3, 56.0, 55.6, 54.7, 54.9, 56.7, 58.1, 58.3, 57.6, 56.8,
+    56.9, 57.0, 56.9, 57.4, 57.3, 57.6, 56.9, 56.2, 56.9, 57.0, 58.2, 59.4, 59.7, 60.8,
+    60.3, 60.4, 60.7, 61.3, 62.1, 62.1, 62.2, 63.1, 62.9, 63.7, 64.0, 64.7, 65.4, 65.6,
+    64.9, 64.7, 64.5, 64.6, 63.8, 64.8, 64.5, 65.0, 66.1, 66.9, 66.5, 67.5, 68.5, 69.6,
+    70.5, 70.8, 71.3, 72.0, 71.6, 70.8, 70.8, 71.8, 72.0, 73.1, 74.5, 74.8, 74.6, 75.1,
+    74.9, 75.5, 76.8, 77.3, 77.2, 78.0, 77.5, 76.4, 74.9, 74.1, 73.7, 73.7, 74.0, 75.3,
+    76.7, 77.7, 78.4, 79.1, 79.3, 79.9, 79.7, 78.8, 77.8, 77.9, 77.4, 76.8, 76.8, 76.6,
+    76.2, 75.8, 75.9, 75.7, 75.9, 75.9, 74.5, 73.0, 72.4, 73.2, 73.5, 72.5, 71.8, 71.4,
+    71.8, 72.3, 72.3, 72.9, 74.1, 74.8, 74.6, 81.3, 122.3, 107.5, 94.0, 85.2, 71.9, 99.3,
+    130.5, 141.3, 140.9, 140.4,
+} };
+
 inline constexpr std::array<double, 200> kSmokePhotoLum { {
     0.0, 0.0, 0.0, 0.0, 0.0, 68.1, 100.8, 100.0, 89.0, 79.4, 81.0, 82.2, 82.5, 82.4,
     79.8, 78.0, 76.7, 77.0, 77.1, 81.6, 83.3, 85.9, 88.0, 90.2, 95.5, 101.5, 102.0, 102.3,
@@ -161,7 +204,7 @@ struct CymbalShape
     Zone bellGrooves {};
 
     // 2026-10-28
-    std::array<GoldZone, 3> gold {}; // gold zones, with lathe lines every goldStep
+    std::array<GoldZone, 4> gold {}; // gold zones, with lathe lines every goldStep
     int numGold = 0;
     Zone tint {};                    // gold metal without lathe lines
     bool hasTint = false;
@@ -284,16 +327,36 @@ inline constexpr CymbalShape kSwishShape = [] {
     return s;
 }();
 
-// RAVEN (20" dry ride): a small lathed bell with its own deep grooves, a moderately high bow with
-// large scale-shaped hammering in a spiral, two bright lathed rings at the edge.
-inline constexpr CymbalShape kRavenShape {
-    "raven", 10.0, 0.22,
-    {{ { 0.0, 1.22 }, { 0.5, 1.20 }, { 1.3, 1.06 }, { 1.85, 0.86 }, { 2.1, 0.76 }, { 2.3, 0.73 },
-       { 5.0, 0.58 }, { 7.0, 0.40 }, { 9.0, 0.14 }, { 10.0, 0.0 } }}, 10,
-    {{ { 0.0, 0.225 }, { 0.935, 1.0 } }}, 2,
-    {}, 0,
-    Hammer::spiral, { 0.25, 0.93 },
-    true, { 0.035, 0.215 },
-};
+// RAVEN (20" dry ride; round 4, 2026-10-28): a small bell, a moderately high bow. Lathing
+// measured from Raven.png, the bell's zones scaled onto the wireframe's smaller bell: a dark ring
+// at the hole, a smooth gold lathed ring, deep wavy lathe grooves, a smooth lathed flange to the
+// bell's edge; at the rim a narrow bright lathed ring, a dark groove and a lathed band. The bow is
+// power-hammered: shallow dents pressed into the mesh along a regular spiral, running along the
+// radius and growing toward the edge.
+inline constexpr CymbalShape kRavenShape = [] {
+    CymbalShape s {};
+    s.key = "raven";
+    s.R = 10.0;
+    s.bell = 0.22;
+    s.profile = { { { 0.0, 1.22 }, { 0.5, 1.20 }, { 1.3, 1.06 }, { 1.85, 0.86 }, { 2.1, 0.76 }, { 2.3, 0.73 },
+                    { 5.0, 0.58 }, { 7.0, 0.40 }, { 9.0, 0.14 }, { 10.0, 0.0 } } };
+    s.numProfile = 10;
+    s.hammer = Hammer::none;
+    s.hammerZone = { 0.235, 0.935 };
+    s.hasBellGrooves = true;
+    s.bellGrooves = { 0.073, 0.166 };
+    s.gold = { { { 0.039, 0.073, 1.0 }, { 0.170, 0.22, 1.0 }, { 0.945, 0.965, 1.0 }, { 0.975, 1.0, 1.0 } } };
+    s.numGold = 4;
+    s.goldStep = 0.006;
+    s.photoLum = &kRavenPhotoLum;
+    s.bellLine = false;
+    s.dented = true;
+    s.dents.ringStep = 4;
+    s.dents.depth = 1.2;
+    s.dents.contrast = 12.0;
+    s.dents.hasSpiral = true;
+    s.dents.spiral = { 0.24, 0.93, 0.6, 1.5, 0.032, 0.018, 0.05, 0.065, 0.06, 0.04, 0.95, 1.05, 0.05, 0.0, 0.02, 0.05 };
+    return s;
+}();
 
 } // namespace cymbalis::ui

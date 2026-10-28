@@ -439,8 +439,8 @@ void Geometry::buildMesh()
 }
 
 // The hammering pressed into the mesh (the reference's Cymbal2): a fine grid, the dents
-// (_make_dents: packed zones, or 'dimple'), the dent light factor at rest, and the rings and
-// spokes simplified once (_simplify_lines). Each segment is coloured from its two ends.
+// (_make_dents: a spiral, packed zones, or 'dimple'), the dent light factor at rest, and the
+// rings and spokes simplified once (_simplify_lines). Each segment is coloured from its two ends.
 void Geometry::buildDentedMesh()
 {
     const auto& D = shape.dents;
@@ -466,8 +466,31 @@ void Geometry::buildDentedMesh()
     const auto apart = [&dents] (double x, double y, double a, double gap) {
         return std::none_of (dents.begin(), dents.end(), [&] (const Dent& d) { return std::hypot (x - d.x, y - d.y) < gap * (a + d.a); });
     };
+    // Power-hammer dents along a spiral (RAVEN): a regular pattern with slight variation, each
+    // dent's a axis along the radius, growing toward the edge.
+    if (D.hasSpiral)
+    {
+        const auto& sp = D.spiral;
+        for (double th = 0.0, r = sp.from; r < sp.to;)
+        {
+            const double k = sp.k0 + (sp.k1 - sp.k0) * (r - sp.from) / (sp.to - sp.from);
+            const double step = sp.spacing * k / std::max (r, 0.05);
+            if (uniform (0.0, 1.0) >= sp.skip)
+            {
+                const double tm = th + uniform (-1.0, 1.0) * sp.jitterAlong * step;
+                const double rm = r + uniform (-1.0, 1.0) * sp.jitterAcross * sp.pitch * k;
+                const double g = uniform (sp.sizeMin, sp.sizeMax);
+                const double a = sp.a * k * g, b = sp.b * k * g;
+                const double rot = tm + uniform (-1.0, 1.0) * sp.rot;
+                dents.push_back ({ rm * std::cos (tm), rm * std::sin (tm), a, b, rot,
+                                   0.0042 * std::pow (a / 0.03, 0.7) * uniform (1.0 - sp.depthVar, 1.0 + sp.depthVar) });
+            }
+            th += step * uniform (1.0 - sp.stepVar, 1.0 + sp.stepVar);
+            r += sp.pitch * k * step / twoPi;
+        }
+    }
     // Packed zones (SWISH): random places with no overlap, up to `count` per zone, 40 x count tries.
-    for (int k = 0; k < D.numZones; ++k)
+    for (int k = 0; k < D.numZones && ! D.hasSpiral; ++k)
     {
         const auto& zone = D.zones[(size_t) k];
         for (int tries = 0, placed = 0; placed < zone.count && tries < 40 * zone.count; ++tries)
@@ -483,8 +506,9 @@ void Geometry::buildDentedMesh()
         }
     }
     // Otherwise the 'dimple' hammering: large dents, then smaller ones in the gaps.
+    const bool dimple = D.numZones == 0 && ! D.hasSpiral;
     const double z0 = shape.hammerZone.from, z1 = shape.hammerZone.to;
-    const int large = D.numZones > 0 ? 0 : (int) (pi * (z1 * z1 - z0 * z0) / 0.011 / std::pow (D.size, 1.5));
+    const int large = dimple ? (int) (pi * (z1 * z1 - z0 * z0) / 0.011 / std::pow (D.size, 1.5)) : 0;
     for (int k = 0; k < large; ++k)
     {
         const double r = std::sqrt (uniform (z0 * z0, z1 * z1)), t = uniform (0.0, twoPi);
@@ -494,7 +518,7 @@ void Geometry::buildDentedMesh()
         dents.push_back ({ r * std::cos (t), r * std::sin (t), a, b, rot, 0.0042 * std::pow (a / 0.03, 0.7) * uniform (0.6, 1.2) });
     }
     // smaller dents in the gaps between the large ones (no overlap)
-    for (int tries = 0, added = 0; D.numZones == 0 && added < D.smallDents && tries < 20000; ++tries)
+    for (int tries = 0, added = 0; dimple && added < D.smallDents && tries < 20000; ++tries)
     {
         const double r = std::sqrt (uniform (z0 * z0, z1 * z1)), t = uniform (0.0, twoPi);
         const double grow = (r - z0) / (z1 - z0);

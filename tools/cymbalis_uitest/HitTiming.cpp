@@ -379,8 +379,9 @@ HitTiming::HitTiming (std::function<void (int)> f) : finished (std::move (f))
                     steps.push_back ({ e, block, realtime, e == Editor::hits && round == 0 && ! realtime && block == kBlocks[0] });
             steps.push_back ({ Editor::none, block, realtime, false });
         }
-    // Once more with HAMMERED THIN RIDE selected, and once with SWISH (the dented meshes).
-    for (const auto* shape : { &cymbalis::ui::kHammeredShape, &cymbalis::ui::kSwishShape })
+    // Once more with HAMMERED THIN RIDE selected, once with SWISH and once with RAVEN (the dented
+    // meshes).
+    for (const auto* shape : { &cymbalis::ui::kHammeredShape, &cymbalis::ui::kSwishShape, &cymbalis::ui::kRavenShape })
         for (int p = 0; p < cymbalis::kNumPresets; ++p)
             if (cymbalis::kPresets[(size_t) p].shape == shape)
                 for (const auto e : { Editor::none, Editor::idle, Editor::hits })
