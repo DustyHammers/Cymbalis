@@ -185,8 +185,10 @@ jobs:
       # The hit display (docs/UI_SPEC.md sections 10 and 11) with 16 hits moving the wireframe
       # cymbal at 1536 x 1024: processBlock at 44.1 kHz (256 and 128 samples, normal and
       # real-time audio thread) with the editor closed, open and idle, and open with the hits,
-      # each three times; the CPU used besides; the editor's paint calls and the cymbal's
-      # OpenGL frames; and once, that nothing is drawn after every hit is older than 6 s.
+      # each three times, then once more with HAMMERED THIN RIDE selected, once with SWISH and
+      # once with RAVEN (their dented meshes);
+      # the CPU used besides; the editor's paint calls and the cymbal's OpenGL frames; and
+      # once, that nothing is drawn after every hit is older than 6 s.
       # Printed to the log and the job summary only.
       - name: Hit display timing
         timeout-minutes: 10

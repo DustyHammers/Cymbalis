@@ -12,6 +12,9 @@
 //   editor open, hits       the editor at 1536 x 1024 in a window, the wireframe cymbal moving
 //
 // Each case runs three times, the cases in turn, and the editor closed once more at the end.
+// Then the three cases run once more with HAMMERED THIN RIDE selected, once with SWISH and once
+// with RAVEN, the heaviest cymbals to draw (their dented meshes), at normal priority with
+// 256-sample blocks.
 // For each case: processBlock's median and 99th percentile over all its runs, each run's
 // worst block (and the worst against the block's time budget), the audio thread's CPU time
 // per block, the CPU time of the rest of the process, and WindowServer's (macOS); then the
@@ -51,6 +54,7 @@ private:
         int block;
         bool realtime;
         bool checkAfter; // after the last hit, count the frames, paints and hit updates
+        int preset = -1; // the preset selected (cymbalis::kPresets), or -1: the default
     };
 
     void timerCallback() override;
