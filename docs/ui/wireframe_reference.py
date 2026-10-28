@@ -24,6 +24,10 @@ History:
   shallow dents along a regular spiral (dent_spiral), each running along the radius and growing
   toward the edge, with only slight variation. Raven and Nova are power-hammered; Smoke and
   Hammered are hand-hammered.
+- 2026-10-28, approved by Kris: KONSTAN CRASH 18" (new preset). Fully lathed (gold lathe lines
+  every 0.028 R over the whole cymbal, following the dents), a small rounded bell (edge 2.25", top
+  1.6"), hand-hammered all over the bow in shallow random dents (dent_zones), larger towards the
+  edge. Its photo brightness is compressed (lum_gamma 0.35) so the evenly lathed metal stays bright.
 """
 import math
 import numpy as np
@@ -49,6 +53,9 @@ SWISH_PHOTO_LUM = [83.9, 85.2, 85.7, 89.1, 85.2, 71.3, 66.8, 73.0, 69.6, 68.4, 6
 # remapped to the wireframe: the photo's bell (edge 2.85") scaled onto the wireframe's smaller bell
 # (edge 2.2"), the bow and edge kept.
 RAVEN_PHOTO_LUM = [33.6, 32.7, 35.9, 45.0, 51.5, 50.5, 44.5, 48.2, 81.6, 93.9, 101.9, 114.0, 114.1, 107.3, 95.2, 94.3, 88.0, 90.9, 85.7, 83.3, 86.1, 86.2, 74.9, 95.0, 76.9, 85.6, 78.8, 84.6, 83.0, 79.6, 88.8, 69.8, 75.7, 77.9, 108.7, 111.8, 110.7, 110.0, 108.2, 109.3, 111.5, 110.5, 112.6, 114.3, 87.5, 79.0, 70.4, 64.8, 59.8, 54.8, 49.7, 44.7, 42.6, 43.4, 44.3, 45.1, 45.9, 46.7, 47.5, 48.2, 50.5, 54.1, 55.7, 55.4, 55.2, 55.9, 55.8, 56.6, 57.0, 56.7, 56.1, 56.0, 55.7, 56.3, 56.3, 56.0, 55.6, 54.7, 54.9, 56.7, 58.1, 58.3, 57.6, 56.8, 56.9, 57.0, 56.9, 57.4, 57.3, 57.6, 56.9, 56.2, 56.9, 57.0, 58.2, 59.4, 59.7, 60.8, 60.3, 60.4, 60.7, 61.3, 62.1, 62.1, 62.2, 63.1, 62.9, 63.7, 64.0, 64.7, 65.4, 65.6, 64.9, 64.7, 64.5, 64.6, 63.8, 64.8, 64.5, 65.0, 66.1, 66.9, 66.5, 67.5, 68.5, 69.6, 70.5, 70.8, 71.3, 72.0, 71.6, 70.8, 70.8, 71.8, 72.0, 73.1, 74.5, 74.8, 74.6, 75.1, 74.9, 75.5, 76.8, 77.3, 77.2, 78.0, 77.5, 76.4, 74.9, 74.1, 73.7, 73.7, 74.0, 75.3, 76.7, 77.7, 78.4, 79.1, 79.3, 79.9, 79.7, 78.8, 77.8, 77.9, 77.4, 76.8, 76.8, 76.6, 76.2, 75.8, 75.9, 75.7, 75.9, 75.9, 74.5, 73.0, 72.4, 73.2, 73.5, 72.5, 71.8, 71.4, 71.8, 72.3, 72.3, 72.9, 74.1, 74.8, 74.6, 81.3, 122.3, 107.5, 94.0, 85.2, 71.9, 99.3, 130.5, 141.3, 140.9, 140.4]
+
+# KONSTAN's reference photo: brightness by radius (2026-10-28; left and right radii, rim 374.5 px).
+KONSTAN_PHOTO_LUM = [255.0, 255.0, 255.0, 254.9, 254.2, 211.6, 82.0, 90.5, 91.9, 92.2, 90.8, 87.1, 85.2, 85.2, 84.7, 84.7, 85.7, 85.7, 85.5, 85.3, 93.4, 87.3, 85.3, 90.9, 80.9, 88.1, 91.6, 84.7, 92.7, 93.9, 99.3, 96.1, 103.2, 108.5, 112.0, 110.3, 108.0, 113.1, 116.5, 120.0, 118.7, 118.1, 125.1, 127.8, 131.7, 123.6, 123.6, 132.6, 120.8, 114.2, 117.2, 112.2, 101.9, 98.8, 94.8, 93.8, 90.1, 86.5, 83.8, 82.6, 82.8, 83.7, 81.4, 80.2, 79.5, 82.9, 80.1, 76.7, 77.6, 75.4, 75.0, 74.1, 81.8, 76.0, 77.7, 78.4, 75.8, 75.2, 76.4, 82.6, 76.8, 79.1, 79.7, 78.1, 78.8, 81.8, 81.6, 81.1, 79.2, 77.0, 76.2, 78.9, 80.7, 77.9, 78.2, 79.4, 79.4, 81.4, 82.2, 83.2, 81.6, 84.8, 85.5, 83.7, 85.1, 86.1, 85.3, 84.9, 82.6, 82.4, 82.7, 81.0, 78.2, 79.1, 80.1, 81.6, 81.8, 80.1, 80.3, 82.1, 82.3, 81.4, 83.6, 86.3, 83.8, 82.4, 84.6, 81.5, 82.4, 81.2, 79.4, 77.6, 80.6, 79.7, 80.2, 80.5, 81.1, 79.5, 85.3, 83.3, 81.2, 81.8, 86.4, 87.3, 89.7, 86.4, 85.2, 85.2, 86.5, 86.8, 85.8, 83.0, 85.2, 83.6, 83.0, 85.0, 88.9, 87.1, 87.5, 84.7, 88.6, 89.2, 86.3, 86.6, 88.1, 92.6, 94.9, 89.0, 95.9, 96.1, 92.0, 88.5, 95.6, 94.7, 91.2, 87.2, 87.8, 93.3, 91.5, 89.3, 88.0, 90.8, 91.5, 90.9, 87.6, 88.0, 95.0, 95.0, 91.4, 90.7, 91.7, 91.8, 93.9, 89.9, 87.5, 91.2, 91.4, 93.8, 90.0, 109.7]
 
 CYMBALS = {
     'nova': dict(title='NOVA RIDE', R=10.0, bell=0.22, hammer='scale', hammer_zone=(0.43, 0.925),
@@ -126,6 +133,18 @@ CYMBALS = {
                   dent_spiral=dict(zone=(0.24, 0.93), k=(0.6, 1.5), a=0.032, b=0.018, spacing=0.05, pitch=0.065,
                                    jitter_along=0.06, jitter_across=0.04, size=(0.95, 1.05), rot=0.05, skip=0.0,
                                    step_var=0.02, depth_var=0.05)),
+    # KONSTAN CRASH 18" (Kris 2026-10-28, from his reference photo): fully lathed, a small rounded
+    # bell (edge 2.25"), a gently falling bow; hand-hammered all over the bow in shallow, random dents
+    # (shallower than HAMMERED THIN RIDE's), larger and more numerous towards the edge; the lathe
+    # lines run through the dents.
+    'konstan': dict(title='KONSTAN CRASH 18"', R=9.0, bell=0.25, hammer=None, hammer_zone=(0.30, 0.97),
+                  profile=[(0.0, 1.60), (0.5, 1.56), (1.1, 1.39), (1.6, 1.08), (2.0, 0.81), (2.3, 0.70),
+                           (3.5, 0.58), (5.5, 0.38), (7.5, 0.16), (9.0, 0.0)],
+                  lathe=[], fine_lathe=[], gold=[(0.03, 1.0)], gold_step=0.028, photo_lum=KONSTAN_PHOTO_LUM,
+                  bell_line=False, zone_edges=False, ring_step=5, dent_depth=1.5, dent_contrast=9.0, lum_gamma=0.35,
+                  lines_follow_dents=True,
+                  dent_zones=[(0.30, 0.70, 300, (0.016, 0.024), (0.5, 0.9), 0.8),
+                              (0.70, 0.97, 260, (0.020, 0.032), (0.45, 0.85), 1.0)]),
 }
 
 ROSE_DARK = np.array([58, 74, 112], np.float32)     # BGR: deep rose bronze
@@ -176,7 +195,7 @@ class Cymbal:
                 self._lum = self._lum / np.percentile(self._lum[5:80], 98)
         if self._lum is None:
             return 1.0
-        return float(np.clip(self._lum[min(int(r / 0.005), len(self._lum) - 1)], 0.3, 1.15))
+        return float(np.clip(self._lum[min(int(r / 0.005), len(self._lum) - 1)] ** self.c.get('lum_gamma', 1.0), 0.3, 1.15))
 
     def gold_k(self, r):
         # a gold zone's optional third value dims it (HAMMERED's rim band: 0.6)
@@ -424,7 +443,7 @@ class Cymbal:
 # sampled finely (197 radial x 480 around) so the rings and spokes bend through each dent; the
 # lighting picks out the dent walls. The defaults are the approved values.
 # =====================================================================================
-DENTED = {'hammered', 'swish', 'raven'}
+DENTED = {'hammered', 'swish', 'raven', 'konstan'}
 
 
 
@@ -538,7 +557,7 @@ class Cymbal2:
                 self._lum = self._lum / np.percentile(self._lum[5:80], 98)
         if self._lum is None:
             return 1.0
-        return float(np.clip(self._lum[min(int(r / 0.005), len(self._lum) - 1)], 0.3, 1.15))
+        return float(np.clip(self._lum[min(int(r / 0.005), len(self._lum) - 1)] ** self.c.get('lum_gamma', 1.0), 0.3, 1.15))
 
     def gold_k(self, r):
         for z in self.c.get('gold', []):
