@@ -1,19 +1,21 @@
 # UI specification — Cymbalis
 
-Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE added 2026-10-15, SWISH 2026-10-17. Layout v2 (mockup v2: a larger, higher photo area, MIDI CHANNEL under CYMBAL, Velocity Sensitivity and Volume in a bottom row) approved by Kris 2026-10-25; the Pan parameter and its knob added 2026-10-25 at Kris's request; the hit display (section 10) approved by Kris 2026-10-25. Layout v3 (mockup v3: the MIDI CHANNEL box and the TUNING button swapped) approved by Kris 2026-10-25. All coordinates are in 1536×1024 design units. `docs/ui/reference_mockup.png` shows the original artwork (layout v1).
+Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE added 2026-10-15, SWISH 2026-10-17. Layout v2 (mockup v2: a larger, higher photo area, MIDI CHANNEL under CYMBAL, Velocity Sensitivity and Volume in a bottom row) approved by Kris 2026-10-25; the Pan parameter and its knob added 2026-10-25 at Kris's request; the hit display (section 10) approved by Kris 2026-10-25. Layout v3 (mockup v3: the MIDI CHANNEL box and the TUNING button swapped) approved by Kris 2026-10-25. The wireframe cymbal (section 11), replacing the photos and the 2D hit marks, approved by Kris 2026-10-27. All coordinates are in 1536×1024 design units. `docs/ui/reference_mockup.png` shows the original artwork (layout v1).
 
 ## 1. Assets (`resources/ui/`)
 
 | File | Use |
 |---|---|
 | `CYMBALIS_Background_logo.png` (1536×1024) | Background. The CYMBALIS logo and "BRONZE MODELING INSTRUMENT" are part of it; **do not draw them**. Everything else on this page is drawn by JUCE. |
-| `Nova.png` (707×713, transparent) | NOVA RIDE photo |
-| `SmokeFlatRide.png` (714×718) | SMOKE FLAT RIDE photo (602) |
-| `HammeredThinRide.png` (709×713) | HAMMERED THIN RIDE photo (Bettis) |
-| `Swish.png` (737×747) | SWISH photo |
-| `Raven.png` (712×712, transparent) | RAVEN photo: a top-down view made from Kris's angled photo (`docs/BASELINE_MANIFEST.md`, Raven) |
+| `Nova.png` (707×713, transparent) | NOVA RIDE photo: reference only |
+| `SmokeFlatRide.png` (714×718) | SMOKE FLAT RIDE photo (602): reference only |
+| `HammeredThinRide.png` (709×713) | HAMMERED THIN RIDE photo (Bettis): reference only |
+| `Swish.png` (737×747) | SWISH photo: reference only |
+| `Raven.png` (712×712, transparent) | RAVEN photo, a top-down view made from Kris's angled photo (`docs/BASELINE_MANIFEST.md`, Raven): reference only |
 | `knob.png` (128×11648) | Knob filmstrip: 91 frames of 128×128, about 7 o'clock to 5 o'clock, frame 45 at 12 o'clock |
 | `calibril.ttf` | Calibri Light, used for all drawn text. If it is missing, use Carlito Regular (SIL OFL, include its licence file) until Kris adds it |
+
+Since 2026-10-27 the five photos are references only: they stay in `resources/ui/` (their MD5s in `docs/BASELINE_MANIFEST.md` are unchanged) but are not compiled into the plugin. The editor draws each preset's cymbal as a wireframe instead (section 11).
 
 ## 2. Window
 
@@ -24,19 +26,19 @@ Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE add
 
 ## 3. Layout
 
-Layout v3, approved by Kris 2026-10-25 (mockup v3): layout v2 with the MIDI CHANNEL box and the TUNING button swapped. Left column: the CYMBAL box and, under it, the TUNING button. Top right: the MIDI CHANNEL box. Centre: the photo. Bottom row: Velocity Sensitivity, Volume and Pan. Right column: the rows and the blend knobs, as in layout v1.
+Layout v3, approved by Kris 2026-10-25 (mockup v3): layout v2 with the MIDI CHANNEL box and the TUNING button swapped. Left column: the CYMBAL box and, under it, the TUNING button. Top right: the MIDI CHANNEL box. Centre: the cymbal (the photo until 2026-10-27; now the wireframe cymbal, section 11). Bottom row: Velocity Sensitivity, Volume and Pan. Right column: the rows and the blend knobs, as in layout v1.
 
 | Element | Position | Notes |
 |---|---|---|
-| Cymbal photo | top-left 447,50, size 680×680 (centre 787,390) | Changes per preset. Each photo is fitted into this area with its aspect ratio kept, centred (Nova 674×680, Smoke Flat Ride 676×680, Hammered Thin Ride 676×680, Swish 671×680, Raven 680×680). Layout v1: 434,94, 707×713 |
-| CYMBAL preset dropdown | box 61,371, 277×62 | Shows the preset name, e.g. **NOVA RIDE**. Changing preset changes the name, the photo and the sound. A name too wide to sit centred clear of the arrow is centred between the box's left edge and the arrow, with tighter letter spacing |
+| Cymbal area | 400,40 to 1180,750 (780×710), inside the right column's divider (x 1188) and above the bottom row's (y 757) | The wireframe cymbal of the preset (section 11), drawn over the background and under every control; it replaces the photo. The photo was at 447,50, 680×680 (centre 787,390), each photo fitted into it with its aspect ratio kept; layout v1: 434,94, 707×713 |
+| CYMBAL preset dropdown | box 61,371, 277×62 | Shows the preset name, e.g. **NOVA RIDE**. Changing preset changes the name, the cymbal and the sound. A name too wide to sit centred clear of the arrow is centred between the box's left edge and the arrow, with tighter letter spacing |
 | MIDI CHANNEL dropdown | box 1404,30, 110×36 (centred on x 1459), top right, above the column headers | Channels 1–16, in a 4×4 grid that opens below the box (box bottom + 3), right-aligned with its right edge, so it stays inside the window. The channel number is left-aligned, its ink 12 units in from the box's left edge (where a long preset name starts), in the preset name's font, size and colour. Its label is on the same line, to the left (section 4). Layout v2: 61,501, 277×62 under the CYMBAL box, grid above it; layout v1: 632,936 |
 | TUNING button | box 61,501, 277×62 (the CYMBAL box's size), under the CYMBAL box | Tuning code only (`CYMBALIS_WITH_TUNING`, `docs/TUNING.md`); in a lean build this place is empty. Outlined like the preset and channel boxes (section 5). **TUNING** centred, drawn like the preset name; no arrow and no label above it. Its Tuning window still opens where it did in layout v2: below 1404,30, 110×36 (the button's layout v2 place, now the MIDI CHANNEL box), right-aligned with it. Layout v2: 1404,30, 110×36 |
 | Bottom row | x 39–1161 in thirds (39–413, 413–787, 787–1161), knob centres at y 881 (the height of Blend Position 2) | Each knob is centred in its third |
 | Velocity Sensitivity knob | centre 226,881 (first third) | See section 9. Layout v1: 201,641 |
 | Volume knob | centre 600,881 (second third) | See section 9. Layout v1: 199,881 |
 | Pan knob | centre 974,881 (third third) | See section 9. Frame 45 (12 o'clock) at centre, 0 at full left, 90 at full right. End labels L and R (section 4) instead of −/+ marks |
-| Hit display | over the photo, clipped to the cymbal disc, under every control | A mark for each strike and the row that played it lit (section 10) |
+| Hit display | on the wireframe cymbal, under every control | Each strike moves the cymbal and flashes where it struck, and the row that played it lights (sections 10 and 11) |
 | Blend Position 1 knob (BELL ↔ BOW) | centre 1349,642 | |
 | Blend Position 2 knob (BOW ↔ EDGE) | centre 1350,881 | |
 | Articulation rows | box tops at y 140 / 220 / 300 / 380 / 460 (BELL, BOW, EDGE, BELL2, BOW2) | Each row has a stick box and a MIDI note box |
@@ -96,7 +98,8 @@ CENTER and CENTER2 are drawn like the other row labels but with tighter letter s
 | Title gradient | `#665E53` → `#A5A299` |
 | "BRONZE" subtitle gradient | `#4C433B` → `#76624C` |
 | Subtitle "MODELING INSTRUMENT" | `#5C5F5F` |
-| Hit display (section 10) | spot gradient `#FFFFFF` → `#FFF1D6` → `#E9C88F` → `#C29A5B`; ripple ring `#E9C88F`; bell ring `#FFF6E6`; edge arc `#E2BE85`, its inner arc `#FFF1D6`; a lit row's label `#A5A299`, its stick and note box borders `#76624C` |
+| Wireframe cymbal (section 11) | rose dark `#704A3A`, rose light `#DEB096`, lathe `#CDA06E`, gold `#ECC88C`, hot `#FFEED7`, flash `#FFF5E6` |
+| Hit display (section 10) | a lit row's label `#A5A299`, its stick and note box borders `#76624C`. The 2D marks' colours (spot `#FFFFFF` → `#FFF1D6` → `#E9C88F` → `#C29A5B`, rings, edge arcs) went with the marks on 2026-10-27 |
 
 Hover, open and selected states use only colours from this table.
 
@@ -236,41 +239,97 @@ Non-automatable state saved with the session: MIDI channel, note per slot, stick
 
 ## 10. Hit display
 
-Approved by Kris, 2026-10-25. UI only: it changes nothing in the sound and adds no parameter. Each strike shows as a short mark on the cymbal photo, where it landed, and the row that played it lights up while its mark lasts.
+Approved by Kris, 2026-10-25. UI only: it changes nothing in the sound and adds no parameter. Each strike shows on the cymbal, where it landed, and the row that played it lights up for a moment. Until 2026-10-27 a strike was a short 2D mark drawn over the photo; since then it is drawn on the wireframe cymbal (section 11): the cymbal flexes and tilts and flashes where it was struck.
 
 **From the audio thread to the editor.**
 - At each strike that a note-on plays, the processor writes one event into a lock-free single-producer, single-consumer FIFO, preallocated with room for 64 events: the row, the strike position (0 edge, 0.5 bow, 1 bell, after the blend knobs), the engine velocity (after Velocity Sensitivity) and the stick (TIP or SHOULDER, as the row's stick box shows it). See `CymbalisProcessor::pushHit` and its call in `strikeSlots` (`plugin/PluginProcessor.cpp`).
 - That write is all the audio thread does for the display. It never repaints, triggers an async update, posts a message, locks or allocates. When the FIFO is full the event is dropped. With no editor open nothing reads the FIFO, so it fills and later events are dropped; an editor that opens discards what waited.
-- The editor reads the FIFO on its timer and keeps up to 16 active marks; when full, the oldest is dropped. The hit layer's own timer runs at 30 Hz only while a mark is active and stops when none is. While none is, the editor's existing 30 Hz timer (notes, MIDI learn) reads the FIFO, and a hit starts the layer's timer.
+- The editor reads the FIFO on its timer and keeps up to 16 hits (`HitTracker`, `plugin/ui/HitDisplay.h`); when full, the oldest is dropped, and a hit is dropped once it is older than 6 s. The tracker's own timer runs at 30 Hz only while it keeps a hit and stops when it keeps none; each tick hands the hits to the cymbal, which draws a frame. While it keeps none, the editor's existing 30 Hz timer (notes, MIDI learn) reads the FIFO, and a hit starts the tracker's timer.
 
-**Where a mark goes.**
-- Each preset has a bell (or centre) zone as a fraction of the photo's radius, `bellRadius` in the slot table (`plugin/SlotTable.h`): NOVA RIDE 0.40, SMOKE FLAT RIDE 0.16 (centre zone), HAMMERED THIN RIDE 0.40, SWISH 0.22, RAVEN 0.29 (measured from its photo). Kris may adjust them.
-- The photo's radius R = 0.495 × the fitted photo's width; the centre is the photo area's centre (787,390).
-- Radius fraction from strike position p, linear between p = 1.0 → 0.6 × bellRadius, p = 0.5 → (bellRadius + 0.95) / 2, and p = 0.0 → 0.97.
+**Where a strike lands.**
+- Each preset has a bell (or centre) zone as a fraction of the cymbal's radius: its shape's bell radius (`CymbalShape::bell` in `plugin/ui/CymbalShapes.h`, the slot table's `PresetInfo::shape`): NOVA RIDE 0.40, SMOKE FLAT RIDE 0.16 (centre zone), HAMMERED THIN RIDE 0.19, SWISH 0.22, RAVEN 0.22. Until 2026-10-27 they were the slot table's `bellRadius`, measured on the photos: HAMMERED THIN RIDE 0.40 and RAVEN 0.29, the others as now.
+- Radius fraction from strike position p, linear between p = 1.0 → 0.6 × bell radius, p = 0.5 → (bell radius + 0.95) / 2, and p = 0.0 → 0.97.
 - Angle: 4 to 5 o'clock, 45° clockwise from 3 o'clock plus a random offset uniform in ±12°. The editor draws the random number, never the audio thread.
+- Zone: bell when the radius fraction is below the bell radius, edge when it is 0.9 or more, bow otherwise. How the cymbal moves and flashes: section 11, "Motion on hits".
 
-**How a mark looks** (design units; v = engine velocity 0–1).
-- Duration T = 0.25 + 0.25·v seconds. Intensity over age t: k = (1 − t/T)²; the mark is removed at t ≥ T.
-- **Spot**, where the radius fraction is below 0.9:
-  - Radial gradient: centre `#FFFFFF`, 12 % `#FFF1D6` at 0.95 alpha, 25 % `#E9C88F` at 0.75, 60 % `#C29A5B` at 0.28, edge `#C29A5B` at 0.
-  - Radius r = (24 + 40·v) × (1.3 for SHOULDER, 1.0 for TIP), shrinking to 0.7·r at the end of T. Opacity (0.35 + 0.65·v)·k.
-  - Ripple ring when v > 0.5: a circle around the spot, 2.5 px, `#E9C88F`, slightly soft (1.5 px edges), its radius growing from r to 2.6·r over T, opacity 0.35·v·k.
-  - On the bell (radius fraction below bellRadius) also a crisp ring: 2.2 px, `#FFF6E6`, radius 0.45 × the spot's radius, opacity 0.85·k, so the mark shows on the bright bell.
-- **Edge**, radius fraction 0.9 or more: an arc along the rim at the hit's angle and radius instead of a spot.
-  - Span 20° + 28°·v, stroke 10 + 8·v px, `#E2BE85`, opacity (0.35 + 0.35·v)·k, soft edges of about 4 px.
-  - When v > 0.5 also a 4 px inner arc along its middle, `#FFF1D6`, 0.6 of the span, opacity 0.5·k.
-- Everything is clipped to the cymbal disc (centre, radius R) and drawn over the photo, under every control.
+**How a strike looks.** The 2D marks (a spot with a ripple ring and a bell ring, or an arc on the rim, over the photo) were removed on 2026-10-27. A strike now moves the wireframe cymbal and flashes where it struck (section 11).
 
-**Row highlight.** While a row's latest mark is active, the row's label is drawn in `#A5A299` and its stick and note box borders in `#76624C` (hover and open outlines still win). When the mark ends they return to their normal colours.
+**Row highlight.** For T = 0.25 + 0.25·v seconds after a row's latest strike (v its engine velocity; as long as the mark lasted, and as the flash lasts now), the row's label is drawn in `#A5A299` and its stick and note box borders in `#76624C` (hover and open outlines still win). Then they return to their normal colours.
 
-**Drawing cheaply.**
-- No blur, gradient or path is computed per frame. Each mark shape is rendered once into small coloured images, at the current physical scale:
-  - the spot, at radii 7 % apart covering the TIP and SHOULDER sizes;
-  - the ripple ring and the bell ring, also at radii 7 % apart, each as one image (not split into tiles: on macOS every image drawn is a separate GPU upload and submission, so many small tiles cost far more than drawing a ring's empty middle);
-  - the edge arc, at velocity 0, 0.2 … 1, with its inner arc.
-- The images are rendered the first time a mark is drawn after the editor opens, is resized or moves to a screen with another scale (the arcs also after a preset change, since they follow R).
-- A frame only places those images, with a position and an opacity:
-  - spots and rings at the nearest radius, unscaled, on whole pixels;
-  - arcs rotated about the disc's centre to the hit's angle and scaled to its radius fraction. The disc's edge is already in an arc's image, so arcs need no clip; spots and rings are clipped to the disc only when one reaches past it.
-- Only the rectangle around each active mark is repainted (the spot and the ripple's current extent, with the previous frame's), plus a lit row's label area when it changes; never the whole editor or the whole photo.
-- The photo area is its own opaque component, cached as an image, so a mark's repaint copies the photo from that image.
+**Drawing.** The 2D marks' cached images (the part "Drawing cheaply") went with them. How the cymbal is drawn and kept clear of the audio: section 11, "Rendering".
+
+## 11. Wireframe cymbal
+
+Approved by Kris, 2026-10-27, from mockups made with `docs/ui/wireframe_reference.py` (Python, documentation only: not built, not run in CI). UI only: the sound is unchanged and there are no new parameters. It replaces the photos and the 2D hit marks: each preset's cymbal is drawn as a rose-bronze wireframe in three-quarter view. When struck, the cymbal tilts in a slow circle, its plate-mode patterns light up and flex, and a flash appears where it was hit. Each preset has its own shape, lathed zones and hammering.
+
+The reference's numbers are the specification; its colours are OpenCV BGR, given here as RGB. Code: `plugin/ui/CymbalShapes.h` (the shapes), `plugin/ui/CymbalModel.*` (geometry, colour, motion; plain C++), `plugin/ui/CymbalView.*` (drawing), `plugin/ui/HitDisplay.*` (`HitTracker`: the hits and the lit rows).
+
+**Where it is drawn.**
+- The cymbal area: 400,40 to 1180,750 (section 3), over the background image and under every control.
+- The cymbal's radius is the same on screen for every preset: SWISH (22") is drawn the size of the 20" cymbals, as its photo was. Heights are fractions of each cymbal's own R.
+- Camera, as the reference's `project()`: elevation 38°, centre 787,400, scale 345 design units per cymbal radius, perspective distance 5 radii. A point X, Y, Z (radius 1) goes to yv = Y sin e − Z cos e, zv = Y cos e + Z sin e, p = 5 / (5 − zv), screen 787 + 345·X·p, 400 + 345·yv·p.
+
+**Geometry per preset.** `plugin/ui/CymbalShapes.h` holds one entry per preset, copied from the reference's `CYMBALS` table: R in inches, the profile points (radius and height in inches), the bell radius fraction, the lathe and fine-lathe zones, the hammering style and zone, and RAVEN's bell grooves. The slot table's `PresetInfo::shape` points to it.
+
+| Preset | Shape | R (in) | Bell | Hammering, zone | Lathe zones | Fine lathe |
+|---|---|---|---|---|---|---|
+| NOVA RIDE | `nova` | 10 | 0.40 | scale, 0.43–0.925 | 0.27–0.405, 0.935–1.0 | — |
+| SMOKE FLAT RIDE | `smoke` | 10 | 0.16 | radial, 0.03–0.885 | 0.885–1.0 | 0.89–0.95 |
+| HAMMERED THIN RIDE | `hammered` | 10 | 0.19 | dimple, 0.43–0.92 | 0.0–0.405, 0.92–1.0 | 0.03–0.40 |
+| SWISH | `swish` | 11 | 0.22 | none | 0.0–1.0 | 0.03–0.21, 0.24–0.78, 0.80–1.0 |
+| RAVEN | `raven` | 10 | 0.22 | spiral, 0.25–0.93 | 0.0–0.225, 0.935–1.0 | — (bell grooves 0.035–0.215) |
+
+- **Height** between the profile points (r/R, z/R): monotone cubic, PCHIP (Fritsch–Carlson, as scipy's `PchipInterpolator`, its end slopes included); r is clipped to 0–1.
+- **Mesh** (`Cymbal.__init__`): rings at `linspace(0.03, bell, max(4, int(bell/0.04)))`, then `linspace(bell + 0.035, 0.92, max(6, int((0.92 − bell)/0.035)))`, then 0.94, 0.96, 0.98 and 1.0; 80 samples around each ring, closed; a spoke on every second sample (40 spokes) from the first ring to the rim. Lines are 1 design unit wide; the ring nearest the bell radius and the rim are 2 units.
+- **Surface lines** (`_build_texture`), on the profile's surface (+0.0015), from a fixed-seed generator (`std::mt19937_64`, seed 11; the pattern matches the mockups in size, spacing and spread, not mark for mark):
+  - `scale`: rows of arcs every 0.03 R through the zone; each arc spans 0.82 of a step 0.05/r, steps of 0.92–1.08 × that, rising 0.014 R in the middle, jittered ±0.004 R.
+  - `spiral` (RAVEN): scale-shaped marks along an Archimedean spiral of pitch 0.065 R, each 0.105 R wide (0.85 of it drawn), rising 0.032 R in the middle, jittered ±0.005 R per mark.
+  - `dimple` (HAMMERED THIN RIDE): one irregular dent per 0.011 of the zone's area, at random, its half axes 0.012–0.026 R (× 0.35–0.9 across), growing 0.8 to 2.4 × towards the edge, wobbled by its 2nd and 3rd harmonics.
+  - `radial` (SMOKE FLAT RIDE): one short radial stroke per 0.0025 of the zone's area (from r 0.05), 0.015–0.035 R long.
+  - Fine lathe: full rings every 0.012 R through each fine-lathe zone.
+  - RAVEN's bell grooves: full rings from 0.035 to 0.215, spaced 0.011–0.026 R at random, each with an intensity 0.55–1.0; 2 units wide.
+  - Dents pressed into the mesh are a later step: the hammering is only drawn on the surface.
+
+**Colour and light** (`draw()`).
+- Normal from the height field (profile, flex and tilt); light direction (0, −0.55, 0.83); shade = clip(n·light, 0, 1).
+- light = clip(((shade − 0.86)/0.14)·0.8 + 0.2·ytl, 0, 1), ytl being 1 at the cymbal's top on screen and 0 at its bottom.
+- Base colour c = ROSE_DARK + (ROSE_LIGHT − ROSE_DARK)·(0.25 + 0.75·light)^1.4; in a lathe zone c·0.55 + LATHE·(0.30 + 0.35·light); then mixed toward HOT by the glow g: c + (HOT − c)·g. A mesh segment takes its ends' average shade, ytl and g, and the lathe test at its middle radius.
+- Colours (RGB): ROSE_DARK `#704A3A`, ROSE_LIGHT `#DEB096`, LATHE `#CDA06E`, GOLD `#ECC88C`, HOT `#FFEED7`, flash `#FFF5E6`.
+- Surface lines (shade 0.9, no glow): hammer marks the surface colour × 0.8 (RAVEN's spiral × 1.0); fine-lathe rings the surface colour × (0.30 + 0.25·ytl); bell grooves GOLD × (0.30 + 0.32·ytl) × the groove's intensity.
+- Lines lighten the background (max). Glow: around every mesh line brighter than 150/255 (its brightest channel), a soft halo is added: Gaussian across the line, sigma 3 design units, out to 9, peak 0.0665 × the line's colour per unit of its width. That is the reference's 3-unit blur added at 0.5, drawn as a halo instead of blurring the image.
+
+**Motion on hits**, from the hit FIFO's events (section 10); v is the event's engine velocity.
+- Strike point: angle 45° + uniform ±12° (the editor draws it); radius fraction and zone as in section 10, with the bell radii above.
+- Plate modes m = 0…6, n = 0…2, z the n-th zero of J_m:
+
+  | m | n = 0 | n = 1 | n = 2 |
+  |---|---|---|---|
+  | 0 | 2.4048 | 5.5201 | 8.6537 |
+  | 1 | 3.8317 | 7.0156 | 10.1735 |
+  | 2 | 5.1356 | 8.4172 | 11.6198 |
+  | 3 | 6.3802 | 9.7610 | 13.0152 |
+  | 4 | 7.5883 | 11.0647 | 14.3725 |
+  | 5 | 8.7715 | 12.3386 | 15.7002 |
+  | 6 | 9.9361 | 13.5893 | 17.0038 |
+
+- Weights, per hit (`set_hits`): |J_m(z r)| / N_k × the zone's preference (bell 1/(1 + m), bow 1/(1 + |m − 2|), edge (1 + m)/7) × the reach exp(−(m + 1.5n)/(2 + 6v)), then divided by the largest of the 21. N_k, the mode's normalisation, is the largest |J_m(z r)| for r in [0, 1] (201 points).
+- Displacement (`modal`): for every mode with weight 0.05 or more, a = v·w·exp(−age/τ)·(1 − exp(−age/0.03)), skipped below 0.001, with τ = 0.25 + 1.2/(1 + m + 2n), the second term × 1.6 on the edge (τ = 0.25 + 1.92/(1 + m + 2n) there; the reference's code); it adds a·J_m(z r)/N_k·cos(m(θ − angle))·cos(2π(2 + 0.8(m + n))·age). The mesh height is the profile's + 0.010·disp·stiff, stiff = clip((r − (bell − 0.1))/0.15, 0.12, 1).
+- Glow g (`draw()`): with d = |disp|·stiff and D its largest value over the mesh, g = (d/D)^1.8 × min(1, D/0.35)^0.5 (none when D is below 0.0001).
+- J_m(x) = (1/π)∫₀^π cos(mτ − x sin τ) dτ, a 64-point midpoint sum (Apple's libc++ has no `std::cyl_bessel_j`). The radial part J_m(z r)/N_k is computed once per preset for every ring and mode; the angular part per hit and frame.
+- Wobble (`wobble()`, the `MOT` table): per zone amplitude A, decay τ (s), frequency f (Hz) and spin S (degrees): bell 0.002, 0.3, 2.6, 0; bow 0.006, 0.5, 2.0, 0; edge 0.025, 1.3, 1.4, 0.15. ramp = (1 − exp(−age/0.02))·exp(−age/τ); with u the strike direction and p ⟂ u, T += A·v·ramp·(cos(2πf·age)·u + 0.85·sin(2πf·age)·p) and spin += S·v·ramp·cos(2πf·age), summed over the hits. The cymbal is spun by spin degrees and tilted: Z −= 2.2·(X·T₀ + Y·T₁).
+- Flash at the strike point, at the cymbal's rest position: a soft round spot in `#FFF5E6`, added on top: as the reference, a filled disc of its radius blurred with a Gaussian of sigma 0.6 × its radius (0.75 of the opacity at its centre, half that at 1.0 radius, nothing left by 3). Since sigma follows the radius, its shape is the same at every radius: a 49-point table out to 3 radii (`wire::flashProfile`), computed once. Radius (10 + 22v) design units, × 1.3 for SHOULDER, shrinking linearly to 0.7 × over T = 0.25 + 0.25v; opacity (0.4 + 0.6v)·k, k = (1 − age/T)².
+- Row highlight: unchanged (section 10). Up to 16 hits, the oldest dropped; a hit is dropped once it is older than 6 s.
+
+**Rendering.**
+- The audio thread is unchanged: it only writes the FIFO.
+- `CymbalView` covers the cymbal area only. An `juce::OpenGLContext` (OpenGL 3.2 core, 4× multisampling, component painting off, no continuous repainting) draws it on the context's own thread: the area's part of the background image as a texture (with mipmaps), then the mesh and the surface lines, the glow and the flashes. JUCE's software renderer never draws the moving cymbal, and the message thread paints nothing per frame.
+- Buffers: the static geometry is uploaded once per preset: the mesh's ring and angle per vertex and its line indices, and the surface lines. Per frame only the mesh's heights, slopes and glow (4 floats per vertex; 2,240 to 2,320 vertices: 28 or 29 rings of 80) and a few uniforms (tilt, spin, camera, the cymbal's screen extent) change. The surface lines follow the tilt and spin, not the flex.
+- Lines: a geometry shader turns each segment into a quad 1 or 2 design units wide, scaled with the editor (the core profile has no wide lines); multisampling antialiases them. Lines lighten with `GL_MAX`; the glow and the flashes are added.
+- Frames: the hit tracker asks for one at 30 Hz while it keeps a hit (any hit younger than 6 s); otherwise none is drawn until the next hit, a resize or a preset change.
+- Fallback: if no OpenGL context starts within 3 s of the view showing, or its shaders fail, the cymbal is drawn at rest (no motion, no glow) with JUCE's drawing, once per preset or size, as an image: the background and the lines at rest, lightening it. Hits then show only as the lit row. `tools/cymbalis_snapshot` (which cannot capture OpenGL) always draws this still cymbal.
+- A preset that fails to load shows its message in the cymbal area, drawn with JUCE, as before.
+
+**Where the plugin differs from the reference's code**, all within the specification above:
+- Glow: the reference adds its blurred lines only on pixels where the lines are already brighter than 150, which brightens the bright lines rather than surrounding them; the plugin draws the halo the specification describes.
+- Normalisation: the reference divides each mode's displacement by its largest value on the mesh, and the weights by the largest |J_m| at 50 points of [0, 1]; the plugin uses N_k for both.
+- The slope around a ring wraps around (numpy's `gradient` is one-sided at the seam), and the mode zeros are the 4-decimal table above.

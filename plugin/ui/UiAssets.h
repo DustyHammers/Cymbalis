@@ -29,13 +29,8 @@ const juce::Colour arrow { 0xff999489 };       // dropdown arrow
 const juce::Colour divider { 0xff353231 };
 const juce::Colour popup { 0xff141313 };       // popup background
 const juce::Colour openOutline { 0xffa5a299 }; // outline of a box whose popup is open; a lit row's label
-// Hit display (UI_SPEC section 10). A lit row's label is openOutline, its boxes bronze.
-const juce::Colour hitCore { 0xffffffff };     // spot centre
-const juce::Colour hitCream { 0xfffff1d6 };    // spot at 12 %; inner edge arc
-const juce::Colour hitGold { 0xffe9c88f };     // spot at 25 %; ripple ring
-const juce::Colour hitBronze { 0xffc29a5b };   // spot from 60 % to its edge
-const juce::Colour hitBellRing { 0xfffff6e6 }; // ring of a hit on the bell
-const juce::Colour hitArc { 0xffe2be85 };      // edge arc
+// A lit row (UI_SPEC section 10): its label is openOutline, its boxes bronze. The wireframe
+// cymbal's colours are in CymbalModel.h (UI_SPEC section 11).
 } // namespace palette
 
 // The images and the typeface, loaded once from BinaryData.
@@ -45,7 +40,6 @@ public:
     Assets();
 
     juce::Image background; // CYMBALIS_Background_logo.png, logo included
-    std::array<juce::Image, kNumPresets> photos; // one per preset (kPresets[].photoFile)
     juce::Image knobStrip;  // knob.png, 91 frames of 128 x 128
     juce::Typeface::Ptr typeface;
     bool isCalibriLight = false; // false: Carlito Regular stands in

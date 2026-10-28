@@ -1,106 +1,53 @@
 #pragma once
 
-// The hit display (docs/UI_SPEC.md section 10): for each strike a short-lived mark on the
-// cymbal photo, where the strike landed, and the row that played it lit while its mark
-// lasts. The processor writes one event per strike into a FIFO; this layer reads them on
-// the editor's timer. Marks are drawn only from images rendered once per scale and preset,
-// only the rectangles around them are repainted, and the layer's own timer runs only while
-// a mark is active.
+// The hits on the cymbal (docs/UI_SPEC.md sections 10 and 11). The processor writes one event per
+// strike into a FIFO; the tracker reads them on the editor's timer, keeps up to 16 hits for the
+// wireframe cymbal (CymbalView) to move with, and lights the row that played while its hit's
+// flash lasts. Its own 30 Hz timer runs only while a hit is younger than 6 s: each tick hands
+// the hits to the cymbal, which draws a new frame with them.
 
 #include "PluginProcessor.h"
+#include "ui/CymbalView.h"
 
 #include <array>
 #include <functional>
-#include <vector>
+#include <memory>
 
 namespace cymbalis::ui
 {
 
-class HitLayer final : public juce::Component, private juce::Timer
+class HitTracker final : private juce::Timer
 {
 public:
-    explicit HitLayer (CymbalisProcessor& p);
+    HitTracker (CymbalisProcessor& p, CymbalView& view);
+    ~HitTracker() override;
 
-    // The disc of the current preset's photo, in this layer's coordinates, and its bell (or
-    // centre) zone as a fraction of the radius. Clears the marks.
-    void setDisc (juce::Point<float> centre, float radius, float bellRadius);
+    // The current preset's cymbal: the hits so far go.
+    void setGeometry (std::shared_ptr<const wire::Geometry> g);
 
     // Called by the editor's timer: takes the new hits from the processor's FIFO.
     void poll();
 
-    // While a row's latest mark is active.
+    // While a row's latest hit's flash lasts (T = 0.25 + 0.25 v seconds).
     bool rowLit (int slot) const noexcept { return lit[(size_t) slot]; }
     std::function<void (int slot)> onRowLitChanged;
 
-    int numActive() const noexcept { return numMarks; }
-
-    void paint (juce::Graphics& g) override;
-
-    static constexpr int maxMarks = 16;
+    int numActive() const noexcept { return numHits; }
+    bool moving() const noexcept { return isTimerRunning(); }
 
 private:
-    struct Mark
-    {
-        int slot = 0;
-        float velocity = 0.0f;
-        bool shoulder = false;
-        bool edge = false;   // radius fraction >= 0.9: an arc along the rim instead of a spot
-        bool bell = false;   // on the bell (radius fraction < bell radius): the bell ring too
-        bool ripple = false; // velocity > 0.5
-        float fraction = 0.0f; // radius fraction of the strike position
-        float angle = 0.0f;    // radians, clockwise from 3 o'clock
-        float spotRadius = 0.0f;
-        int arcStep = 0;
-        juce::Point<float> centre;
-        juce::Rectangle<int> arcBounds; // an edge mark's extent (it does not move)
-        double startMs = 0.0, durationMs = 1.0;
-        juce::uint64 order = 0;
-        juce::Rectangle<int> shown; // what the last frame covered
-    };
-
-    // A cached image of a shape, coloured, at `scale` pixels per design unit: its top-left
-    // corner (design units) relative to the shape's reference point, and the shape's
-    // radius. One image each, rings too: on macOS every image drawn is a separate GPU upload
-    // and submission, so a few larger images cost far less than many small ones.
-    struct Sprite
-    {
-        juce::Image image;
-        juce::Point<float> origin;
-        float radius = 0.0f;
-        float scale = 1.0f;
-    };
-
-    static constexpr int arcSteps = 6; // edge arcs at velocity 0, 0.2 .. 1
-
     void timerCallback() override;
     void step (double nowMs);
-    void addMark (const CymbalisProcessor::HitEvent& e, double nowMs);
-    void removeMark (int index);
-    juce::Rectangle<int> extent (const Mark& m, double nowMs) const;
-    void updateLit();
-    void buildSprites (float scale);
-    void buildArcs (float scale);
-    void drawMark (juce::Graphics& g, const Mark& m, double nowMs, bool arcs) const;
-    void drawAt (juce::Graphics& g, const Sprite& s, juce::Point<float> at) const;
-    void drawArc (juce::Graphics& g, const Sprite& s, const juce::AffineTransform& place) const;
+    void addHit (const CymbalisProcessor::HitEvent& e, double nowMs);
 
     CymbalisProcessor& processor;
+    CymbalView& view;
+    std::shared_ptr<const wire::Geometry> geometry;
     juce::Random random;
-    std::array<Mark, maxMarks> marks {};
-    int numMarks = 0;
-    juce::uint64 nextOrder = 1;
-    double frameMs = 0.0; // the time the marks were last laid out (and are drawn at)
-    std::array<juce::uint64, kNumSlots> latest {};
+    std::array<wire::Hit, wire::kMaxHits> hits {};
+    int numHits = 0;
+    std::array<double, kNumSlots> litUntilMs {};
     std::array<bool, kNumSlots> lit {};
-
-    juce::Point<float> discCentre;
-    float discRadius = 1.0f, bellZone = 0.4f;
-    juce::Path discClip;
-    juce::Rectangle<int> discBounds;
-
-    float spriteScale = 0.0f, arcScale = 0.0f; // the physical scales they were built at (0: none)
-    std::vector<Sprite> spots, ripples, bellRings; // at radii 7 % apart (spots: TIP and SHOULDER sizes)
-    std::array<Sprite, arcSteps> arcOuter, arcInner;
 };
 
 } // namespace cymbalis::ui
