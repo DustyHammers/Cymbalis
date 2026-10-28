@@ -129,3 +129,29 @@ Built 2026-10-26 in the project session from Kris's SPEAR captures (Bell V1-V4, 
 - Velocities from the captures' levels (RMS of the first 500 ms relative to the loudest capture of each articulation), in `data/raven_build_info.json` with the SPEAR level targets: BELL +4.72 dB and EDGE +16.23 dB above BOW (Bell V4, Edge V7 against Bow V7).
 - Build-up (LF and MF) as Bettis and Swish; wander, stick click and NL off. No velocity tables: bell and bow use the hertz law (v^2).
 - Photo: `resources/ui/Raven.png` (712 x 712, transparent, MD5 `16a4fa620ab27117b6aa2c57dad51410`), made 2026-10-26 from Kris's only photo, which is taken at an angle: the rim ellipse (about 34 degrees of tilt) stretched back to a circle, the bell moved back to the centre by a correction that fades out towards the rim. Light and colour (version C2, Kris's choice, replacing version B): the bow's large-scale light and its tint taken from Nova's photo at the same angle, the hammering kept at Nova's local contrast, the edge zone lifted with the bow, the bell and rim moved towards Nova's tint; from about 3 to 4:30 o'clock the bow is version B (the photo's own light, evened out), blended over about 20 degrees. The bell (or centre) zone ends at about 0.29 of the photo's radius.
+
+# Konstan Crash 18"
+
+Built 2026-10-28 in the project session from Kris's SPEAR captures (Bow V1-V6, Edge V1-V7; bow with the stick tip, edge with the shoulder; no bell captures) by `build_preset.py --infer-bell --bell-seed 3` (kept in the project with its documentation, `SPEAR_Preset_Builder.md`, not in this repo). SPEAR files excluded. No baseline render check: the plugin is the reference (see `CLAUDE.md`).
+
+| File | MD5 |
+|---|---|
+| `presets/konstan/Konstan_Baseline1.json` | `081621b7b0abf8e3326b6e966e938517` |
+| `presets/konstan/data/konstan_bell_excitation_ratios.json` | `d625060fbac75a94d7866b02f0f75624` |
+| `presets/konstan/data/konstan_build_info.json` | `0218d55d9fc14b0cfed3696ccb0144dc` |
+| `presets/konstan/data/konstan_edge_benv_trigger.json` | `0fceb8dc0b3dde81810e0e175a75c43e` |
+| `presets/konstan/data/konstan_edge_excitation_ratios_neutral.json` | `e8e98e79b42bdf78304a10c84915249c` |
+| `presets/konstan/data/konstan_edge_npz_data.json` | `5e152d329e7a88b8438d25fa28164b36` |
+| `presets/konstan/data/konstan_edge_vel_tilt.json` | `3aa0644f8767cfa5b1a8c31a6d6a0568` |
+| `presets/konstan/data/konstan_fingerprint.json` | `4f1323a76b712dd546fc30738163b1fd` |
+| `presets/konstan/data/konstan_pkt_data.json` | `d28a1fe990cc07ca61e445e5098e907b` |
+
+## Notes
+
+- Bettis format, as RAVEN: fingerprint (900 modes), bell ratios, neutral edge ratios, NPZ edge (7 velocities) in the plugin's 22 bands with `edge_rms_correction`, edge pk_t by velocity, edge velocity tilt, and the all-zero trigger file that switches the NPZ envelope on.
+- Mode bank: 700 modes seen in at least 2 bow captures plus 200 seen only in the edge captures. The builder now keeps up to 200 places for edge-only modes: without them the bow filled all 900 and the edge's 271 Hz wash mode was missing. RAVEN builds the same.
+- T60: decay fits calibrated per band (82 % of the modes have their own fit).
+- **The bell is inferred, not captured.** On NOVA RIDE, RAVEN and HAMMERED THIN RIDE the bell excites the same modes as the bow with a consistent tilt in absolute frequency (less below 1.3 kHz, more at 2.5-9 kHz), concentrated in a few modes whose choice nothing measured predicts. The builder applies that tilt (eased below 1.5 kHz), an extra tilt putting the bell's centroid at 0.7 x the bow's, and a per-mode scatter from Nova's and Raven's bells (seed 3) widened to make the bell purer than theirs; chosen by ear by Kris, 2026-10-28. Shaping values in `data/konstan_build_info.json` (`bell_shaping`). Real bell captures would replace it.
+- SPEAR level targets in `data/konstan_build_info.json`: EDGE +13.5 dB above BOW (Edge V7 against Bow V6); BELL +4.72 dB, RAVEN's measured value (the bell is inferred).
+- Build-up (LF and MF) as Bettis and Swish; wander, stick click and NL off. No velocity tables: bell and bow use the hertz law (v^2).
+- No photo: the plugin draws the wireframe (`docs/ui/wireframe_reference.py`, `konstan`).
