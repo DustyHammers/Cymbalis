@@ -117,6 +117,30 @@ The attack gains and time: the shoulder's onset gains relative to the tip's.
 
 Attack time: bow 80 ms, bell 300 ms.
 
+#### RAVEN EDGE PROFILE
+
+NOVA RIDE's EDGE (`edge`, the bow shoulder struck at the edge, `docs/PORT_MAP.md`, decision 13) has a **RAVEN EDGE PROFILE** button below its values. It works like NOVA SHOULDER PROFILE. It sets EDGE's 22 band gains, its 22 attack gains (the same in the HARD and SOFT layers) and its attack time, 90 ms, to RAVEN's edge-minus-bow difference, and nothing else. It is a starting point to tune from; the values then work as any others (reset, FLAT, save). Approved by Kris, 2026-10-29. There is no engine change, no bake data and no tuning-file key of its own: NOVA's bake is unchanged. The values are in `plugin/tuning/EdgeProfiles.h`.
+
+How it was made, from RAVEN's SPEAR captures Bow V5–V7 and Edge V5–V7:
+
+1. Every partial's amplitude² is summed per 10 ms frame into the 22 bands.
+2. Band gains: each capture's band energy over the first 2 s, normalised to its total; per band, edge minus bow in dB, averaged over the three velocity pairs.
+3. Attack gains: per band, the energy in the first 40 ms relative to 100–400 ms; edge minus bow in dB, averaged the same way. Negative means the edge's band starts lower and swells up: RAVEN's edge onset.
+4. Bands with fewer than 5 Nova modes are set to 0 dB (bands 1–4, 112–283 Hz). Both sets are then smoothed over neighbouring bands (weights 1/4, 1/2, 1/4, renormalised over the bands not set to 0 dB) and clamped to ±12 dB.
+5. Attack time: per band above 566 Hz, the edge / bow amplitude ratio over the first 0.6 s (normalised at 0.3–0.6 s) was fitted to 1 + (g − 1) · exp(−t / τ). The median τ is 90 ms (quartiles 35–175 ms).
+
+| Band (Hz) | 89 | 112 | 141 | 178 | 225 | 283 | 356 | 449 | 566 | 713 | 898 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| band gains (dB) | −5.88 | 0 | 0 | 0 | 0 | +7.59 | +5.12 | +0.22 | −3.84 | −2.77 | +0.11 |
+| attack gains (dB) | −12.00 | 0 | 0 | 0 | 0 | −6.41 | −0.71 | +3.39 | +1.60 | −1.38 | −3.70 |
+
+| Band (Hz) | 1131 | 1426 | 1796 | 2263 | 2851 | 3592 | 4526 | 5702 | 7184 | 9051 | 11404 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| band gains (dB) | +0.23 | +0.85 | +2.95 | +4.74 | +5.56 | +5.22 | +2.63 | −2.04 | −6.37 | −10.06 | −12.00 |
+| attack gains (dB) | −4.93 | −5.04 | −8.49 | −11.72 | −9.96 | −8.67 | −7.98 | −5.71 | −4.10 | −4.53 | −6.32 |
+
+Attack time: 90 ms. In RAVEN's recordings the edge is not brighter than the bow on top: it is 6–12 dB under it above 7 kHz, and stronger at 280–360 Hz and 1.8–4.5 kHz (`docs/PORT_MAP.md`, decision 21).
+
 | Value | Key | Range | Per strike | Effect |
 |---|---|---|---|---|
 | Level at velocity 1.0 | `level_db` | −40 to +40 dB | yes | The slot's level trim, initialised from the bake (`slots[].level_trim.gain_db`) |
@@ -231,6 +255,7 @@ In the window, the **BANDS** section below the articulations works like a graphi
 | | Bow, edge, bell weights | `lf_bow_weight`, `lf_edge_weight`, `lf_bell_weight` | 0–2 | all | |
 | | Wander-rate boost | `lf_wander_rate_boost` | 0–2 | all | The LF accumulator speeds up the wander |
 | Edge envelope | EDGE ONSET ENVELOPE | `edge_band_envelope` | on/off | 602, Bettis, Swish, Raven, Konstan | On (the bake; for Swish the bake switches it on, `docs/PORT_MAP.md`, "Swish"): an edge strike's level follows the NPZ band envelope for the window. Off: the strike rings from the start, with the onset ramp of its pk_t data, as Python plays Swish. Per strike |
+| | EDGE BAND CORRECTION | `edge_band_correction` | 0–100 % | 602, Bettis, Swish, Raven, Konstan | How an edge strike's band envelope makes up for the band's level in the velw coupling: 0 % the bake's `edge_rms_correction`, 100 % the exact correction (each band's level counted once). See "Edge band correction" below. The bakes start at 100 % for the 602, Swish and Konstan and at 0 % for Bettis and Raven. Per strike |
 | | Window | `edge_band_env_onset_s` | 0.1–30 s | 602, Bettis, Swish, Raven, Konstan | How long an edge strike follows the NPZ band envelope; per strike. A ring length above ×1 lengthens it, up to ×2 ("Ring length") |
 | | 20 ms frame-decay restart | `edge_frame_decay_restart` | on/off | 602, Bettis, Swish, Raven, Konstan | On (the bake): the in-frame decay restarts every 20 ms (`docs/PORT_MAP.md`, "The in-frame decay is a 50 Hz sawtooth"). Off: no in-frame decay; the level follows the band envelope alone. Per strike |
 | Energy cascade | Amount | `cascade_amount` | 0–1 | all | 0 (default) switches it off. See "Energy cascade" below |
@@ -298,6 +323,53 @@ In the window it is the **STEREO** group of WHOLE CYMBAL:
 
 **In the bake.** `tools/apply_tuning.py` stores the stereo values in the bake's tuning block. It also writes every mode's resulting left and right gains into a `stereo` block (`gain_l`, `gain_r`, checksummed like the other arrays). The plugin plays them at load as they are; a lean build (`CYMBALIS_WITH_TUNING` OFF) too. `pick_l` and `pick_r` stay as baked: the loader still regenerates them from the seed, and it checks that each stored gain pair keeps the level and signs of its pick vector entries. The high-pass settings go into the tuning block.
 
+#### Edge band correction
+
+On an edge strike with a band envelope (SMOKE FLAT RIDE, HAMMERED THIN RIDE, SWISH, RAVEN, KONSTAN CRASH 18"), each mode's level is its velw coupling × its band's envelope (normalised to the strike's loudest band) × a correction per band. The coupling already carries each band's level in the captures, its velw norm, and so does the envelope. Without a correction each band's level is counted twice: strong bands come out stronger and weak ones weaker (`docs/PORT_MAP.md`, decision 21). The bake's `edge_rms_correction` is meant to cancel one of the two. SMOKE and SWISH have none (all 1); RAVEN's and KONSTAN's are capped at ±12 dB (×0.25–×4); HAMMERED's was tuned by hand.
+
+**EDGE BAND CORRECTION** (`edge_band_correction`, 0–100 %, in the EDGE ENVELOPE group below EDGE ONSET ENVELOPE; not a host parameter) blends the two per band b, with a = value / 100:
+
+correction[b] = baked[b]^(1 − a) × exact[b]^a
+
+- **baked** is the bake's `edge_rms_correction`, or 1 for every band if it has none.
+- **exact** is computed once when the preset loads, from the bake's `edge_npz` (`EdgeNpz::exactCorrection`, `plugin/dsp/Bake.cpp`):
+  1. Per band b and velocity row v of the velw table, nm[v, b] = sqrt(Σ velw[v, i]² over the modes i of the band).
+  2. g[b] is the geometric mean of nm[v, b] over the rows where nm > 0.
+  3. A band with modes and at least one such row gets exact[b] = 1 / g[b], with no cap; any other band gets 1.
+  4. The whole vector is scaled so that sqrt(Σ g² · exact² / Σ g²) = 1 over the bands that step 3 gives 1 / g: the energy-weighted mean correction is 1. The other bands get the scale too. Only RAVEN has one: band 3 (178–224 Hz) has no modes, so its correction is the scale, ×0.9655.
+- **When.** A change applies from the next strike; strikes already ringing keep their correction.
+- **At 0 %** the factor is the baked value itself, so a preset plays bit for bit as without the value (checked in memory with `tools/cymbalis_identity`).
+- **Starting values.** SMOKE FLAT RIDE, SWISH and KONSTAN CRASH 18" have 100 % in their tuning blocks, Kris's choice by ear (2026-10-29), with EDGE re-trimmed to its SPEAR target at 100 %. HAMMERED THIN RIDE keeps its hand-tuned correction and RAVEN its capped one: both start at 0 %, also Kris's choice, and both can be moved. NOVA RIDE has no band envelope and no such row.
+
+The exact correction per band, lowest first (each band named by its lower edge; SWISH has 20 bands of its own, 100 Hz–10 kHz). The build checks every preset's against this table to 4 decimals (`tools/pack_bake`):
+
+| Band | Hz | SMOKE FLAT RIDE | HAMMERED THIN RIDE | RAVEN | KONSTAN CRASH 18" | SWISH |
+|---|---|---|---|---|---|---|
+| 0 | 89 | 6.003 | 6.276 | 23.5992 | 7.6107 | 14.5028 |
+| 1 | 112 | 8.5076 | 3.6348 | 27.5156 | 11.3065 | 28.8111 |
+| 2 | 141 | 79.0722 | 23.3902 | 15.0682 | 35.4836 | 32.7788 |
+| 3 | 178 | 8.2007 | 6.7488 | 0.9655 | 9.9379 | 4.0719 |
+| 4 | 225 | 1.0592 | 4.6813 | 8.8895 | 1.8414 | 7.7747 |
+| 5 | 283 | 0.7172 | 1.9353 | 2.0727 | 2.9377 | 5.1501 |
+| 6 | 356 | 0.6728 | 0.3266 | 1.6207 | 1.1891 | 3.3818 |
+| 7 | 449 | 1.027 | 0.5257 | 0.43 | 1.247 | 1.1153 |
+| 8 | 566 | 1.7581 | 0.5147 | 0.5786 | 1.7413 | 1.4556 |
+| 9 | 713 | 1.382 | 0.9561 | 1.1177 | 2.2766 | 1.7042 |
+| 10 | 898 | 1.5368 | 1.4796 | 0.8563 | 1.5684 | 1.9811 |
+| 11 | 1131 | 1.6926 | 1.0751 | 1.7554 | 1.3532 | 1.3779 |
+| 12 | 1426 | 1.1347 | 1.2918 | 1.0814 | 1.3948 | 0.7668 |
+| 13 | 1796 | 0.8985 | 1.6642 | 1.3033 | 0.9394 | 0.553 |
+| 14 | 2263 | 0.7926 | 2.123 | 1.0389 | 0.78 | 0.7034 |
+| 15 | 2851 | 0.5636 | 1.4032 | 0.606 | 0.5694 | 0.7435 |
+| 16 | 3592 | 0.628 | 1.7312 | 0.7946 | 0.4865 | 0.9098 |
+| 17 | 4526 | 0.7881 | 2.5777 | 0.9271 | 0.5261 | 0.7675 |
+| 18 | 5702 | 1.0067 | 3.0145 | 1.1495 | 0.6777 | 0.7034 |
+| 19 | 7184 | 1.0897 | 4.722 | 1.3506 | 0.9046 | 0.5226 |
+| 20 | 9051 | 1.0027 | 6.1719 | 2.0037 | 1.1956 | |
+| 21 | 11404 | 1.2846 | 7.1324 | 3.3845 | 1.5512 | |
+
+The lowest bands need the most, where few modes carry little velw: SMOKE's band 2 ×79 on 5 modes, SWISH's bands 0–2 ×14.5–32.8 (band 2 has one mode), HAMMERED's band 2 ×23.4 on one mode. KONSTAN's data already holds the exact correction, capped: at 100 % only its bands 0–3 change (×4 → ×7.6, ×11.3, ×35.5, ×9.9).
+
 #### Energy cascade
 
 After hard hits, energy moves from lower bands into higher ones over time, and the cymbal's total energy stays the same: the bloom and wash of a crash. The bands are the 22 one-third-octave bands of the band gains. It is a plugin mechanism (`docs/PORT_MAP.md`, plugin mechanism 10) and acts on the whole cymbal, whatever struck it.
@@ -360,7 +432,7 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
 
 ## Tuning files
 
-**SAVE...** writes the current preset's tuning to a file (default name `<preset>.tuning.json`). **LOAD...** reads one. A file for another preset is refused with a message. So is a file for another bake format, an unknown value, band gains that are not 22 numbers from −24 to +12 dB, or a ring length, edge capture curve, wander rate or `tau_ref_ms` that is not above 0. Cymbalis also saves each preset's tuning (if it differs from the bake) in its session state, and restores it with the session. A session without tuning, such as one saved by Cymbalis before it had the Tuning window, loads with every preset at its bake's values.
+**SAVE...** writes the current preset's tuning to a file (default name `<preset>.tuning.json`). **LOAD...** reads one. A file for another preset is refused with a message. So is a file for another bake format, an unknown value, band gains that are not 22 numbers from −24 to +12 dB, or a ring length, edge capture curve, wander rate or `tau_ref_ms` that is not above 0, or an `edge_band_correction` outside 0–100 %. Cymbalis also saves each preset's tuning (if it differs from the bake) in its session state, and restores it with the session. A session without tuning, such as one saved by Cymbalis before it had the Tuning window, loads with every preset at its bake's values.
 
 ```json
 {
@@ -388,6 +460,7 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
 ```
 
 - `cymbal` and `articulations` hold only the values that differ from the bake; loading a file applies these on top of the bake. A per-band cymbal value (`ring_length_bands`) is written as all 22 bands, lowest first, when any differs. `rehit_damp_weights` is written with every articulation's weight, by articulation id, when any differs. An articulation's `band_gains_db`, `attack_band_gains_db`, `onset_delay_ms` and `onset_speed` are each written as all 22 bands, lowest first, when any of them differs. The last three are the HARD layers; their SOFT layers, `attack_band_gains_db_soft`, `onset_delay_ms_soft` and `onset_speed_soft`, are written with them when either layer differs. A file without the `_soft` keys (from before the layers) gives both layers its values.
+- `edge_band_correction` is always written for the presets with a band envelope, even when it is the bake's. So a file without it is from before EDGE BAND CORRECTION and was tuned without it: it loads as 0 %, in the window, from a session and in `tools/apply_tuning.py`.
 - `effective` is a full copy of every value for reference; nothing reads it.
 - `entry` names the bake entry (slot) of an articulation.
 - `preset` is the preset id (`nova_ride`, `smoke_flat_ride`, `hammered_thin_ride`, `swish`, `raven`, `konstan`); `bake_format_version` is the bake's `format_version`.
@@ -410,6 +483,7 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
    - Each articulation's **brightness vs velocity** goes into the tuning block with its velocity curve, and so does its **stick click** where it differs from the slot's own values (its `stick_*` parameters, Python's defaults where it has none).
    - The **stereo** values go into the tuning block, and every mode's resulting left and right gains into the bake's `stereo` block (`gain_l`, `gain_r`). Centre and 100 % everywhere removes the block. The **right-channel high-pass** (on/off, frequency) goes into the tuning block.
    - **Every other value that differs from the bake's own** (the cymbal values and the velocity curves) goes into the bake's top-level `tuning` block: `{"format": "cymbalis-tuning", "version": 1, "applied_utc", "source", "cymbal": {...}, "articulations": {id: {"vel_0.6_db", "vel_0.3_db"}}}`. A per-band cymbal value is stored there as its 22 numbers.
+   - **EDGE BAND CORRECTION** goes into the tuning block like the other cymbal values (0 %, the neutral value, drops out). On a bake with NPZ edge data, a file without it gives 0 %.
    - A value equal to the bake's own drops out of the block, so applying the same file twice gives the same bake. Nothing else in the bake changes.
 3. Rebuild the plugin. Its bake loader (`plugin/dsp/Bake.cpp`, `Tuning.cpp`) applies the block (`applyTuning`):
    - the parameters;
