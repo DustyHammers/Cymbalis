@@ -399,6 +399,8 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
         envRingInv_.assign(size_t(z.numBands), 1.0);
         envRingKeepS_ = std::max(b.tuning.cymbal.edgeRingKeepMs, 0.0) * 1e-3;
         computeEnvRing();
+        envCorr_.assign(size_t(z.numBands), 1.0);
+        computeEnvCorr(b.tuning.cymbal.edgeBandCorrection);
     }
     if (p.contactPermode)
     {
@@ -422,6 +424,7 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
             for (auto* v : {&c.Er, &c.Ei, &c.fd, &c.em0, &c.em1, &c.emax})
                 v->assign(np, 0.0f);
             c.envRingInv.assign(size_t(z.numBands), 1.0);
+            c.envCorr.assign(size_t(z.numBands), 1.0);
         }
     }
 
@@ -2161,7 +2164,7 @@ void FastEngine::startEnvelope(Component& c, double velocity) noexcept
             }
         }
         envPeakS_[size_t(band)] = kPeak * z.frameDurS;
-        m *= c.envScale * (z.rmsCorrection.empty() ? 1.0 : z.rmsCorrection[size_t(band)]);
+        m *= c.envScale * c.envCorr[size_t(band)];
         std::fill(c.emax.begin() + bandStart_[size_t(band)], c.emax.begin() + bandEnd_[size_t(band)],
                   static_cast<float>(m));
     }
@@ -2187,8 +2190,7 @@ double FastEngine::envelopeAt(const Component& c, int band, double te) const noe
         const size_t i = size_t(k) * size_t(nb) + size_t(band);
         return r0[i] + (r1[i] - r0[i]) * c.envVt;
     };
-    const double corr = z.rmsCorrection.empty() ? 1.0 : z.rmsCorrection[size_t(band)];
-    return (at(k0) * (1.0 - fr) + at(k1) * fr) * c.envScale * corr;
+    return (at(k0) * (1.0 - fr) + at(k1) * fr) * c.envScale * c.envCorr[size_t(band)];
 }
 
 // The ring length on a band envelope (docs/TUNING.md, "Ring length"): the envelope time te
@@ -2220,6 +2222,21 @@ void FastEngine::computeEnvRing() noexcept
         }
     }
     envWindowStretch_ = std::min(xMax, 2.0);
+}
+
+// EDGE BAND CORRECTION (docs/TUNING.md): each envelope band's factor at `percent` %, the
+// bake's correction at 0 and the exact one at 100 exactly, and baked^(1 - a) x exact^a between.
+void FastEngine::computeEnvCorr(double percent) noexcept
+{
+    const EdgeNpz& z = bake_->edgeNpz;
+    const double a = std::min(std::max(percent, 0.0), kEdgeBandCorrectionMax) / kEdgeBandCorrectionMax;
+    envCorrPercent_ = percent;
+    for (size_t band = 0; band < envCorr_.size(); ++band)
+    {
+        const double baked = z.rmsCorrection.empty() ? 1.0 : z.rmsCorrection[band];
+        const double exact = z.exactCorrection[band];
+        envCorr_[band] = a == 0.0 ? baked : a == 1.0 ? exact : std::pow(baked, 1.0 - a) * std::pow(exact, a);
+    }
 }
 
 // The in-frame decay (line 892: exp(-ln1000 (t mod 20 ms) / T60)) at `elapsed` seconds
@@ -2993,6 +3010,8 @@ void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecayS
     envRingKeepS_ = std::max(c.edgeRingKeepMs, 0.0) * 1e-3; // from the next strike
     frameRestart_ = c.frameDecayRestart;
     envOn_ = envBake_ && c.edgeEnvelope; // from the next strike
+    if (envBake_ && c.edgeBandCorrection != envCorrPercent_)
+        computeEnvCorr(c.edgeBandCorrection); // from the next strike
     params_.edgeWanderDepth = c.edgeWanderDepth;
     params_.edgeWanderRate = c.edgeWanderRate;
 
@@ -3319,6 +3338,7 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     if (comp.envOn)
     {
         CYM_PROF_BEGIN(strikeEnvelope);
+        std::copy(envCorr_.begin(), envCorr_.end(), comp.envCorr.begin());
         startEnvelope(comp, velocity);
         if (comp.envRing)
         {

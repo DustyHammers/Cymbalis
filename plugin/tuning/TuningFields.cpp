@@ -94,6 +94,7 @@ const std::vector<Field>& cymbalFields()
         { "lf_bell_weight", "Bell weight", "", Group::lf, Needs::always, 0.0, 2.0, 2, &C::lfWBell, false, Scope::bell },
         { "lf_wander_rate_boost", "Wander-rate boost", "", Group::lf, Needs::always, 0.0, 2.0, 2, &C::lfWanderRateBoost, false },
 
+        { kEdgeBandCorrectionKey, "EDGE BAND CORRECTION (0: the bake's, 100: each band's level counted once)", "%", Group::edgeEnvelope, Needs::envelope, 0.0, kEdgeBandCorrectionMax, 0, &C::edgeBandCorrection, false, Scope::edge },
         { "edge_band_env_onset_s", "Window", "s", Group::edgeEnvelope, Needs::envelope, 0.1, 30.0, 2, &C::edgeEnvWindowS, false, Scope::edge },
 
         { "cascade_amount", "Amount (0 = off)", "", Group::cascade, Needs::always, 0.0, 1.0, 2, &C::cascadeAmount, false },
@@ -208,7 +209,8 @@ juce::var cymbalObject (const BakeData& b, const Tuning& t, bool onlyChanged)
         if (! applies (f.needs, b))
             continue;
         const double v = t.cymbal.*(f.member);
-        if (! onlyChanged || ! juce::exactlyEqual (v, b.tuning.cymbal.*(f.member)))
+        // EDGE BAND CORRECTION always: a file without it is older, and loads it as 0.
+        if (! onlyChanged || ! juce::exactlyEqual (v, b.tuning.cymbal.*(f.member)) || f.member == &CymbalTuning::edgeBandCorrection)
             o->setProperty (f.key, v);
     }
     if (applies (Needs::envelope, b)
@@ -323,6 +325,9 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
         return "This tuning file was made for bake format " + root["bake_format_version"].toString()
                + "; this preset's bake has format " + juce::String (b.formatVersion) + ".";
     Tuning t = b.tuning;
+    // A file from before EDGE BAND CORRECTION has none: 0 %, what it was tuned with.
+    if (auto* c = root["cymbal"].getDynamicObject(); applies (Needs::envelope, b) && (c == nullptr || ! c->hasProperty (kEdgeBandCorrectionKey)))
+        t.cymbal.edgeBandCorrection = 0.0;
     if (auto* c = root["cymbal"].getDynamicObject())
         for (const auto& p : c->getProperties())
         {
@@ -442,6 +447,8 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
         return "The tuning file's stereo_width must lie in 0 to 200 %.";
     if (! (t.cymbal.highPassHz >= kHighPassMinHz && t.cymbal.highPassHz <= kHighPassMaxHz))
         return "The tuning file's right_highpass_hz must lie in 20 to 300 Hz.";
+    if (! (t.cymbal.edgeBandCorrection >= 0.0 && t.cymbal.edgeBandCorrection <= kEdgeBandCorrectionMax))
+        return "The tuning file's edge_band_correction must lie in 0 to 100 %.";
     out = t;
     return {};
 }

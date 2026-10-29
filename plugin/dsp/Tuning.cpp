@@ -41,6 +41,7 @@ const std::vector<CymbalKey>& cymbalKeys()
         { "lf_bell_weight", &CymbalTuning::lfWBell },
         { "lf_wander_rate_boost", &CymbalTuning::lfWanderRateBoost },
         { "edge_band_env_onset_s", &CymbalTuning::edgeEnvWindowS },
+        { kEdgeBandCorrectionKey, &CymbalTuning::edgeBandCorrection },
         { "cascade_amount", &CymbalTuning::cascadeAmount },
         { "cascade_threshold_db", &CymbalTuning::cascadeThresholdDb },
         { "cascade_speed_ms", &CymbalTuning::cascadeSpeedMs },
@@ -456,6 +457,8 @@ Tuning parseTuningBlock(const json::Value& block, const BakeData& b, const Tunin
         throw std::runtime_error("tuning: stereo_width must lie in 0 to 200");
     if (! (t.cymbal.highPassHz >= kHighPassMinHz && t.cymbal.highPassHz <= kHighPassMaxHz))
         throw std::runtime_error("tuning: right_highpass_hz must lie in 20 to 300");
+    if (! (t.cymbal.edgeBandCorrection >= 0.0 && t.cymbal.edgeBandCorrection <= kEdgeBandCorrectionMax))
+        throw std::runtime_error("tuning: edge_band_correction must lie in 0 to 100");
     return t;
 }
 

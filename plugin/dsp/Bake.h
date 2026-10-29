@@ -88,6 +88,10 @@ struct EdgeNpz
     bool normalize = true;          // edge_velw_normalize
     double levelVelGainPower = 0.7; // exponent of the velocity level (line 1058)
     std::vector<double> rmsCorrection; // per band; empty = none (edge_rms_correction)
+    // EDGE BAND CORRECTION at 100 % (docs/TUNING.md): per band 1 / the geometric mean over
+    // the velocities of its velw norm, uncapped, scaled to an energy-weighted mean of 1 (1 for
+    // a band without modes). Computed at load from velw and bandIndex (exactBandCorrection).
+    std::vector<double> exactCorrection;
     // An edge band envelope file is set too (line 691), or the bake switches the envelope on
     // itself (edge_npz.envelope_set_by; Swish). The tuning can switch it (EDGE ONSET ENVELOPE).
     bool envelopeActive = false;

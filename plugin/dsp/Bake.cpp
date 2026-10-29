@@ -137,6 +137,53 @@ std::vector<size_t> shapeOf(const json::Value& v)
     return out;
 }
 
+// EDGE BAND CORRECTION at 100 % (docs/TUNING.md): an edge strike's band level is counted
+// once. Per band b and velocity row v the norm nm = sqrt(sum of velw^2 over its modes); g =
+// the geometric mean of nm over the rows with nm > 0; exact = 1 / g, uncapped, for a band
+// with modes and such a row (else 1); then every band is scaled so that
+// sqrt(sum g^2 exact^2 / sum g^2) = 1 over those bands.
+std::vector<double> exactBandCorrection(const EdgeNpz& z)
+{
+    const size_t nv = z.velocities.size(), n = z.bandIndex.size(), nb = size_t(z.numBands);
+    std::vector<double> g(nb, 0.0), exact(nb, 1.0), nm(nb);
+    std::vector<bool> valid(nb, false);
+    std::vector<bool> hasModes(nb, false);
+    for (size_t i = 0; i < n; ++i)
+        hasModes[size_t(z.bandIndex[i])] = true;
+    std::vector<double> logSum(nb, 0.0);
+    std::vector<int> rows(nb, 0);
+    for (size_t v = 0; v < nv; ++v)
+    {
+        std::fill(nm.begin(), nm.end(), 0.0);
+        for (size_t i = 0; i < n; ++i)
+            nm[size_t(z.bandIndex[i])] += z.velw[v * n + i] * z.velw[v * n + i];
+        for (size_t b = 0; b < nb; ++b)
+            if (nm[b] > 0.0)
+            {
+                logSum[b] += std::log(std::sqrt(nm[b]));
+                ++rows[b];
+            }
+    }
+    double sumG2 = 0.0, sumG2E2 = 0.0;
+    for (size_t b = 0; b < nb; ++b)
+    {
+        valid[b] = hasModes[b] && rows[b] > 0;
+        if (! valid[b])
+            continue;
+        g[b] = std::exp(logSum[b] / rows[b]);
+        exact[b] = 1.0 / g[b];
+        sumG2 += g[b] * g[b];
+        sumG2E2 += g[b] * g[b] * exact[b] * exact[b];
+    }
+    if (sumG2E2 > 0.0)
+    {
+        const double s = std::sqrt(sumG2 / sumG2E2);
+        for (auto& x : exact)
+            x *= s;
+    }
+    return exact;
+}
+
 // The NPZ edge block written by tools/bake_preset.py (602 and Bettis).
 void readEdgeNpz(const json::Value& z, size_t numModes, EdgeNpz& out, std::vector<std::string>& rep)
 {
@@ -169,6 +216,7 @@ void readEdgeNpz(const json::Value& z, size_t numModes, EdgeNpz& out, std::vecto
     out.levelVelGainPower = z.at("level_vel_gain_power").number();
     if (!z.at("rms_correction").isNull())
         out.rmsCorrection = readArray(z.at("rms_correction"), "edge_npz.rms_correction", {shape[2]}, rep);
+    out.exactCorrection = exactBandCorrection(out);
     out.envelopeActive = z.at("envelope_active").boolean();
     out.onsetS = z.at("onset_s").number();
     out.frameDecayPeriodS = z.at("frame_decay_period_s").number();

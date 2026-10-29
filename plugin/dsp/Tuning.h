@@ -112,6 +112,10 @@ struct CymbalTuning
     // EDGE ONSET ENVELOPE: whether an edge strike's level follows the NPZ band envelope for
     // the window (presets with NPZ edge data; the bake's edge_npz.envelope_active).
     bool edgeEnvelope = false;
+    // EDGE BAND CORRECTION, 0 .. 100 %: per band, the envelope strike's correction blends from
+    // the bake's edge_npz.rms_correction (0 %) to the exact one (100 %, EdgeNpz::exactCorrection)
+    // geometrically, baked^(1 - a) x exact^a with a = value / 100 (docs/TUNING.md).
+    double edgeBandCorrection = 0.0;
     // Energy cascade (FastEngine): while a band rings above the threshold, energy moves from
     // it into the bands above it. Amount 0: off. Bands are indices 0 .. 21 (as the band gains).
     double cascadeAmount = 0.0;        // 0 .. 1
@@ -169,6 +173,8 @@ constexpr const char* kWidthBandsKey = "stereo_width_bands";
 constexpr const char* kHighPassKey = "right_highpass"; // on / off; its frequency is right_highpass_hz
 constexpr double kPanMax = 100.0, kWidthMax = 200.0;
 constexpr double kHighPassMinHz = 20.0, kHighPassMaxHz = 300.0;
+constexpr const char* kEdgeBandCorrectionKey = "edge_band_correction"; // EDGE BAND CORRECTION, %
+constexpr double kEdgeBandCorrectionMax = 100.0;
 // The bake's per-mode stereo gains, written by tools/apply_tuning.py (BakeData::gainL/gainR).
 constexpr const char* kStereoKey = "stereo";
 constexpr const char* kRehitWeightsKey = "rehit_damp_weights"; // {articulation id: weight}

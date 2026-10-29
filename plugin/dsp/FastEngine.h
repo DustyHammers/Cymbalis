@@ -212,6 +212,9 @@ private:
         bool envRing = false;
         double envKeep = 0.06;
         std::vector<double> envRingInv;
+        // EDGE BAND CORRECTION at the strike (docs/TUNING.md): per envelope band, the factor of
+        // its band envelope (envCorr_ then; a later change applies from the next strike).
+        std::vector<double> envCorr;
         // Per mode, padded to nPad_. The arrays the control loop streams are float.
         std::vector<float> Br, Bi;      // amplitude at the segment's reference time
         std::vector<float> D;           // its own decay since then, at the next control point
@@ -317,6 +320,7 @@ private:
     double envelopeAt(const Component& c, int band, double te) const noexcept;
     double ringTime(const Component& c, int band, double te) const noexcept;
     void computeEnvRing() noexcept;
+    void computeEnvCorr(double percent) noexcept;
     void restartFrames(Component& c, double elapsed) noexcept;
 
     std::shared_ptr<const BakeData> bake_;
@@ -439,6 +443,11 @@ private:
     bool envRingOn_ = false;
     double envWindowStretch_ = 1.0;
     double envRingKeepS_ = 0.06;
+    // EDGE BAND CORRECTION (edge_band_correction, %): per envelope band the bake's
+    // rms_correction (1 without one) at 0 %, the exact correction at 100 %, and
+    // baked^(1 - a) x exact^a between (a = percent / 100). A strike takes them.
+    std::vector<double> envCorr_;
+    double envCorrPercent_ = 0.0;
 
     // Contact force at the host rate (contactLen_ x numModes, DC-normalised per mode) and
     // its response H = sum_j f_j step^(len - j): the state a unit coupling leaves at the

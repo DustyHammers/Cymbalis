@@ -42,7 +42,8 @@ tuning block it already has). Then:
     cascade_*, loud-band damping loud_damp_*, re-hit damping rehit_damp_* with its weights
     per articulation, rehit_damp_weights) have a neutral value as the bake's own (amount 0:
     off; weights 1), and so does the ring length's kept onset on edge envelopes
-    (edge_ring_keep_ms, 60 ms). A value equal to the bake's own drops out of the block, so applying the
+    (edge_ring_keep_ms, 60 ms) and EDGE BAND CORRECTION (edge_band_correction, 0 %; a file
+    without it, from before it, gives 0 % on a bake with NPZ edge data). A value equal to the bake's own drops out of the block, so applying the
     same file twice gives the same bake.
 
 Nothing else in the bake changes. Running it on resources/presets is a separate task, done
@@ -70,7 +71,7 @@ CYMBAL_KEYS = [
     'mf_bow_weight', 'mf_edge_weight', 'mf_bell_weight', 'mf_lo_hz', 'mf_hi_hz',
     'lf_sens_depth', 'lf_sens_tau', 'lf_min_scale', 'lf_max_scale', 'lf_cutoff_hz',
     'lf_bow_weight', 'lf_edge_weight', 'lf_bell_weight', 'lf_wander_rate_boost',
-    'edge_band_env_onset_s',
+    'edge_band_env_onset_s', 'edge_band_correction',
     'cascade_amount', 'cascade_threshold_db', 'cascade_speed_ms', 'cascade_release_ms',
     'cascade_spread', 'cascade_low_band', 'cascade_high_band',
     'loud_damp_amount', 'loud_damp_threshold_db', 'loud_damp_tilt',
@@ -81,6 +82,7 @@ CYMBAL_KEYS = [
 # bake's own) and allowed ranges; (lo, hi, whole) with whole = a whole number.
 PLUGIN_KEYS = {
     'edge_ring_keep_ms': (60.0, (0.0, 300.0, False)),
+    'edge_band_correction': (0.0, (0.0, 100.0, False)),
     'cascade_amount': (0.0, (0.0, 1.0, False)),
     'cascade_threshold_db': (-12.0, (-120.0, 40.0, False)),
     'cascade_speed_ms': (100.0, (0.1, 60000.0, False)),
@@ -101,6 +103,7 @@ WEIGHTS_KEY = 'rehit_damp_weights'
 WEIGHT_MIN, WEIGHT_MAX = 0.0, 2.0
 RESTART_KEY = 'edge_frame_decay_restart'
 ENVELOPE_KEY = 'edge_band_envelope'   # EDGE ONSET ENVELOPE: the bake's edge_npz.envelope_active
+CORRECTION_KEY = 'edge_band_correction'  # EDGE BAND CORRECTION, %: 0 if a file has none
 HIGHPASS_KEY = 'right_highpass'       # the right channel's 120 Hz high-pass on (the bake's own) or off
 # Per-band cymbal values (22 values, lowest band first): name -> (range, unit, neutral value).
 CYMBAL_BAND_KEYS = {
@@ -333,8 +336,13 @@ def main():
     shifts = {aid: slot_shift(bake['slots'][i]) for aid, i in ids.items()}
     attacks = {aid: slot_attack(bake, bake['slots'][i]) for aid, i in ids.items()}
 
-    # The file's changes on top of the bake's current values.
+    # The file's changes on top of the bake's current values. A file from before EDGE BAND
+    # CORRECTION has none (the Tuning window always writes it): 0 %, what it was tuned with.
+    if bake.get('edge_npz') and CORRECTION_KEY not in (tun.get('cymbal') or {}):
+        current[CORRECTION_KEY] = 0.0
     for key, v in (tun.get('cymbal') or {}).items():
+        if key == CORRECTION_KEY and not bake.get('edge_npz'):
+            fail(f'{CORRECTION_KEY}: the bake has no NPZ edge data')
         if key in (RESTART_KEY, ENVELOPE_KEY, HIGHPASS_KEY):
             if not isinstance(v, bool):
                 fail(f'{key} must be true or false')
