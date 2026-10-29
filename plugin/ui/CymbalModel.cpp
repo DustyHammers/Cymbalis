@@ -331,7 +331,11 @@ void Geometry::buildLum()
     const size_t lo = (size_t) at;
     const double p98 = part[lo] + (part[std::min (lo + 1, part.size() - 1)] - part[lo]) * (at - (double) lo);
     for (auto& v : lumTable)
+    {
         v /= p98;
+        if (shape.lumGamma < 1.0 || shape.lumGamma > 1.0) // lum_gamma (KONSTAN): compressed toward 1
+            v = std::pow (v, shape.lumGamma);
+    }
     hasLum = true;
 }
 

@@ -1,0 +1,95 @@
+{
+  "velocities": {
+    "bell": {},
+    "bow": {
+      "1": 0.49,
+      "2": 0.614,
+      "3": 0.719,
+      "4": 0.78,
+      "5": 0.953,
+      "6": 1.0
+    },
+    "edge": {
+      "1": 0.122,
+      "2": 0.265,
+      "3": 0.437,
+      "4": 0.672,
+      "5": 0.745,
+      "6": 0.828,
+      "7": 1.0
+    }
+  },
+  "spear_level_vs_bow_db": {
+    "bell": 4.72,
+    "edge": 13.5
+  },
+  "spear_level_note": "RMS of the first 500 ms of the loudest capture of each articulation, relative to the loudest bow; bell INFERRED: RAVEN's bell vs bow level (+4.72 dB)",
+  "bell_inferred": true,
+  "bell_shaping": {
+    "seed": 3,
+    "extra_tilt_db_per_oct": -2.25,
+    "scatter_scale": 1.1,
+    "top5_10_20_share": [
+      0.626,
+      0.745,
+      0.819
+    ],
+    "centroid_vs_bow": 0.828
+  },
+  "modes": 900,
+  "freq_range_hz": [
+    17.2197,
+    18765.2768
+  ],
+  "t60_band_factor": [
+    6.0,
+    1.225,
+    1.0,
+    3.144,
+    1.225,
+    1.308,
+    3.594,
+    2.029,
+    1.055,
+    1.21,
+    1.163,
+    1.228,
+    1.377,
+    1.185,
+    1.064,
+    0.967,
+    1.517,
+    1.486,
+    1.586,
+    1.532,
+    1.031,
+    0.973
+  ],
+  "t60_band_measured_s": [
+    68.038,
+    6.357,
+    32.734,
+    1.296,
+    14.271,
+    7.392,
+    6.451,
+    10.782,
+    13.138,
+    11.314,
+    8.925,
+    9.937,
+    9.026,
+    7.666,
+    7.267,
+    5.756,
+    4.573,
+    4.065,
+    3.517,
+    2.381,
+    1.492,
+    0.915
+  ],
+  "t60_fitted_fraction": 0.818,
+  "edge_envelope_frames": 356,
+  "edge_band_env_onset_s": 7.6
+}

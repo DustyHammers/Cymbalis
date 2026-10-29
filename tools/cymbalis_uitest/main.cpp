@@ -21,6 +21,7 @@
 //   shoulder  (after preset) click the BELL stick box, then SHOULDER  -> stick_hammered_thin_ride_BELL SHOULDER
 //   swish     click the CYMBAL box, then SWISH (the fourth)          -> preset swish
 //   raven     click the CYMBAL box, then RAVEN (the fifth)           -> preset raven
+//   konstan   click the CYMBAL box, then KONSTAN CRASH 18" (the sixth) -> preset konstan
 //   wheel     the scroll wheel over the five knobs, a note box, a stick box, the CYMBAL and
 //             MIDI CHANNEL boxes                                     -> state and parameters unchanged
 //
@@ -377,6 +378,13 @@ private:
             s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + 4.0f * 40.0f + 20.0f), wait };
             s.key = "preset";
             s.expected = "raven";
+        }
+        else if (name == "konstan")
+        {
+            // The same list; KONSTAN CRASH 18" is its sixth row.
+            s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + 5.0f * 40.0f + 20.0f), wait };
+            s.key = "preset";
+            s.expected = "konstan";
         }
         else
         {

@@ -90,7 +90,7 @@ target_link_libraries(CymbalisPackBake
 )
 
 set(CYMBALIS_PACKED_PRESETS)
-foreach(preset nova_ride smoke_flat_ride hammered_thin_ride swish raven)
+foreach(preset nova_ride smoke_flat_ride hammered_thin_ride swish raven konstan)
     set(json "${CMAKE_CURRENT_SOURCE_DIR}/resources/presets/${preset}.bake.json")
     set(packed "${CMAKE_CURRENT_BINARY_DIR}/presets/${preset}.bake.pack")
     add_custom_command(OUTPUT "${packed}"
