@@ -820,3 +820,57 @@ Every other key either has its default effect or is not read by the engine (`alp
 - **BOW peaks at 1.26 at velocity 1.0** before the output gain (99th percentile, with its trim): BOW is never capped, by the rule.
 - **The pk_t ramps have no effect** with the envelope on (as for Bettis): the edge pk_t and the edge velocity tilt are inaudible, and bow strikes never ramp. With EDGE ONSET ENVELOPE off, edge modes ramp in over up to 8.4 s (the edge pk_t's longest).
 - **The calibration does not see the envelope** (as for the 602, Bettis and Swish); the trims make up for the level.
+
+## Konstan Crash 18"
+
+Added 2026-10-28. Konstan was built from Kris's SPEAR captures (`docs/BASELINE_MANIFEST.md`, Konstan Crash 18") in the Bettis format, as Raven, and needs no new engine code: every mechanism it uses is one Raven already has. Its preset JSON differs from Raven's only in its data files, its edge envelope window (`edge_band_env_onset_s` 7.6 s, Raven 9.2 s) and its `edge_rms_correction`. It is baked with `nl_amount = 0`. NOVA RIDE, SMOKE FLAT RIDE, HAMMERED THIN RIDE, SWISH and RAVEN bake and play bit for bit as before (checked: re-baked with the new tools they are identical but for `created_utc` and the build machine's name, and `tools/cymbalis_identity` finds the engine's output identical to main's in memory for every preset, Konstan included).
+
+### What Konstan uses
+
+| | Konstan (`Konstan_Baseline1.json`) |
+|---|---|
+| Modes | 900, 17.2 Hz–18.8 kHz (none above 22.05 kHz). 700 seen in at least two bow captures; 200 seen only in the edge captures, with `exc` 0: they sound only on edge strikes, through the NPZ velw |
+| Velocity response | `hertz_vel_scale`, `tau_ref_ms` 0.2 (no participation tables) |
+| Edge strikes (`edge_frac > 0.1`) | NPZ velw coupling (7 velocities, 0.122–1.0) and the NPZ band envelope, switched on by the all-zero trigger file: 22 bands, exactly the plugin's thirds, 7.1 s of data (356 frames), 7.6 s window, `edge_rms_correction` per band, level exponent `vel_gain_power` 1.0 |
+| Bow and bell strikes | standard coupling with the neutral edge ratios (all 1) and the inferred bell ratios (below) as position weights |
+| Onset ramp data | bow pk_t, velocity-bracketed edge pk_t (7 velocities), edge velocity tilt (4 bands) |
+| Contact | none (`permode_contact` false, `tip_contact_ms` 0): instantaneous strikes |
+| MF / LF accumulators | as Raven (MF in boost mode, depth 0.4, tau 3 s, max 1.4, 500 Hz–4 kHz; bow 1, edge 1, bell 0.2. LF in boost mode, depth 0.2, tau 3 s, max 1.7, cutoff 1.5 kHz; bow 0.5, edge 1, bell 0.1) |
+| Wander, `vel_len_tilt`, onset gains, bloom, sparkle, stick click, attack noise, NL, edge level boost, rate jitter, hammering tilt | off |
+
+**The bell is inferred, not captured.** There are no bell captures. The builder (`build_preset.py --infer-bell --bell-seed 3`) gave the bell the bow's modes with the bell-against-bow tilt measured on NOVA RIDE, RAVEN and HAMMERED THIN RIDE (eased below 1.5 kHz), an extra tilt and a per-mode scatter from Nova's and Raven's bells, made purer than theirs; Kris chose it by ear (`docs/BASELINE_MANIFEST.md`). Its shaping values are in `data/konstan_build_info.json` (`bell_shaping`). The bell's level target is RAVEN's measured +4.72 dB above BOW. Nothing in the plugin treats it differently from a captured bell; real bell captures would replace it.
+
+### Bake and plugin
+
+- **Bake** (`tools/bake_preset.py --preset konstan`; `tools/ab_common.py` `PRESETS`): `BELL` (1.0), `BOW` (0.5) and `EDGE` (0.0), no overlays, and the copies `BELL_SHOULDER` (`bell_shoulder`, from `BELL`) and `BOW_SHOULDER` (`bow_shoulder`, from `BOW`) (`COPIED_ENTRIES`), as Raven. No `ENVELOPE_ON` entry: the trigger file switches the envelope on (`edge_npz.envelope_active` true). Every entry has the same calibration scalar, 0.0692.
+- **Preset** KONSTAN CRASH 18", after RAVEN (`plugin/SlotTable.h`): RAVEN's rows (`docs/UI_SPEC.md` section 8); its wireframe cymbal `kKonstanShape` (section 11), whose bell radius, 0.25, is the hit display's bell zone (section 10).
+
+### Live-engine decisions for Konstan
+
+1. **Slots.** As Raven: BELL and BELL2 play `bell` (TIP) or `bell_shoulder` (SHOULDER); BOW and BOW2 play `bow` (TIP) or `bow_shoulder` (SHOULDER); EDGE plays `edge` (SHOULDER, fixed). Every row with a choice starts on TIP. The copies are tip data, to be tuned by ear (`docs/TUNING.md`; they have the NOVA SHOULDER PROFILE button).
+2. **Level trims**, as for Raven: velocity 1.0, the mean level of the first 500 ms. BOW is matched to Nova BOW (tip) and never capped. BELL and EDGE go to their SPEAR targets (`data/konstan_build_info.json`: BELL +4.72 dB, RAVEN's measured value since the bell is inferred, and EDGE +13.5 dB above BOW, Edge V7 against Bow V6), capped where one hit (99th percentile of 1024 hits) would peak above 0.9 before the output gain. `bell_shoulder` takes BELL's target; the copies come out with their sources' trims. The tuning block (below) was applied first, so the cap is `--peak-limit 0.25365` (0.9 × 10^(−11/20), `docs/BUILDS.md`): `tools/cymbalis_trims --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target BELL=4.72 --spear-target BELL_SHOULDER=4.72 --spear-target EDGE=13.5 --peak-limit 0.25365`. Each bake entry records its target, cap and reason (`slots[].level_trim`).
+
+   | Entry | SPEAR target vs BOW | Trim | Level vs BOW | Peak of one hit with trim (99th percentile), before the output gain | Capped |
+   |---|---|---|---|---|---|
+   | BOW | 0 dB | +0.10 dB | 0 dB | 1.23 | no (BOW) |
+   | BOW_SHOULDER | 0 dB (BOW's) | +0.10 dB | 0 dB | 1.23 | no (BOW's target) |
+   | BELL | +4.72 dB | +25.92 dB | −0.04 dB | 0.90 | yes (+30.68 dB would peak at 1.56) |
+   | BELL_SHOULDER | +4.72 dB (BELL's) | +25.92 dB | −0.04 dB | 0.90 | yes (as BELL) |
+   | EDGE | +13.5 dB | +2.20 dB | +0.01 dB | 0.90 | yes (+15.69 dB would peak at 4.26) |
+
+   The project session's estimate (BELL about +19.5 dB, peaking at 0.44; EDGE capped about 11 dB above BOW) is what the trims tool gives on a bake without the tuning block: there Nova's BOW is measured with its −11 dB and Konstan's without, so every level against BOW reads 11 dB high. EDGE's trim, +2.20 dB, is the same either way; with the block in place BOW is matched to Nova and BELL meets the 0.9 cap first.
+3. **Tuning block** (`tools/apply_tuning.py`), as Raven's: `output_gain_db` −11.0, and on `bell`, `bow`, `bell_shoulder` and `bow_shoulder` the velocity curve that makes the Hertz law's v² linear (`vel_0.6_db` 4.437, `vel_0.3_db` 10.458). EDGE is not touched.
+4. **Seed.** The strike-phase sequence starts from Konstan's seed, 13 (Raven's too).
+
+### Things in the Konstan data or engine that look wrong (ported as they are)
+
+- **The BELL rows get far louder with BLEND POSITION 1.** BELL's trim (+25.92 dB) lifts the inferred bell, whose level is low because its energy sits in a few modes. Moving a BELL row toward the bow brings the bow's modes in under that trim: one velocity-1.0 hit (99th percentile of 64, after the output gain) peaks at 0.26 at the bell, 1.57 at blend 25 %, 2.94 at 50 % and 6.47 at 100 % (position 0.5, about 26 dB above BOW). The other presets' BELL rows rise too, but to 1.1–1.3 at 100 % (NOVA RIDE 1.13, HAMMERED THIN RIDE 1.12, RAVEN 1.31). At the default (blend 0) nothing changes. A strike every 24 ms through every entry, with in-between positions (`tools/cymbalis_identity`), peaks at 2.80 on Konstan against 0.64–1.07 on the others.
+- **Seven modes are below 20 Hz** (17.2–19.8 Hz; four of them with `exc` above 0, so bow strikes play them), and 19 below the lowest band (89 Hz), 13 of them excited. Raven's lowest mode is 34 Hz.
+- **One mode has T60 exactly 30 s** (106.2 Hz), which looks like the build's cap (Raven had five). Band 0's T60 calibration factor is exactly 6.0, against a measured band decay of 68 s, which looks like a limit too.
+- **The bell's centroid is 0.83 × the bow's** (`bell_shaping.centroid_vs_bow` 0.828), where the bell data's description says the tilt puts it at 0.7 ×.
+- **The NPZ envelopes are a little shorter than the window**: 7.1 s of data for a 7.6 s window; the last frame is held to the window's end, as for Raven.
+- **`edge_rms_correction` is at its limits in the lowest bands**: band 0 at ×4 (the cap), bands 1–4 at ×1.0. Band 2 (141–178 Hz) has no modes; band 1's one mode has no velw at velocities 0.265 and 0.745, band 4's two modes none at 0.122 and 0.265, and band 3's three none at 0.828, so the interpolation between captures fades those bands in and out with velocity.
+- **BELL and EDGE stay below their SPEAR targets** once capped (BELL −0.04 dB against +4.72, EDGE +0.01 dB against +13.5).
+- **BOW peaks at 1.23 at velocity 1.0** before the output gain (99th percentile, with its trim): BOW is never capped, by the rule.
+- **The pk_t ramps have no effect** with the envelope on (as for Raven): the edge pk_t and the edge velocity tilt are inaudible, and bow strikes never ramp. With EDGE ONSET ENVELOPE off, edge modes ramp in over up to 6.9 s (the edge pk_t's longest).
+- **The calibration does not see the envelope** (as for the other NPZ presets); the trims make up for the level.
