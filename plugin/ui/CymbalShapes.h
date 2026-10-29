@@ -5,8 +5,9 @@
 // and hammering approved by Kris on 2026-10-27; NOVA RIDE, HAMMERED THIN RIDE and SMOKE FLAT
 // RIDE changed on 2026-10-28 (gold lathing measured from the photos, Nova's new bell and bow,
 // Hammered's dents, Smoke's lighter gold), SWISH the same day (round 3: gold lathing, a
-// copper bell and band, shallow dents in three zones) and RAVEN (round 4: measured lathing,
-// power-hammer dents along a spiral). Data only: the mesh, the surface lines and the motion are
+// copper bell and band, shallow dents in three zones), RAVEN (round 4: measured lathing,
+// power-hammer dents along a spiral) and the new KONSTAN CRASH 18" (fully lathed, shallow
+// hand-hammered dents). Data only: the mesh, the surface lines and the motion are
 // built from it in CymbalModel.
 
 #include <array>
@@ -169,6 +170,26 @@ inline constexpr std::array<double, 200> kRavenPhotoLum { {
     130.5, 141.3, 140.9, 140.4,
 } };
 
+// KONSTAN's from Kris's reference photo (2026-10-28; left and right radii, rim 374.5 px; the
+// reference's KONSTAN_PHOTO_LUM).
+inline constexpr std::array<double, 200> kKonstanPhotoLum { {
+    255.0, 255.0, 255.0, 254.9, 254.2, 211.6, 82.0, 90.5, 91.9, 92.2, 90.8, 87.1, 85.2, 85.2,
+    84.7, 84.7, 85.7, 85.7, 85.5, 85.3, 93.4, 87.3, 85.3, 90.9, 80.9, 88.1, 91.6, 84.7,
+    92.7, 93.9, 99.3, 96.1, 103.2, 108.5, 112.0, 110.3, 108.0, 113.1, 116.5, 120.0, 118.7, 118.1,
+    125.1, 127.8, 131.7, 123.6, 123.6, 132.6, 120.8, 114.2, 117.2, 112.2, 101.9, 98.8, 94.8, 93.8,
+    90.1, 86.5, 83.8, 82.6, 82.8, 83.7, 81.4, 80.2, 79.5, 82.9, 80.1, 76.7, 77.6, 75.4,
+    75.0, 74.1, 81.8, 76.0, 77.7, 78.4, 75.8, 75.2, 76.4, 82.6, 76.8, 79.1, 79.7, 78.1,
+    78.8, 81.8, 81.6, 81.1, 79.2, 77.0, 76.2, 78.9, 80.7, 77.9, 78.2, 79.4, 79.4, 81.4,
+    82.2, 83.2, 81.6, 84.8, 85.5, 83.7, 85.1, 86.1, 85.3, 84.9, 82.6, 82.4, 82.7, 81.0,
+    78.2, 79.1, 80.1, 81.6, 81.8, 80.1, 80.3, 82.1, 82.3, 81.4, 83.6, 86.3, 83.8, 82.4,
+    84.6, 81.5, 82.4, 81.2, 79.4, 77.6, 80.6, 79.7, 80.2, 80.5, 81.1, 79.5, 85.3, 83.3,
+    81.2, 81.8, 86.4, 87.3, 89.7, 86.4, 85.2, 85.2, 86.5, 86.8, 85.8, 83.0, 85.2, 83.6,
+    83.0, 85.0, 88.9, 87.1, 87.5, 84.7, 88.6, 89.2, 86.3, 86.6, 88.1, 92.6, 94.9, 89.0,
+    95.9, 96.1, 92.0, 88.5, 95.6, 94.7, 91.2, 87.2, 87.8, 93.3, 91.5, 89.3, 88.0, 90.8,
+    91.5, 90.9, 87.6, 88.0, 95.0, 95.0, 91.4, 90.7, 91.7, 91.8, 93.9, 89.9, 87.5, 91.2,
+    91.4, 93.8, 90.0, 109.7,
+} };
+
 inline constexpr std::array<double, 200> kSmokePhotoLum { {
     0.0, 0.0, 0.0, 0.0, 0.0, 68.1, 100.8, 100.0, 89.0, 79.4, 81.0, 82.2, 82.5, 82.4,
     79.8, 78.0, 76.7, 77.0, 77.1, 81.6, 83.3, 85.9, 88.0, 90.2, 95.5, 101.5, 102.0, 102.3,
@@ -216,6 +237,7 @@ struct CymbalShape
     int numCopper = 0;
     const std::array<double, 200>* photoLum = nullptr; // the photo's brightness by radius
     int lumSmooth = 9;               // its moving-average window
+    double lumGamma = 1.0;           // the normalised brightness raised to this power, before the clip (lum_gamma)
     bool bellLine = true;            // the bell ring 2 units wide (else 1, like the other rings)
     bool dented = false;             // the hammering pressed into the mesh (Dents)
     Dents dents {};
@@ -356,6 +378,39 @@ inline constexpr CymbalShape kRavenShape = [] {
     s.dents.contrast = 12.0;
     s.dents.hasSpiral = true;
     s.dents.spiral = { 0.24, 0.93, 0.6, 1.5, 0.032, 0.018, 0.05, 0.065, 0.06, 0.04, 0.95, 1.05, 0.05, 0.0, 0.02, 0.05 };
+    return s;
+}();
+
+// KONSTAN CRASH 18" (2026-10-28, from Kris's reference photo): fully lathed, a small rounded
+// bell (its edge at 2.25", its top 1.6"), a gently falling bow; hand-hammered all over the bow in
+// shallow random dents, larger and more numerous towards the edge, the lathe lines running
+// through them. Its photo brightness is compressed (lumGamma 0.35) so the evenly lathed metal
+// stays bright. Drawn the same size as the 20" cymbals.
+inline constexpr CymbalShape kKonstanShape = [] {
+    CymbalShape s {};
+    s.key = "konstan";
+    s.R = 9.0;
+    s.bell = 0.25;
+    s.profile = { { { 0.0, 1.60 }, { 0.5, 1.56 }, { 1.1, 1.39 }, { 1.6, 1.08 }, { 2.0, 0.81 }, { 2.3, 0.70 },
+                    { 3.5, 0.58 }, { 5.5, 0.38 }, { 7.5, 0.16 }, { 9.0, 0.0 } } };
+    s.numProfile = 10;
+    s.hammer = Hammer::none;
+    s.hammerZone = { 0.30, 0.97 };
+    s.gold = { { { 0.03, 1.0, 1.0 } } };
+    s.numGold = 1;
+    s.zoneEdges = false;
+    s.goldStep = 0.028;
+    s.photoLum = &kKonstanPhotoLum;
+    s.lumGamma = 0.35;
+    s.bellLine = false;
+    s.dented = true;
+    s.dents.ringStep = 5;
+    s.dents.depth = 1.5;
+    s.dents.contrast = 9.0;
+    s.dents.zones = { { { 0.30, 0.70, 300, 0.016, 0.024, 0.5, 0.9, 0.8 },     // the bow
+                        { 0.70, 0.97, 260, 0.020, 0.032, 0.45, 0.85, 1.0 } } }; // towards the edge
+    s.dents.numZones = 2;
+    s.dents.linesFollowDents = true;
     return s;
 }();
 

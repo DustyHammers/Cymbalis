@@ -127,7 +127,8 @@ public:
     double height (double r) const noexcept;
     double slope (double r) const noexcept;
     // The photo's brightness at r (the reference's lum(): the table smoothed, divided by its 98th
-    // percentile over entries 5 .. 79, clipped to 0.3 .. 1.15); 1 without a table.
+    // percentile over entries 5 .. 79, raised to shape.lumGamma, clipped to 0.3 .. 1.15); 1
+    // without a table.
     double lum (double r) const noexcept;
     // The metal at r, and its factor (see bronze).
     Metal metalAt (double r, double& factor) const noexcept;
