@@ -6,6 +6,7 @@
 #include <juce_core/juce_core.h>
 
 #include "Bake.h"
+#include "EdgeProfiles.h"
 #include "ShoulderProfiles.h"
 
 #include <array>
@@ -124,6 +125,10 @@ const std::vector<CymbalBandField>& cymbalBandFields();
 // SWISH's bell_shoulder): the bell profile for bell_shoulder, the bow profile for
 // bow_shoulder and center_shoulder; nullptr for any other.
 const NovaShoulderProfile* novaShoulderProfile (const BakeData& bake, const juce::String& presetId, size_t slot);
+
+// RAVEN EDGE PROFILE (EdgeProfiles.h): the band gains, attack gains and attack time for NOVA
+// RIDE's edge articulation; nullptr for any other.
+const RavenEdgeProfile* ravenEdgeProfile (const BakeData& bake, const juce::String& presetId, size_t slot);
 
 constexpr const char* kFormat = "cymbalis-tuning";
 constexpr int kVersion = 1;

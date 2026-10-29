@@ -170,6 +170,13 @@ const NovaShoulderProfile* novaShoulderProfile (const BakeData& b, const juce::S
     return nullptr;
 }
 
+const RavenEdgeProfile* ravenEdgeProfile (const BakeData& b, const juce::String& presetId, size_t slot)
+{
+    if (presetId != "nova_ride" || slot >= b.slots.size() || b.slots[slot].id != "edge")
+        return nullptr;
+    return &kRavenEdgeProfile;
+}
+
 namespace
 {
 // 22 numbers within the spec's range from a JSON array into `out`; an error message, or empty.

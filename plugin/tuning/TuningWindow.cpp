@@ -666,6 +666,22 @@ void TuningPanel::rebuild()
                 place (*row);
                 buttonRows.push_back (std::move (row));
             }
+            // NOVA RIDE's edge: RAVEN's edge-minus-bow band gains from its SPEAR captures, on request.
+            if (const auto* profile = ravenEdgeProfile (*bake, cymbalis::kPresets[(size_t) preset].id, s))
+            {
+                auto row = std::make_unique<ButtonRow> ("Band gains, attack gains and time: RAVEN's edge minus bow (SPEAR)",
+                                                        "RAVEN EDGE PROFILE");
+                row->onClick = [this, s, profile] {
+                    change ([&] (Tuning& t) {
+                        t.articulations[s].bandDb = profile->bandDb;
+                        t.articulations[s].attackDb = profile->attackDb;
+                        t.articulations[s].attackDbSoft = profile->attackDb;
+                        t.articulations[s].attackMs = profile->attackMs;
+                    });
+                };
+                place (*row);
+                buttonRows.push_back (std::move (row));
+            }
         }
         // Per-band values of the chosen articulation: excitation gains and onset shifts.
         addHeader ("BANDS (one-third octave): EXCITATION GAIN, ATTACK AND ONSET SHIFT");
