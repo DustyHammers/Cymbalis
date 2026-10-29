@@ -136,15 +136,15 @@ Built 2026-10-28 in the project session from Kris's SPEAR captures (Bow V1-V6, E
 
 | File | MD5 |
 |---|---|
-| `presets/konstan/Konstan_Baseline1.json` | `081621b7b0abf8e3326b6e966e938517` |
-| `presets/konstan/data/konstan_bell_excitation_ratios.json` | `d625060fbac75a94d7866b02f0f75624` |
-| `presets/konstan/data/konstan_build_info.json` | `0218d55d9fc14b0cfed3696ccb0144dc` |
+| `presets/konstan/Konstan_Baseline1.json` | `d44f57e83c6e4054d635c231cbf8fbba` |
+| `presets/konstan/data/konstan_bell_excitation_ratios.json` | `e3f30a458241b02ef857ec216ee72c9c` |
+| `presets/konstan/data/konstan_build_info.json` | `8cf7eeb50edb8af9e6a912f89aba75fb` |
 | `presets/konstan/data/konstan_edge_benv_trigger.json` | `0fceb8dc0b3dde81810e0e175a75c43e` |
-| `presets/konstan/data/konstan_edge_excitation_ratios_neutral.json` | `e8e98e79b42bdf78304a10c84915249c` |
-| `presets/konstan/data/konstan_edge_npz_data.json` | `5e152d329e7a88b8438d25fa28164b36` |
+| `presets/konstan/data/konstan_edge_excitation_ratios_neutral.json` | `bbab82122d0a50692fc85fddbe0340ea` |
+| `presets/konstan/data/konstan_edge_npz_data.json` | `7453052c09394dfbd2541749538b502a` |
 | `presets/konstan/data/konstan_edge_vel_tilt.json` | `3aa0644f8767cfa5b1a8c31a6d6a0568` |
-| `presets/konstan/data/konstan_fingerprint.json` | `4f1323a76b712dd546fc30738163b1fd` |
-| `presets/konstan/data/konstan_pkt_data.json` | `d28a1fe990cc07ca61e445e5098e907b` |
+| `presets/konstan/data/konstan_fingerprint.json` | `3b9e45f9b407aa3d56f45034f2c36e3f` |
+| `presets/konstan/data/konstan_pkt_data.json` | `7585995edef9d32a778e7e4c1e3e2d2f` |
 
 ## Notes
 
@@ -155,3 +155,4 @@ Built 2026-10-28 in the project session from Kris's SPEAR captures (Bow V1-V6, E
 - SPEAR level targets in `data/konstan_build_info.json`: EDGE +13.5 dB above BOW (Edge V7 against Bow V6); BELL +4.72 dB, RAVEN's measured value (the bell is inferred).
 - Build-up (LF and MF) as Bettis and Swish; wander, stick click and NL off. No velocity tables: bell and bow use the hertz law (v^2).
 - No photo: the plugin draws the wireframe (`docs/ui/wireframe_reference.py`, `konstan`).
+- **Low wash (2026-10-29, Kris):** rebuilt with `build_preset.py --infer-bell --bell-seed 3 --low-wash --bell-from <the previous bell ratios>`. The edge's low bands are dense, drifting partials in the captures (30-170 per band below 400 Hz) against 0-3 modes in the first build, and the band level was counted twice (the velw coupling and the band envelope) with the correction capped at ±12 dB, so the edge sounded thin. Each band below 400 Hz now gets up to 24 modes from the edge clusters, as edge-only modes (exc 0), in the places of the weakest edge-only modes above 400 Hz; `edge_rms_correction` is exact (no cap), so the band envelope alone sets each band's level. The 833 modes kept from the first build keep their exc and T60, and the bell keeps its ratios (matched by frequency), so bow and bell strikes are unchanged. Edge strikes change.

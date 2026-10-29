@@ -25,17 +25,7 @@
   },
   "spear_level_note": "RMS of the first 500 ms of the loudest capture of each articulation, relative to the loudest bow; bell INFERRED: RAVEN's bell vs bow level (+4.72 dB)",
   "bell_inferred": true,
-  "bell_shaping": {
-    "seed": 3,
-    "extra_tilt_db_per_oct": -2.25,
-    "scatter_scale": 1.1,
-    "top5_10_20_share": [
-      0.626,
-      0.745,
-      0.819
-    ],
-    "centroid_vs_bow": 0.828
-  },
+  "bell_shaping": "kept from konstan_bell_excitation_ratios.json",
   "modes": 900,
   "freq_range_hz": [
     17.2197,
@@ -44,7 +34,7 @@
   "t60_band_factor": [
     6.0,
     1.225,
-    1.0,
+    1.225,
     3.144,
     1.225,
     1.308,
@@ -89,7 +79,7 @@
     1.492,
     0.915
   ],
-  "t60_fitted_fraction": 0.818,
+  "t60_fitted_fraction": 0.809,
   "edge_envelope_frames": 356,
   "edge_band_env_onset_s": 7.6
 }
