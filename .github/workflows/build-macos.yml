@@ -74,7 +74,7 @@ jobs:
           BENCH=build/tools/cymbalis_bench/cymbalis_bench
           {
             echo "### Fast engine CPU on ${CPU}"
-            for PRESET in nova_ride smoke_flat_ride hammered_thin_ride swish raven; do
+            for PRESET in nova_ride smoke_flat_ride hammered_thin_ride swish raven konstan; do
               BAKE="resources/presets/${PRESET}.bake.json"
               echo
               echo "#### ${PRESET}"
@@ -94,7 +94,7 @@ jobs:
         timeout-minutes: 15
         run: |
           BAKES=()
-          for PRESET in nova_ride smoke_flat_ride hammered_thin_ride swish raven; do
+          for PRESET in nova_ride smoke_flat_ride hammered_thin_ride swish raven konstan; do
             BAKES+=(--bake "resources/presets/${PRESET}.bake.json")
           done
           {
@@ -167,16 +167,17 @@ jobs:
 
       # Real mouse events through the AU and VST3 wrappers: EDGE's default note (64), then change
       # the MIDI channel, the slot notes (drag, menu, RESET DEFAULT, note list), a stick, the
-      # preset and a stick of that preset, then SWISH and RAVEN, in the editor, and check the
-      # plugin's saved state; the scroll wheel over the knobs and boxes must change nothing. Then click
-      # TUNING: the Tuning window must be visible, in front of the editor and attached to it;
+      # preset and a stick of that preset, then SWISH, RAVEN and KONSTAN CRASH 18", in the
+      # editor, and check the plugin's saved state; the scroll wheel over the knobs and boxes
+      # must change nothing. Then click TUNING: the Tuning window must be visible, in front of
+      # the editor and attached to it;
       # the wheel over its sliders and numeric boxes must change nothing; a second click hides
       # it (tools/cymbalis_uitest).
       - name: Editor mouse test (AU and VST3)
         timeout-minutes: 5
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
-          STEPS="edge channel drag reset none edgereset list stick preset shoulder swish raven wheel tuning wheeltuning tuningclose"
+          STEPS="edge channel drag reset none edgereset list stick preset shoulder swish raven konstan wheel tuning wheeltuning tuningclose"
           echo "--- VST3 ---"
           "$UITEST" "$PWD/$VST3" $STEPS
           echo "--- AU ---"
@@ -185,8 +186,8 @@ jobs:
       # The hit display (docs/UI_SPEC.md sections 10 and 11) with 16 hits moving the wireframe
       # cymbal at 1536 x 1024: processBlock at 44.1 kHz (256 and 128 samples, normal and
       # real-time audio thread) with the editor closed, open and idle, and open with the hits,
-      # each three times, then once more with HAMMERED THIN RIDE selected, once with SWISH and
-      # once with RAVEN (their dented meshes);
+      # each three times, then once more with HAMMERED THIN RIDE selected, and once each with
+      # SWISH, RAVEN and KONSTAN CRASH 18" (their dented meshes);
       # the CPU used besides; the editor's paint calls and the cymbal's OpenGL frames; and
       # once, that nothing is drawn after every hit is older than 6 s.
       # Printed to the log and the job summary only.

@@ -1,6 +1,6 @@
 #pragma once
 
-// The five articulation rows (docs/UI_SPEC.md sections 7-8) and the five presets
+// The five articulation rows (docs/UI_SPEC.md sections 7-8) and the six presets
 // (UI_SPEC section 8, docs/PORT_MAP.md "Live-engine decisions"). Each preset maps every
 // row to the bake entries it plays with TIP and with SHOULDER (by entry name in the
 // preset's bake, tools/bake_preset.py), or to none, says how its stick box shows and, where
@@ -76,7 +76,7 @@ struct PresetInfo
     const char* blend1Left = "BELL"; // the left end label of BLEND POSITION 1 (its right end: BOW)
 };
 
-constexpr int kNumPresets = 5;
+constexpr int kNumPresets = 6;
 
 // Every EDGE row is SHOULDER only. The other rows choose TIP or SHOULDER and start with the
 // stick of the articulation they played before the shoulder versions existed.
@@ -120,6 +120,15 @@ constexpr std::array<PresetInfo, kNumPresets> kPresets {{
     // Raven (20" dry ride): as Bettis, no overlays; one entry per position, and the shoulder
     // copies of the bell and bow.
     { "raven", "RAVEN", "raven.bake.json", &ui::kRavenShape, {{
+        { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
+        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
+        { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },
+        { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
+        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
+    }} },
+    // Konstan Crash 18": as Raven, no overlays; one entry per position (the bell inferred, not
+    // captured), and the shoulder copies of the bell and bow.
+    { "konstan", "KONSTAN CRASH 18\"", "konstan.bake.json", &ui::kKonstanShape, {{
         { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
         { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
         { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },
