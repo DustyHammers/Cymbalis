@@ -76,6 +76,8 @@ COPIED_ENTRIES = {
     'swish': [('BELL_SHOULDER', 'bell_shoulder', 'BELL', 1.0)],
     'raven': [('BELL_SHOULDER', 'bell_shoulder', 'BELL', 1.0),
               ('BOW_SHOULDER', 'bow_shoulder', 'BOW', 0.5)],
+    'konstan': [('BELL_SHOULDER', 'bell_shoulder', 'BELL', 1.0),
+                ('BOW_SHOULDER', 'bow_shoulder', 'BOW', 0.5)],
 }
 # Presets whose NPZ edge band envelope the bake switches on (docs/PORT_MAP.md, "Swish"):
 # preset -> the reason recorded in edge_npz.envelope_set_by.
