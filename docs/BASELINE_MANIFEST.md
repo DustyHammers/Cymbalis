@@ -136,7 +136,7 @@ Built 2026-10-28 in the project session from Kris's SPEAR captures (Bow V1-V6, E
 
 | File | MD5 |
 |---|---|
-| `presets/konstan/Konstan_Baseline1.json` | `d44f57e83c6e4054d635c231cbf8fbba` |
+| `presets/konstan/Konstan_Baseline1.json` | `b739e8237ead39404b97177dd87fa27d` |
 | `presets/konstan/data/konstan_bell_excitation_ratios.json` | `e3f30a458241b02ef857ec216ee72c9c` |
 | `presets/konstan/data/konstan_build_info.json` | `8cf7eeb50edb8af9e6a912f89aba75fb` |
 | `presets/konstan/data/konstan_edge_benv_trigger.json` | `0fceb8dc0b3dde81810e0e175a75c43e` |
@@ -155,4 +155,4 @@ Built 2026-10-28 in the project session from Kris's SPEAR captures (Bow V1-V6, E
 - SPEAR level targets in `data/konstan_build_info.json`: EDGE +13.5 dB above BOW (Edge V7 against Bow V6); BELL +4.72 dB, RAVEN's measured value (the bell is inferred).
 - Build-up (LF and MF) as Bettis and Swish; wander, stick click and NL off. No velocity tables: bell and bow use the hertz law (v^2).
 - No photo: the plugin draws the wireframe (`docs/ui/wireframe_reference.py`, `konstan`).
-- **Low wash (2026-10-29, Kris):** rebuilt with `build_preset.py --infer-bell --bell-seed 3 --low-wash --bell-from <the previous bell ratios>`. The edge's low bands are dense, drifting partials in the captures (30-170 per band below 400 Hz) against 0-3 modes in the first build, and the band level was counted twice (the velw coupling and the band envelope) with the correction capped at ±12 dB, so the edge sounded thin. Each band below 400 Hz now gets up to 24 modes from the edge clusters, as edge-only modes (exc 0), in the places of the weakest edge-only modes above 400 Hz; `edge_rms_correction` is exact (no cap), so the band envelope alone sets each band's level. The 833 modes kept from the first build keep their exc and T60, and the bell keeps its ratios (matched by frequency), so bow and bell strikes are unchanged. Edge strikes change.
+- **Low wash (2026-10-29, Kris):** rebuilt with `build_preset.py --infer-bell --bell-seed 3 --low-wash --bell-from <the previous bell ratios>`. The edge's low bands are dense, drifting partials in the captures (30-170 per band below 400 Hz) against 0-3 modes in the first build, and the band level was counted twice (the velw coupling and the band envelope) with the correction capped at ±12 dB, so the edge sounded thin. Each band below 400 Hz now gets up to 24 modes from the edge clusters, as edge-only modes (exc 0), in the places of the weakest edge-only modes above 400 Hz; `edge_rms_correction` keeps the builder's usual ±12 dB cap; the exact correction (each band's level counted once) is the plugin's EDGE BAND CORRECTION tuning value, computed from the velw at load. The 833 modes kept from the first build keep their exc and T60, and the bell keeps its ratios (matched by frequency), so bow and bell strikes are unchanged. Edge strikes change.
