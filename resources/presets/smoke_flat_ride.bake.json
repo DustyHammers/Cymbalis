@@ -491,10 +491,10 @@
       },
       "contact_force_python": null,
       "level_trim": {
-        "gain_db": -0.05,
+        "gain_db": -0.6,
         "spear_target_db": 2.8,
         "capped": false,
-        "measured_gain_db": -0.04777663215192396,
+        "measured_gain_db": -0.5979220234086018,
         "level_db": 2.8,
         "measured_by": "tools/cymbalis_trims (FastEngine)",
         "sample_rate": 44100,
@@ -502,12 +502,12 @@
         "strike_time_s": 0.0,
         "window_s": 0.5,
         "position": 0.0,
-        "rms": 0.16545298996528154,
+        "rms": 0.04968006787103342,
         "reference_slot": "Nova BOW",
-        "reference_rms": 0.1192026164949164,
-        "peak": 0.8958936667488285,
-        "first_hit_peak": 0.715775619120654,
-        "peak_limit": 0.9,
+        "reference_rms": 0.03359588448412165,
+        "peak": 0.25093095377857416,
+        "first_hit_peak": 0.19923102648819452,
+        "peak_limit": 0.25365,
         "peak_hits": 1024,
         "peak_percentile": 99.0,
         "peak_window_s": 1.0
@@ -1070,11 +1070,12 @@
     "format": "cymbalis-tuning",
     "version": 1,
     "applied_by": "tools/apply_tuning.py",
-    "applied_utc": "2026-10-25T16:58:24Z",
+    "applied_utc": "2026-10-30T00:04:27Z",
     "source": "smoke_flat_ride.tuning.json",
-    "source_date": "2026-10-25T00:00:00.000+00:00",
+    "source_date": "2026-10-29T00:00:00.000+00:00",
     "cymbal": {
-      "output_gain_db": -11.0
+      "output_gain_db": -11.0,
+      "edge_voice_from_bow": 100.0
     },
     "articulations": {}
   }
