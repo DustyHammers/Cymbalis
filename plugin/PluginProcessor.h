@@ -222,6 +222,8 @@ private:
         int preset = -1;
         cymbalis::Tuning tuning;
         std::vector<float> modeGains; // every slot's per-mode excitation gains, computed by the writer
+        std::vector<double> velw;     // the NPZ velw table for EDGE VOICE FROM BOW (presets with NPZ edge data)
+        bool velwValid = false;
         // The decay coefficients for its per-band ring lengths at the prepared rate, computed by
         // the writer when they changed (decayValid).
         cymbalis::FastEngine::DecaySet decay;

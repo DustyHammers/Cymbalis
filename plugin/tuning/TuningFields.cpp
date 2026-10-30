@@ -94,6 +94,7 @@ const std::vector<Field>& cymbalFields()
         { "lf_bell_weight", "Bell weight", "", Group::lf, Needs::always, 0.0, 2.0, 2, &C::lfWBell, false, Scope::bell },
         { "lf_wander_rate_boost", "Wander-rate boost", "", Group::lf, Needs::always, 0.0, 2.0, 2, &C::lfWanderRateBoost, false },
 
+        { kEdgeVoiceKey, "EDGE VOICE FROM BOW (0: the edge's own modes, 100: its long-ringing modes take the bow's)", "%", Group::edgeEnvelope, Needs::envelope, 0.0, kEdgeVoiceMax, 0, &C::edgeVoiceFromBow, false, Scope::edge },
         { "edge_band_env_onset_s", "Window", "s", Group::edgeEnvelope, Needs::envelope, 0.1, 30.0, 2, &C::edgeEnvWindowS, false, Scope::edge },
 
         { "cascade_amount", "Amount (0 = off)", "", Group::cascade, Needs::always, 0.0, 1.0, 2, &C::cascadeAmount, false },
@@ -129,6 +130,9 @@ const std::vector<ArticulationField>& articulationFields()
         { kStickHiKey, "STICK CLICK band high", "Hz", kStickHiMinHz, kStickHiMaxHz, 0, &A::stickHiHz },
         { kStickLenKey, "STICK CLICK length", "ms", kStickLenMinMs, kStickLenMaxMs, 1, &A::stickLenMs },
         { kStickDecayKey, "STICK CLICK decay", "ms", kStickDecayMinMs, kStickDecayMaxMs, 1, &A::stickDecayMs },
+        { kStickBowWeightKey, "STICK CLICK bow weight", "", 0.0, kStickWeightMax, 2, &A::stickBowWeight },
+        { kStickBellWeightKey, "STICK CLICK bell weight", "", 0.0, kStickWeightMax, 2, &A::stickBellWeight },
+        { kStickEdgeWeightKey, "STICK CLICK edge weight", "", 0.0, kStickWeightMax, 2, &A::stickEdgeWeight },
     };
     return fields;
 }
@@ -208,7 +212,8 @@ juce::var cymbalObject (const BakeData& b, const Tuning& t, bool onlyChanged)
         if (! applies (f.needs, b))
             continue;
         const double v = t.cymbal.*(f.member);
-        if (! onlyChanged || ! juce::exactlyEqual (v, b.tuning.cymbal.*(f.member)))
+        // EDGE VOICE FROM BOW always: a file without it is older, and loads it as 0.
+        if (! onlyChanged || ! juce::exactlyEqual (v, b.tuning.cymbal.*(f.member)) || f.member == &CymbalTuning::edgeVoiceFromBow)
             o->setProperty (f.key, v);
     }
     if (applies (Needs::envelope, b)
@@ -323,6 +328,9 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
         return "This tuning file was made for bake format " + root["bake_format_version"].toString()
                + "; this preset's bake has format " + juce::String (b.formatVersion) + ".";
     Tuning t = b.tuning;
+    // A file from before EDGE VOICE FROM BOW has none: 0 %, what it was tuned with.
+    if (auto* c = root["cymbal"].getDynamicObject(); applies (Needs::envelope, b) && (c == nullptr || ! c->hasProperty (kEdgeVoiceKey)))
+        t.cymbal.edgeVoiceFromBow = 0.0;
     if (auto* c = root["cymbal"].getDynamicObject())
         for (const auto& p : c->getProperties())
         {
@@ -442,6 +450,12 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
         return "The tuning file's stereo_width must lie in 0 to 200 %.";
     if (! (t.cymbal.highPassHz >= kHighPassMinHz && t.cymbal.highPassHz <= kHighPassMaxHz))
         return "The tuning file's right_highpass_hz must lie in 20 to 300 Hz.";
+    if (! (t.cymbal.edgeVoiceFromBow >= 0.0 && t.cymbal.edgeVoiceFromBow <= kEdgeVoiceMax))
+        return "The tuning file's edge_voice_from_bow must lie in 0 to 100 %.";
+    for (size_t s = 0; s < b.slots.size(); ++s)
+        for (double w : { t.articulations[s].stickBowWeight, t.articulations[s].stickBellWeight, t.articulations[s].stickEdgeWeight })
+            if (! (w >= 0.0 && w <= kStickWeightMax))
+                return "The tuning file's stick click weights must lie in 0 to 1.";
     out = t;
     return {};
 }

@@ -152,9 +152,11 @@ public:
     // nullptr: the bake's (BakeData::gainL, gainR). New gains go from one value to the other
     // over the next control block of the free phase (a change during a contact waits for its
     // end); while nothing rings they apply at once. The right-channel high-pass moves to new
-    // settings over 20 ms. Does not allocate.
+    // settings over 20 ms. velw is the NPZ velw table for t's EDGE VOICE FROM BOW
+    // (edgeVoiceVelw), computed off the audio thread; nullptr: the table stays. Does not
+    // allocate.
     void setTuning(const Tuning& t, const float* modeGains, const DecaySet* decay = nullptr,
-                   const double* gainL = nullptr, const double* gainR = nullptr) noexcept;
+                   const double* gainL = nullptr, const double* gainR = nullptr, const double* velw = nullptr) noexcept;
     // When each one-third-octave band of the slot's last strike peaks, in ms after the strike
     // (-1: the band has no energy in it, or the slot has not been struck): per mode the end of
     // its onset ramp, or with a band envelope when its envelope band peaks (after the onset
@@ -429,6 +431,10 @@ private:
     std::vector<int> bandStart_, bandEnd_; // mode range of each envelope band
     std::vector<uint8_t> npzShiftBand_;    // the onset-shift band of each envelope band
     std::vector<double> remapTable_;       // the NPZ velocities normalised to 0..1, ^ remapExp_ (line 1049)
+    // The NPZ velw table the edge coupling reads (velocities x modes): the bake's at EDGE VOICE
+    // FROM BOW 0 %, else edgeVoiceVelw at voicePercent_.
+    std::vector<double> velw_;
+    double voicePercent_ = 0.0;
     std::vector<double> bandVal0_, bandVal1_; // per band, scratch for one block
     std::vector<double> envPeakS_;            // per band: when the latest envelope strike's envelope peaks (s)
     // The ring length on the band envelope (docs/TUNING.md, "Ring length"): per band 1 / its

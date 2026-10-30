@@ -84,6 +84,10 @@ struct ArticulationTuning
     double stickLoHz = 2500.0, stickHiHz = 9000.0; // band-pass edges (Butterworth, order 2)
     double stickLenMs = 8.0;                       // length of the noise burst
     double stickDecayMs = 3.0;                     // its exponential decay
+    // The click's position weights: its level is gain x (bow fraction x bow weight + bell
+    // fraction x bell weight + edge fraction x edge weight) x velocity^1.7. The bake's values
+    // are the articulation's stick_*_weight parameters (Python's default 1 where it has none).
+    double stickBowWeight = 1.0, stickBellWeight = 1.0, stickEdgeWeight = 1.0;
 };
 
 constexpr int kMaxArticulations = 8;
@@ -112,6 +116,10 @@ struct CymbalTuning
     // EDGE ONSET ENVELOPE: whether an edge strike's level follows the NPZ band envelope for
     // the window (presets with NPZ edge data; the bake's edge_npz.envelope_active).
     bool edgeEnvelope = false;
+    // EDGE VOICE FROM BOW, 0 .. 100 % (presets with NPZ edge data): within each envelope band
+    // the edge's long-ringing modes take the bow's mode pattern (edgeVoiceVelw). 0: the bake's
+    // velw.
+    double edgeVoiceFromBow = 0.0;
     // Energy cascade (FastEngine): while a band rings above the threshold, energy moves from
     // it into the bands above it. Amount 0: off. Bands are indices 0 .. 21 (as the band gains).
     double cascadeAmount = 0.0;        // 0 .. 1
@@ -169,6 +177,8 @@ constexpr const char* kWidthBandsKey = "stereo_width_bands";
 constexpr const char* kHighPassKey = "right_highpass"; // on / off; its frequency is right_highpass_hz
 constexpr double kPanMax = 100.0, kWidthMax = 200.0;
 constexpr double kHighPassMinHz = 20.0, kHighPassMaxHz = 300.0;
+constexpr const char* kEdgeVoiceKey = "edge_voice_from_bow"; // EDGE VOICE FROM BOW, %
+constexpr double kEdgeVoiceMax = 100.0;
 // The bake's per-mode stereo gains, written by tools/apply_tuning.py (BakeData::gainL/gainR).
 constexpr const char* kStereoKey = "stereo";
 constexpr const char* kRehitWeightsKey = "rehit_damp_weights"; // {articulation id: weight}
@@ -200,6 +210,10 @@ constexpr const char* kStickLoKey = "stick_bp_lo";
 constexpr const char* kStickHiKey = "stick_bp_hi";
 constexpr const char* kStickLenKey = "stick_len_ms";
 constexpr const char* kStickDecayKey = "stick_decay_ms";
+constexpr const char* kStickBowWeightKey = "stick_bow_weight";
+constexpr const char* kStickBellWeightKey = "stick_bell_weight";
+constexpr const char* kStickEdgeWeightKey = "stick_edge_weight";
+constexpr double kStickWeightMax = 1.0;
 constexpr double kStickGainMax = 24.0;
 constexpr double kStickLoMinHz = 100.0, kStickLoMaxHz = 16000.0;
 constexpr double kStickHiMinHz = 200.0, kStickHiMaxHz = 20000.0;
@@ -254,6 +268,16 @@ bool hasStereo(const CymbalTuning& c) noexcept;
 // Does not allocate.
 void stereoGains(const CymbalTuning& c, const double* pickL, const double* pickR, const double* freqHz, int numModes,
                  double* outL, double* outR) noexcept;
+
+// EDGE VOICE FROM BOW (docs/TUNING.md). Each mode's weight alpha: per envelope band, over
+// the band's modes with exc_norm > 0 (at least 2; else 0), clamp((log2(T60 / median T60) + 1)
+// / 2, 0, 1) with the baked T60; 0 for a mode with exc_norm 0. Written to `alpha` (numModes).
+void edgeVoiceAlpha(const BakeData& b, double* alpha);
+// The NPZ velw table (velocities x numModes) at `percent` %: per velocity row and envelope
+// band, with a = percent / 100, each mode's new_i = (1 - a alpha_i) velw_i / |velw_band| +
+// a alpha_i exc_i / |exc_band|, scaled to the band's velw norm. A band whose velw or exc_norm
+// norm is 0 keeps its velw; at 0 % the table is the bake's. Off the audio thread (allocates).
+void edgeVoiceVelw(const BakeData& b, double percent, double* out);
 
 // Per-mode weights of the LF and MF scales (multi_strike_engine_v19.py lines 391-405).
 double lfSigmoid(double freqHz, double cutoffHz) noexcept;

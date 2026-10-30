@@ -696,9 +696,9 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
                 a.stickHiHz = get("stick_bp_hi", 9000.0);
                 a.stickLenMs = get("stick_len_ms", 8.0);
                 a.stickDecayMs = get("stick_decay_ms", 3.0);
-                slot.stickBowWeight = get("stick_bow_weight", 1.0);
-                slot.stickBellWeight = get("stick_bell_weight", 1.0);
-                slot.stickEdgeWeight = get("stick_edge_weight", 1.0);
+                a.stickBowWeight = get("stick_bow_weight", 1.0);
+                a.stickBellWeight = get("stick_bell_weight", 1.0);
+                a.stickEdgeWeight = get("stick_edge_weight", 1.0);
                 if (a.stickGain > 0.0)
                     rep.push_back("stick click  slot " + slot.name + fmt(": gain %.3g, ", a.stickGain) +
                                   fmt("%.0f-", a.stickLoHz) + fmt("%.0f Hz, ", a.stickHiHz) +
@@ -865,8 +865,16 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
             u.articulations[s].stickHiHz = b.slots[s].articulation.stickHiHz;
             u.articulations[s].stickLenMs = b.slots[s].articulation.stickLenMs;
             u.articulations[s].stickDecayMs = b.slots[s].articulation.stickDecayMs;
+            u.articulations[s].stickBowWeight = b.slots[s].articulation.stickBowWeight;
+            u.articulations[s].stickBellWeight = b.slots[s].articulation.stickBellWeight;
+            u.articulations[s].stickEdgeWeight = b.slots[s].articulation.stickEdgeWeight;
         }
         b.pythonT60S = b.t60S;
+        if (b.edgeNpz.present)
+        {
+            b.edgeNpz.voiceAlpha.resize(b.edgeNpz.bandIndex.size());
+            edgeVoiceAlpha(b, b.edgeNpz.voiceAlpha.data());
+        }
         b.pythonLfoRateHz = b.lfoRateHz;
         b.gainL = b.pickL;
         b.gainR = b.pickR;
