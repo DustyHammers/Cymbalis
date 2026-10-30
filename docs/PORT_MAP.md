@@ -571,6 +571,16 @@ These are plugin mechanisms; none is a port of Python. Kris tunes them by ear in
       - At ×2 they end at 17.3, 17.9, 32.3 and 27.9 s, within the doubled windows (18.4, 20, 40 and 40 s).
       - The frames held are as recorded. RAVEN holds 2–11 bands at every velocity, the loudest −52 to −73 dB below the strike's loudest band peak. SMOKE FLAT RIDE's 0.65 capture holds 9 bands, the loudest at −39 dB. HAMMERED THIN RIDE and SWISH hold one band at one velocity, below −70 dB.
 
+### The edge's voice (tuning)
+
+21. **The edge's long-ringing modes take the bow's pattern** (2026-10-29; `docs/TUNING.md`, "Edge voice from bow"). On the presets with NPZ edge data, an edge strike's per-mode levels are the NPZ velw table, which comes from matching the recorded edge partials to the preset's modes (lines 1043–1061). Those partials are dense and drift, so they land on other modes than the bow's: the edge's onset and band levels are right (Kris), but its tail rings on a different set of modes and sounds like a different cymbal. Of the 20 longest-ringing modes (coupling × √T60) the edge shares with the bow 8 on Bettis (the closest by ear), 3 on Konstan, 2 on the 602 and 0 on Swish. Python has nothing like it.
+    - **The value.** `edge_voice_from_bow` (0–100 %, per cymbal; not a host parameter). Within each envelope band, each mode's weight α grows with its baked T60 against the band's median (0 at half the median or less, 1 at twice or more, over the modes with `exc_norm` > 0); the long-ringing modes move from the edge's velw pattern to the bow's `exc_norm` pattern by a·α, and the band is scaled back to its velw norm at every NPZ velocity. The short-ringing modes keep the edge's pattern, and the envelopes are untouched, so the crash, the onset and the velocity behaviour stay as recorded.
+    - **Per strike.** `FastEngine` keeps its own velw table (the bake's at 0 %) and reads it in `npzCoupling` at the strike. A new value's table is computed off the audio thread and handed over with the other tuning values; it applies from the next strike.
+    - **At 100 %**, of the 20 longest-ringing edge modes, the bow's share 14 on the 602 (was 2), 6 on Swish (was 0) and 10 on Konstan (was 3). No band has α = 1 for most of its modes (the most is 43 %, the 602's 566–713 Hz band), so no band takes the bow's pattern whole.
+    - **Starting values.** The 602 and Konstan start at 100 %, Kris's choice by ear from renders in the project session (2026-10-29), with EDGE re-trimmed at 100 %; Bettis, Swish and Raven stay at 0 %.
+    - **Neutral.** At 0 % every preset plays bit for bit as before (`tools/cymbalis_identity`, in memory).
+    - **Cost.** None per strike or block: the table replaces the bake's. Per value change, one pass over the velw table on the message thread.
+
 ### Implementation notes for these decisions
 
 - **Calibration is applied when the strike is injected.** Python multiplies the whole output by one scalar at the end. With NL off, every remaining mechanism is linear in amplitude, so the two give the same result to within rounding.
@@ -669,6 +679,7 @@ Every other key the two presets set either has its default effect or is not read
    - The shoulder copies (602 `BOW_SHOULDER`, `CENTER_SHOULDER`; Bettis `BELL_SHOULDER`, `BOW_SHOULDER`) start with their sources' trims.
    - Each bake records, next to the trim (`slots[].level_trim`): `spear_target_db`, and where capped, `capped`, `capped_level_db`, `uncapped_gain_db` and `cap_reason`.
    - Measured with `tools/cymbalis_trims --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target SLOT=DB --peak-limit 0.9` (`docs/BUILDS.md`). Nova keeps its own trims (velocity 0.9, 1 s).
+   - The 602's EDGE was re-trimmed on 2026-10-29 with EDGE VOICE FROM BOW at 100 % in its tuning block (live-engine decision 21): −0.05 → −0.60 dB. The voiced edge is 0.55 dB louder over the first 500 ms (and over 2 s), so the trim comes down to keep its +2.8 dB target.
 
    | Preset | Entry | SPEAR target vs BOW | Trim | Level vs BOW | Peak of one hit with trim (99th percentile) | Capped |
    |---|---|---|---|---|---|---|
@@ -756,6 +767,11 @@ Every other key either has its default effect or is not read by the engine: `alp
    | EDGE | +4.7 dB | −3.44 dB | −0.77 dB | 0.90 | yes (+2.03 dB would peak at 1.69) |
 
 3. **Seed.** The strike-phase sequence starts from Swish's seed, 7.
+4. **The edge explodes on impact** (2026-10-29, Kris's choice by ear; `docs/TUNING.md`, "Per articulation"). Swish's edge envelopes start 4–10 dB under their peak in every band and swell to it over 120–480 ms: a velocity-1.0 edge hit's loudest 10 ms came about 200 ms in, 7.5 dB above its first 10 ms. It sounded like a synth envelope rather than a China's edge. Its stick click could not help: `stick_edge_weight` is 0 in every Swish slot. The click's position weights are now per-articulation tuning values, and Swish's `edge` has, in its tuning block and attack data:
+    - a stick click: edge weight 1.0, gain 6.0, band 1000–10000 Hz, 12 ms, decay 5 ms;
+    - attack gains, both layers: 0 dB for 89–356 Hz, +4 dB for 449–898 Hz, +8 dB for 1131–2263 Hz, +10 dB for 2851–11404 Hz, with an attack time of 25 ms.
+
+   A hard edge hit now peaks in its first 10 ms; after 0.43 s it plays bit for bit as before, so the recorded swell follows unchanged. EDGE's trim stays −3.44 dB: measured again it would be −3.88 dB (capped), since the click raises the hit's peak about 0.4 dB above the cap.
 
 ### Things in the Swish data or engine that look wrong (ported as they are)
 
@@ -767,7 +783,7 @@ Every other key either has its default effect or is not read by the engine: `alp
 - **pk_t runs up to 5 s**, bow and edge. With the envelope on, the edge pk_t and the edge velocity tilt are inaudible (the envelope skips the ramp, as for Bettis). With EDGE ONSET ENVELOPE off, some edge modes ramp in over up to 5 s. The bow pk_t (BowV4 at velocity 0.65) applies only to strikes blended towards the edge.
 - **The calibration does not see the envelope or the click.** The calibration strike (`_compute_calib_scalar`) is an edge strike without the band envelope and without `_add_transient`; the trims make up for the level.
 - **BOW (tip) peaks at 1.45 at velocity 1.0** (99th percentile, with its trim) before the Volume knob, from the click on top of the strike. BOW is never capped, by the rule; BOW_SHOULDER, without the click, peaks at 1.11.
-- **The click is bow-only.** `stick_bell_weight` and `stick_edge_weight` are 0: there is no click at the bell or the edge, and a bow row blended towards the edge clicks less, with its bow fraction.
+- **The click is bow-only** in the data. `stick_bell_weight` and `stick_edge_weight` are 0: there is no click at the bell, and a bow row blended towards the edge clicks less, with its bow fraction. The edge has its own click since 2026-10-29 (decision 4).
 
 ## Raven (20" dry ride)
 
@@ -859,7 +875,7 @@ Added 2026-10-28. Konstan was built from Kris's SPEAR captures (`docs/BASELINE_M
    | EDGE | +13.5 dB | +2.20 dB | +0.01 dB | 0.90 | yes (+15.69 dB would peak at 4.26) |
 
    The project session's estimate (BELL about +19.5 dB, peaking at 0.44; EDGE capped about 11 dB above BOW) is what the trims tool gives on a bake without the tuning block: there Nova's BOW is measured with its −11 dB and Konstan's without, so every level against BOW reads 11 dB high. EDGE's trim, +2.20 dB, is the same either way; with the block in place BOW is matched to Nova and BELL meets the 0.9 cap first.
-3. **Tuning block** (`tools/apply_tuning.py`), as Raven's: `output_gain_db` −11.0, and on `bell`, `bow`, `bell_shoulder` and `bow_shoulder` the velocity curve that makes the Hertz law's v² linear (`vel_0.6_db` 4.437, `vel_0.3_db` 10.458). EDGE is not touched.
+3. **Tuning block** (`tools/apply_tuning.py`), as Raven's: `output_gain_db` −11.0, and on `bell`, `bow`, `bell_shoulder` and `bow_shoulder` the velocity curve that makes the Hertz law's v² linear (`vel_0.6_db` 4.437, `vel_0.3_db` 10.458). EDGE is not touched. Since 2026-10-29 also `edge_voice_from_bow` 100 (live-engine decision 21), with EDGE re-trimmed at 100 %: +2.20 → +3.33 dB, capped as before (the voiced edge is 1.46 dB quieter over the first 500 ms and peaks lower).
 4. **Seed.** The strike-phase sequence starts from Konstan's seed, 13 (Raven's too).
 
 ### Things in the Konstan data or engine that look wrong (ported as they are)
@@ -870,7 +886,7 @@ Added 2026-10-28. Konstan was built from Kris's SPEAR captures (`docs/BASELINE_M
 - **The bell's centroid is 0.83 × the bow's** (`bell_shaping.centroid_vs_bow` 0.828), where the bell data's description says the tilt puts it at 0.7 ×.
 - **The NPZ envelopes are a little shorter than the window**: 7.1 s of data for a 7.6 s window; the last frame is held to the window's end, as for Raven.
 - **`edge_rms_correction` is at its limits in the lowest bands**: band 0 at ×4 (the cap), bands 1–4 at ×1.0. Band 2 (141–178 Hz) has no modes; band 1's one mode has no velw at velocities 0.265 and 0.745, band 4's two modes none at 0.122 and 0.265, and band 3's three none at 0.828, so the interpolation between captures fades those bands in and out with velocity.
-- **BELL and EDGE stay below their SPEAR targets** once capped (BELL −0.04 dB against +4.72, EDGE +0.01 dB against +13.5).
+- **BELL and EDGE stay below their SPEAR targets** once capped (BELL −0.04 dB against +4.72, EDGE −0.32 dB against +13.5 at EDGE VOICE FROM BOW 100 %).
 - **BOW peaks at 1.23 at velocity 1.0** before the output gain (99th percentile, with its trim): BOW is never capped, by the rule.
 - **The pk_t ramps have no effect** with the envelope on (as for Raven): the edge pk_t and the edge velocity tilt are inaudible, and bow strikes never ramp. With EDGE ONSET ENVELOPE off, edge modes ramp in over up to 6.9 s (the edge pk_t's longest).
 - **The calibration does not see the envelope** (as for the other NPZ presets); the trims make up for the level.
