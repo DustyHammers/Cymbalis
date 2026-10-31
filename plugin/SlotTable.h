@@ -78,16 +78,16 @@ struct PresetInfo
 
 constexpr int kNumPresets = 6;
 
-// Every EDGE row is SHOULDER only. The other rows choose TIP or SHOULDER and start with the
-// stick of the articulation they played before the shoulder versions existed.
+// Every EDGE row is SHOULDER only. The other rows choose TIP or SHOULDER: in every preset BELL
+// and BOW start on TIP, BELL2 and BOW2 on SHOULDER (UI_SPEC section 8; Kris, 2026-10-31).
 constexpr std::array<PresetInfo, kNumPresets> kPresets {{
     // Nova Ride bake entries: BELL bell_shoulder, BOW bow_tip, EDGE edge (a copy of
     // bow_shoulder played at the edge), BELL2 bell_tip, BOW2 bow_shoulder.
     { "nova_ride", "NOVA RIDE", "nova_ride.bake.json", &ui::kNovaShape, {{
-        { "BELL2", "BELL", StickDisplay::choice, Stick::shoulder },
+        { "BELL2", "BELL", StickDisplay::choice, Stick::tip },
         { "BOW", "BOW2", StickDisplay::choice, Stick::tip },
         { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },
-        { "BELL2", "BELL", StickDisplay::choice, Stick::tip },
+        { "BELL2", "BELL", StickDisplay::choice, Stick::shoulder },
         { "BOW", "BOW2", StickDisplay::choice, Stick::shoulder },
     }} },
     // 602: no bell. The bell rows play center (a copy of the bow, tuned on its own) and are
@@ -97,16 +97,16 @@ constexpr std::array<PresetInfo, kNumPresets> kPresets {{
         { "CENTER", "CENTER_SHOULDER", StickDisplay::choice, Stick::tip, "CENTER", 1.5f },
         { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
         { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },
-        { "CENTER", "CENTER_SHOULDER", StickDisplay::choice, Stick::tip, "CENTER2", 0.0f },
-        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
+        { "CENTER", "CENTER_SHOULDER", StickDisplay::choice, Stick::shoulder, "CENTER2", 0.0f },
+        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::shoulder },
     }}, "CENTER" },
     // Bettis: no overlays; one entry per position, and the shoulder copies of the bell and bow.
     { "hammered_thin_ride", "HAMMERED THIN RIDE", "hammered_thin_ride.bake.json", &ui::kHammeredShape, {{
         { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
         { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
         { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },
-        { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
-        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
+        { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::shoulder },
+        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::shoulder },
     }} },
     // Swish: BELL the base preset at the bell (TIP) and BELL_SHOULDER its copy; BOW and
     // BOW_SHOULDER the bow_tip and bow_shoulder overlays; EDGE the base preset at the edge.
@@ -114,8 +114,8 @@ constexpr std::array<PresetInfo, kNumPresets> kPresets {{
         { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
         { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
         { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },
-        { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
-        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
+        { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::shoulder },
+        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::shoulder },
     }} },
     // Raven (20" dry ride): as Bettis, no overlays; one entry per position, and the shoulder
     // copies of the bell and bow.
@@ -123,8 +123,8 @@ constexpr std::array<PresetInfo, kNumPresets> kPresets {{
         { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
         { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
         { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },
-        { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
-        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
+        { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::shoulder },
+        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::shoulder },
     }} },
     // Konstan Crash 18": as Raven, no overlays; one entry per position (the bell inferred, not
     // captured), and the shoulder copies of the bell and bow.
@@ -132,8 +132,8 @@ constexpr std::array<PresetInfo, kNumPresets> kPresets {{
         { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
         { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
         { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },
-        { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
-        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
+        { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::shoulder },
+        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::shoulder },
     }} },
 }};
 

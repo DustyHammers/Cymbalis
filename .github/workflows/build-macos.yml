@@ -207,14 +207,16 @@ jobs:
           echo "--- x86_64 slice under Rosetta ---"
           arch -x86_64 auval -strict -v $AU_TYPE $AU_SUBTYPE $AU_MANUFACTURER
 
-      # Real mouse events through the AU and VST3 wrappers: EDGE's default note (64), then change
+      # Real mouse events through the AU and VST3 wrappers: EDGE's default note (64) and the
+      # default sticks of every preset (BELL and BOW TIP, BELL2 and BOW2 SHOULDER), then change
       # the MIDI channel, the slot notes (drag, menu, RESET DEFAULT, note list), a stick, the
       # preset and a stick of that preset, then SWISH, RAVEN and KONSTAN CRASH 18", in the
       # editor, and check the plugin's saved state; the scroll wheel over the knobs and boxes
       # must change nothing. Then click TUNING: the Tuning window must be visible, in front of
       # the editor and attached to it;
       # the wheel over its sliders and numeric boxes must change nothing; EDGE VOICE FROM BOW
-      # must move on KONSTAN, RAVEN, SWISH, HAMMERED and SMOKE; NOVA's first articulation's
+      # must move on KONSTAN, RAVEN, SWISH, HAMMERED and SMOKE; SWISH's bow_shoulder must take
+      # NOVA SHOULDER PROFILE's bow profile, and NOVA RIDE must have no such button; NOVA's first articulation's
       # three STICK CLICK weights must move; HIT VARIATION's switch must flip and its two spreads
       # move (NOVA); a tuning file saved and loaded back (through
       # stand-ins for the file panels) must hold and restore the tuning; a second click on
@@ -223,7 +225,7 @@ jobs:
         timeout-minutes: 5
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
-          STEPS="edge channel drag reset none edgereset list stick preset shoulder swish raven konstan wheel tuning wheeltuning voice raven voice swish voice preset voice smoke voice nova clickweights hitvariation savetuning loadtuning tuningclose"
+          STEPS="edge sticks channel drag reset none edgereset list stick preset shoulder swish raven konstan wheel tuning wheeltuning voice raven voice swish voice profile preset voice smoke voice nova noprofile clickweights hitvariation savetuning loadtuning tuningclose"
           echo "--- VST3 ---"
           "$UITEST" "$PWD/$VST3" $STEPS
           echo "--- AU ---"

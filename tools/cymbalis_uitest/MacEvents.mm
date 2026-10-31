@@ -219,6 +219,7 @@ void clickAtScreenPoint (NSWindow* window, NSPoint p)
     const NSPoint loc = [window convertRectFromScreen: NSMakeRect (p.x, p.y, 0.0, 0.0)].origin;
     [NSApp activateIgnoringOtherApps: YES];
     [window makeKeyAndOrderFront: nil];
+    uncover (window, loc);
     post (window, NSEventTypeMouseMoved, loc);
     post (window, NSEventTypeLeftMouseDown, loc);
     post (window, NSEventTypeLeftMouseUp, loc);
@@ -385,6 +386,17 @@ juce::String clickTuningButton (juce::Component& editor, const juce::String& tex
     const NSRect f = [button accessibilityFrame];
     clickAtScreenPoint (tuning, NSMakePoint (NSMidX (f), NSMidY (f)));
     return {};
+}
+
+juce::String tuningShows (juce::Component& editor, const juce::String& text)
+{
+    juce::String error;
+    NSWindow* tuning = visibleTuningWindow (editor, error);
+    if (tuning == nil)
+        return error;
+    if (scrollToShow (tuning, [NSString stringWithUTF8String: text.toRawUTF8()], false, error) != nil)
+        return "shown";
+    return error.startsWith ("nothing shows") ? juce::String ("none") : error;
 }
 
 void answerFilePanels (const juce::File& file)

@@ -10,13 +10,15 @@
 // plugin's saved state through the host API and checks the result:
 //
 //   edge      nothing: the EDGE note of a new instance                -> note_EDGE 64
+//   sticks    nothing: the sticks of a new instance, every preset     -> BELL and BOW TIP,
+//             BELL2 and BOW2 SHOULDER (CENTER and CENTER2 on SMOKE FLAT RIDE)
 //   channel   click the MIDI CHANNEL box, then channel 5 in the grid  -> midiChannel 5
 //   drag      drag the BOW note box up by 40 design units             -> note_BOW 67
 //   reset     click the BOW note box, then RESET DEFAULT              -> note_BOW 62
 //   none      click the BELL note box, then NONE                      -> note_BELL -1
 //   edgereset click the EDGE note box, NONE, then again, RESET DEFAULT -> note_EDGE 64
 //   list      click the BELL2 note box, then the note row below C#3   -> note_BELL2 62
-//   stick     click the BELL stick box, then TIP                      -> stick_BELL TIP
+//   stick     click the BELL stick box, then SHOULDER                 -> stick_BELL SHOULDER
 //   preset    click the CYMBAL box, then HAMMERED THIN RIDE            -> preset hammered_thin_ride
 //   shoulder  (after preset) click the BELL stick box, then SHOULDER  -> stick_hammered_thin_ride_BELL SHOULDER
 //   swish     click the CYMBAL box, then SWISH (the fourth)          -> preset swish
@@ -55,6 +57,11 @@
 //
 // The panels are not shown: in this process they answer at once (MacEvents.h).
 //
+//   profile      (on SWISH) click NOVA SHOULDER PROFILE, the first in the list: bow_shoulder's
+//                                                                    -> bow_shoulder's band gains,
+//                attack gains and attack time are Nova's bow profile (ShoulderProfiles.h)
+//   noprofile    (on NOVA RIDE) look for NOVA SHOULDER PROFILE down the list -> none
+//
 //   nova      click the CYMBAL box, then NOVA RIDE (the first)       -> preset nova_ride
 //   smoke     click the CYMBAL box, then SMOKE FLAT RIDE (the second) -> preset smoke_flat_ride
 //
@@ -76,6 +83,8 @@
 
 #include "HitTiming.h"
 #include "MacEvents.h"
+#include "ShoulderProfiles.h"
+#include "SlotTable.h"
 
 namespace
 {
@@ -274,6 +283,17 @@ private:
         return [this, x, y] { cymbalis::uitest::click (*editor, at (x, y)); };
     }
 
+    // An action that is run again at each tick until `done` holds or `ticks` ticks have
+    // passed; `*waited` gets the ticks it took. For results that arrive asynchronously (the
+    // file panels' answers), so that a slow machine is waited for rather than failed.
+    std::function<void()> waitUntil (std::function<bool()> done, int ticks, std::shared_ptr<int> waited)
+    {
+        return [this, done, ticks, waited] {
+            if (! done() && ++*waited < ticks)
+                --actionIndex; // this action again at the next tick
+        };
+    }
+
     // The saved session settings and every parameter's value, through the host API.
     juce::String snapshot()
     {
@@ -346,6 +366,30 @@ private:
             s.key = "note_EDGE";
             s.expected = "64";
         }
+        else if (name == "sticks")
+        {
+            // A new instance: in every preset BELL and BOW start on TIP, BELL2 and BOW2 on
+            // SHOULDER (UI_SPEC section 8). NOVA RIDE's keys have no preset id (stick_BELL).
+            s.actions = { wait };
+            s.key = "sticks";
+            s.expected = "defaults";
+            s.probe = [this] {
+                juce::String wrong;
+                std::unique_ptr<juce::XmlElement> xml (juce::parseXML (sessionNow()));
+                if (xml == nullptr)
+                    return juce::String ("no session");
+                for (int k = 0; k < cymbalis::kNumPresets; ++k)
+                    for (const char* row : { "BELL", "BOW", "BELL2", "BOW2" })
+                    {
+                        const auto key = juce::String ("stick_") + (k == 0 ? juce::String() : juce::String (cymbalis::kPresets[(size_t) k].id) + "_") + row;
+                        const juce::String expected = juce::String (row).endsWith ("2") ? "SHOULDER" : "TIP";
+                        const auto value = xml->getStringAttribute (key, "?");
+                        if (value != expected)
+                            wrong << " " << key << "=" << value;
+                    }
+                return wrong.isEmpty() ? juce::String ("defaults") : "not the defaults:" + wrong;
+            };
+        }
         else if (name == "list")
         {
             s.actions = { click (1457.0f, 392.0f), wait, click (1420.0f, listRowBelowCurrentY (405.0f)), wait };
@@ -354,9 +398,10 @@ private:
         }
         else if (name == "stick")
         {
-            s.actions = { click (1314.0f, 152.0f), wait, click (1314.0f, 165.0f + 3.0f + 8.0f + 17.0f), wait };
+            // The TIP / SHOULDER popup below the stick box: SHOULDER second (NOVA's BELL starts on TIP).
+            s.actions = { click (1314.0f, 152.0f), wait, click (1314.0f, 165.0f + 3.0f + 8.0f + 32.0f + 16.0f), wait };
             s.key = "stick_BELL";
-            s.expected = "TIP";
+            s.expected = "SHOULDER";
         }
         else if (name == "shoulder")
         {
@@ -500,18 +545,57 @@ private:
                 return moved ? juce::String ("moved") : values;
             };
         }
+        else if (name == "profile")
+        {
+            s.actions = { [this] { actionError = cymbalis::uitest::clickTuningButton (*editor, "NOVA SHOULDER PROFILE", true); },
+                          wait, wait };
+            s.key = "bow_shoulder";
+            s.expected = "bow profile";
+            s.probe = [this] {
+                if (actionError.isNotEmpty())
+                    return actionError;
+                const auto a = currentTuning (sessionNow())["effective"]["articulations"]["bow_shoulder"];
+                const auto& p = cymbalis::tuning::kNovaShoulderBow;
+                auto same = [] (const juce::var& v, const std::array<double, cymbalis::kExcitationBands>& want) {
+                    const auto* arr = v.getArray();
+                    if (arr == nullptr || arr->size() != (int) want.size())
+                        return false;
+                    for (int j = 0; j < arr->size(); ++j)
+                        if (std::abs ((double) (*arr)[j] - want[(size_t) j]) > 1e-9)
+                            return false;
+                    return true;
+                };
+                const bool bands = same (a["band_gains_db"], p.bandDb), attack = same (a["attack_band_gains_db"], p.attackDb),
+                           soft = same (a["attack_band_gains_db_soft"], p.attackDb);
+                const bool time = ! a["attack_time_ms"].isVoid() && std::abs ((double) a["attack_time_ms"] - p.attackMs) < 1e-9;
+                std::printf ("      bow_shoulder: band gains %s, attack gains %s / %s, attack time %s ms\n", bands ? "bow profile" : "other",
+                             attack ? "bow profile" : "other", soft ? "bow profile" : "other", a["attack_time_ms"].toString().toRawUTF8());
+                return bands && attack && soft && time ? juce::String ("bow profile") : juce::String ("not the bow profile");
+            };
+        }
+        else if (name == "noprofile")
+        {
+            s.actions = { [this] { actionError = cymbalis::uitest::tuningShows (*editor, "NOVA SHOULDER PROFILE"); }, wait };
+            s.key = "NOVA SHOULDER PROFILE";
+            s.expected = "none";
+            s.probe = [this] { return actionError; };
+        }
         else if (name == "savetuning")
         {
+            // The panel answers asynchronously: wait for the file (up to about 10 s), with the
+            // stand-in panels in place until then.
+            auto waited = std::make_shared<int> (0);
             s.actions = { [this] {
                              tuningFile().deleteFile();
                              cymbalis::uitest::answerFilePanels (tuningFile());
                              actionError = cymbalis::uitest::clickTuningButton (*editor, "SAVE...", false);
                          },
-                          wait, wait };
+                          waitUntil ([this] { return actionError.isNotEmpty() || tuningFile().existsAsFile(); }, 30, waited), wait };
             s.key = "tuning file";
             s.expected = "saved";
-            s.probe = [this] {
+            s.probe = [this, waited] {
                 cymbalis::uitest::endFilePanels();
+                std::printf ("      the file after %d tick(s) of 350 ms\n", *waited);
                 if (actionError.isNotEmpty())
                     return actionError;
                 if (! tuningFile().existsAsFile())
@@ -526,6 +610,13 @@ private:
         }
         else if (name == "loadtuning")
         {
+            // As savetuning: wait for the file's tuning to arrive (up to about 10 s).
+            auto waited = std::make_shared<int> (0);
+            auto loaded = [this] {
+                const auto now = currentTuning (sessionNow());
+                return ! now.isVoid()
+                       && juce::JSON::toString (juce::JSON::parse (tuningFile())["effective"]) == juce::JSON::toString (now["effective"]);
+            };
             s.actions = { [this] { actionError = cymbalis::uitest::clickTuningButton (*editor, "RESET ALL", false); },
                           wait,
                           [this] {
@@ -537,11 +628,12 @@ private:
                               cymbalis::uitest::answerFilePanels (tuningFile());
                               actionError = cymbalis::uitest::clickTuningButton (*editor, "LOAD...", false);
                           },
-                          wait, wait };
+                          waitUntil ([this, loaded] { return actionError.isNotEmpty() || loaded(); }, 30, waited), wait };
             s.key = "tuning";
             s.expected = "loaded";
-            s.probe = [this] {
+            s.probe = [this, waited] {
                 cymbalis::uitest::endFilePanels();
+                std::printf ("      the tuning after %d tick(s) of 350 ms\n", *waited);
                 if (actionError.isNotEmpty())
                     return actionError;
                 const auto saved = juce::JSON::parse (tuningFile());
@@ -634,7 +726,16 @@ private:
                      value.isEmpty() ? "?" : value.toRawUTF8(), step.expected.toRawUTF8());
         if (! ok)
         {
-            std::printf ("      session: %s\n", session.toRawUTF8());
+            // The session without its Tuning elements (each preset's tuning file, long), so that
+            // the step's lines stay near the end of the log.
+            juce::String brief = session;
+            if (auto x = juce::parseXML (session))
+            {
+                while (auto* t = x->getChildByName ("Tuning"))
+                    x->removeChildElement (t, true);
+                brief = x->toString (juce::XmlElement::TextFormat().singleLine().withoutHeader());
+            }
+            std::printf ("      session (without its tunings): %s\n", brief.toRawUTF8());
             failures.add (step.name + " " + step.key + " = " + (value.isEmpty() ? juce::String ("?") : value) + " (expected "
                           + step.expected + ")");
         }
