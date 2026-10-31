@@ -577,7 +577,7 @@ These are plugin mechanisms; none is a port of Python. Kris tunes them by ear in
     - **The value.** `edge_voice_from_bow` (0–100 %, per cymbal; not a host parameter). Within each envelope band, each mode's weight α grows with its baked T60 against the band's median (0 at half the median or less, 1 at twice or more, over the modes with `exc_norm` > 0); the long-ringing modes move from the edge's velw pattern to the bow's `exc_norm` pattern by a·α, and the band is scaled back to its velw norm at every NPZ velocity. The short-ringing modes keep the edge's pattern, and the envelopes are untouched, so the crash, the onset and the velocity behaviour stay as recorded.
     - **Per strike.** `FastEngine` keeps its own velw table (the bake's at 0 %) and reads it in `npzCoupling` at the strike. A new value's table is computed off the audio thread and handed over with the other tuning values; it applies from the next strike.
     - **At 100 %**, of the 20 longest-ringing edge modes, the bow's share 14 on the 602 (was 2), 6 on Swish (was 0) and 10 on Konstan (was 3). No band has α = 1 for most of its modes (the most is 43 %, the 602's 566–713 Hz band), so no band takes the bow's pattern whole.
-    - **Starting values.** The 602 and Konstan start at 100 %, Kris's choice by ear from renders in the project session (2026-10-29), with EDGE re-trimmed at 100 %; Bettis, Swish and Raven stay at 0 %.
+    - **Starting values.** Konstan starts at 100 %, Kris's choice by ear from renders in the project session (2026-10-29), with EDGE re-trimmed at 100 %; the 602, Bettis, Swish and Raven stay at 0 %. The 602 was tried at 100 % in the build and set back to 0 % by Kris by ear (2026-10-31): he prefers its edge as it was.
     - **Neutral.** At 0 % every preset plays bit for bit as before (`tools/cymbalis_identity`, in memory).
     - **Cost.** None per strike or block: the table replaces the bake's. Per value change, one pass over the velw table on the message thread.
 
@@ -679,7 +679,7 @@ Every other key the two presets set either has its default effect or is not read
    - The shoulder copies (602 `BOW_SHOULDER`, `CENTER_SHOULDER`; Bettis `BELL_SHOULDER`, `BOW_SHOULDER`) start with their sources' trims.
    - Each bake records, next to the trim (`slots[].level_trim`): `spear_target_db`, and where capped, `capped`, `capped_level_db`, `uncapped_gain_db` and `cap_reason`.
    - Measured with `tools/cymbalis_trims --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target SLOT=DB --peak-limit 0.9` (`docs/BUILDS.md`). Nova keeps its own trims (velocity 0.9, 1 s).
-   - The 602's EDGE was re-trimmed on 2026-10-29 with EDGE VOICE FROM BOW at 100 % in its tuning block (live-engine decision 21): −0.05 → −0.60 dB. The voiced edge is 0.55 dB louder over the first 500 ms (and over 2 s), so the trim comes down to keep its +2.8 dB target.
+   - The 602 stays at EDGE VOICE FROM BOW 0 % with its EDGE trim −0.05 dB (Kris, 2026-10-31). At 100 % it would be −0.60 dB: the voiced edge is 0.55 dB louder over the first 500 ms.
 
    | Preset | Entry | SPEAR target vs BOW | Trim | Level vs BOW | Peak of one hit with trim (99th percentile) | Capped |
    |---|---|---|---|---|---|---|
