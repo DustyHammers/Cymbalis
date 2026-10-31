@@ -35,6 +35,25 @@
 //   wheeltuning  the scroll wheel over the Tuning window's sliders and numeric boxes, down
 //                its list (the wheel scrolls the list)               -> state and parameters unchanged
 //
+// and these, with the Tuning window open, read the tuning the saved state holds for the
+// current preset (its tuning file, docs/TUNING.md):
+//
+//   voice        click EDGE VOICE FROM BOW's slider a quarter of the way along
+//                                                                    -> edge_voice_from_bow moved
+//                (to between 10 and 60 %, from the bake's 0 or 100)
+//   clickweights click the first articulation's STICK CLICK bow, bell and edge weight sliders a
+//                quarter of the way along                            -> the three weights moved
+//                (to between 0.1 and 0.6, from the bake's 0 or 1)
+//   savetuning   click SAVE...; the save panel answers a file in a temporary folder
+//                                                                    -> the file holds the current tuning
+//   loadtuning   (after savetuning) click RESET ALL, then LOAD...; the open panel answers that file
+//                                                                    -> the tuning is the file's again
+//
+// The panels are not shown: in this process they answer at once (MacEvents.h).
+//
+//   nova      click the CYMBAL box, then NOVA RIDE (the first)       -> preset nova_ride
+//   smoke     click the CYMBAL box, then SMOKE FLAT RIDE (the second) -> preset smoke_flat_ride
+//
 // Exit code 0 when every step passed.
 //
 //   CymbalisUiTest hits
@@ -47,6 +66,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <functional>
 
@@ -99,6 +119,25 @@ juce::String attribute (const juce::String& session, const juce::String& name)
     if (auto xml = juce::parseXML (session))
         return xml->getStringAttribute (name);
     return {};
+}
+
+// The tuning file the session holds for its current preset (a preset whose tuning differs from
+// its bake's), parsed; void when it has none.
+juce::var currentTuning (const juce::String& session)
+{
+    if (auto xml = juce::parseXML (session))
+        for (auto* t : xml->getChildWithTagNameIterator ("Tuning"))
+            if (t->getStringAttribute ("preset") == xml->getStringAttribute ("preset"))
+                return juce::JSON::parse (t->getAllSubText());
+    return {};
+}
+
+// The temporary tuning file of savetuning and loadtuning.
+juce::File tuningFile()
+{
+    auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("CymbalisUiTest");
+    dir.createDirectory();
+    return dir.getChildFile ("ui_test.tuning.json");
 }
 
 class Window final : public juce::DocumentWindow
@@ -239,6 +278,14 @@ private:
         return s;
     }
 
+    // The saved session settings, through the host API.
+    juce::String sessionNow()
+    {
+        juce::MemoryBlock state;
+        plugin->getStateInformation (state);
+        return findSession (state);
+    }
+
     // Unchanged since `before`, or what changed and what failed while turning the wheel.
     juce::String unchanged()
     {
@@ -358,6 +405,117 @@ private:
             s.expected = "unchanged";
             s.probe = [this] { return unchanged(); };
         }
+        else if (name == "voice")
+        {
+            s.actions = { [this] { actionError = cymbalis::uitest::clickTuningSlider (*editor, "EDGE VOICE FROM BOW", 0.25f); },
+                          wait, wait };
+            s.key = "edge_voice_from_bow";
+            s.expected = "moved";
+            s.probe = [this] {
+                if (actionError.isNotEmpty())
+                    return actionError;
+                const auto t = currentTuning (sessionNow());
+                const auto& v = t["effective"]["cymbal"]["edge_voice_from_bow"];
+                if (v.isVoid())
+                    return juce::String ("no edge_voice_from_bow in the preset's tuning");
+                std::printf ("      edge_voice_from_bow %s %%\n", v.toString().toRawUTF8());
+                return (double) v > 10.0 && (double) v < 60.0 ? juce::String ("moved") : "at " + v.toString();
+            };
+        }
+        else if (name == "clickweights")
+        {
+            // The first articulation's rows come first in the list (scrollToShow starts at the top).
+            for (const char* row : { "STICK CLICK bow weight", "STICK CLICK bell weight", "STICK CLICK edge weight" })
+            {
+                s.actions.push_back ([this, row] {
+                    if (actionError.isEmpty())
+                        actionError = cymbalis::uitest::clickTuningSlider (*editor, row, 0.25f);
+                });
+                s.actions.push_back (wait);
+            }
+            s.actions.push_back (wait);
+            s.key = "stick click weights";
+            s.expected = "moved";
+            s.probe = [this] {
+                if (actionError.isNotEmpty())
+                    return actionError;
+                const auto t = currentTuning (sessionNow());
+                auto* arts = t["effective"]["articulations"].getDynamicObject();
+                if (arts == nullptr || arts->getProperties().isEmpty())
+                    return juce::String ("no articulations in the preset's tuning");
+                const auto first = arts->getProperties().getName (0).toString();
+                const auto& a = arts->getProperties().getValueAt (0);
+                juce::String values;
+                bool moved = true;
+                for (const char* key : { "stick_bow_weight", "stick_bell_weight", "stick_edge_weight" })
+                {
+                    const auto& v = a[key];
+                    values << " " << key << " " << v.toString();
+                    moved = moved && ! v.isVoid() && (double) v > 0.1 && (double) v < 0.6;
+                }
+                std::printf ("      %s:%s\n", first.toRawUTF8(), values.toRawUTF8());
+                return moved ? juce::String ("moved") : first + ":" + values;
+            };
+        }
+        else if (name == "savetuning")
+        {
+            s.actions = { [this] {
+                             tuningFile().deleteFile();
+                             cymbalis::uitest::answerFilePanels (tuningFile());
+                             actionError = cymbalis::uitest::clickTuningButton (*editor, "SAVE...", false);
+                         },
+                          wait, wait };
+            s.key = "tuning file";
+            s.expected = "saved";
+            s.probe = [this] {
+                cymbalis::uitest::endFilePanels();
+                if (actionError.isNotEmpty())
+                    return actionError;
+                if (! tuningFile().existsAsFile())
+                    return juce::String ("no file written");
+                const auto saved = juce::JSON::parse (tuningFile());
+                const auto now = currentTuning (sessionNow());
+                if (now.isVoid() || saved["preset"] != now["preset"]
+                    || juce::JSON::toString (saved["effective"]) != juce::JSON::toString (now["effective"]))
+                    return juce::String ("the file differs from the session's tuning");
+                return juce::String ("saved");
+            };
+        }
+        else if (name == "loadtuning")
+        {
+            s.actions = { [this] { actionError = cymbalis::uitest::clickTuningButton (*editor, "RESET ALL", false); },
+                          wait,
+                          [this] {
+                              // RESET ALL: the preset's tuning is its bake's again, so the session has none.
+                              if (actionError.isEmpty() && ! currentTuning (sessionNow()).isVoid())
+                                  actionError = "RESET ALL left the preset's tuning";
+                              if (actionError.isNotEmpty())
+                                  return;
+                              cymbalis::uitest::answerFilePanels (tuningFile());
+                              actionError = cymbalis::uitest::clickTuningButton (*editor, "LOAD...", false);
+                          },
+                          wait, wait };
+            s.key = "tuning";
+            s.expected = "loaded";
+            s.probe = [this] {
+                cymbalis::uitest::endFilePanels();
+                if (actionError.isNotEmpty())
+                    return actionError;
+                const auto saved = juce::JSON::parse (tuningFile());
+                const auto now = currentTuning (sessionNow());
+                if (now.isVoid() || juce::JSON::toString (saved["effective"]) != juce::JSON::toString (now["effective"]))
+                    return juce::String ("the session's tuning is not the file's");
+                return juce::String ("loaded");
+            };
+        }
+        else if (name == "nova" || name == "smoke")
+        {
+            // The list below the CYMBAL box; NOVA RIDE is its first row, SMOKE FLAT RIDE its second.
+            const float row = name == "nova" ? 0.0f : 1.0f;
+            s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + row * 40.0f + 20.0f), wait };
+            s.key = "preset";
+            s.expected = name == "nova" ? "nova_ride" : "smoke_flat_ride";
+        }
         else if (name == "preset")
         {
             // List below the CYMBAL box (61, 371, 277 x 62): 4 units down, inset 8, rows of 40.
@@ -411,6 +569,8 @@ private:
             return;
         }
         auto& step = steps[(size_t) stepIndex];
+        if (actionIndex == 0)
+            actionError = {};
         if (actionIndex < (int) step.actions.size())
         {
             step.actions[(size_t) actionIndex++]();
@@ -438,6 +598,7 @@ private:
     std::vector<Step> steps;
     int stepIndex = 0, actionIndex = 0, passed = 0;
     juce::String before, wheelError; // the wheel steps
+    juce::String actionError;        // what failed in the current step's actions
 };
 
 START_JUCE_APPLICATION (UiTestApp)

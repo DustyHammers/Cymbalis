@@ -364,6 +364,10 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
     {
         remapTable_.resize(z.velocities.size());
         computeRemapTable();
+        // EDGE VOICE FROM BOW: the velw table at the bake's value (its own at 0 %).
+        velw_.resize(z.velw.size());
+        edgeVoiceVelw(b, b.tuning.cymbal.edgeVoiceFromBow, velw_.data());
+        voicePercent_ = b.tuning.cymbal.edgeVoiceFromBow;
     }
     envBake_ = z.present;
     envOn_ = z.present && z.envelopeActive;
@@ -2107,7 +2111,7 @@ void FastEngine::npzCoupling(double velocity, double* out) const noexcept
     double peak = 0.0;
     for (int i = 0; i < n_; ++i)
     {
-        out[i] = numpyInterp(mapped, z.velocities.data(), z.velw.data() + i, nv, n_);
+        out[i] = numpyInterp(mapped, z.velocities.data(), velw_.data() + i, nv, n_);
         peak = std::max(peak, out[i]);
     }
     if (z.normalize && peak > 1e-12)
@@ -2917,7 +2921,7 @@ void FastEngine::clearBlockGains() noexcept
 
 #if CYMBALIS_TUNING
 void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecaySet* decay, const double* gainL,
-                           const double* gainR) noexcept
+                           const double* gainR, const double* velw) noexcept
 {
     const CymbalTuning& c = t.cymbal;
     const size_t n = size_t(n_);
@@ -2993,6 +2997,13 @@ void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecayS
     envRingKeepS_ = std::max(c.edgeRingKeepMs, 0.0) * 1e-3; // from the next strike
     frameRestart_ = c.frameDecayRestart;
     envOn_ = envBake_ && c.edgeEnvelope; // from the next strike
+    // EDGE VOICE FROM BOW: the table computed off the audio thread for this value, from the
+    // next strike (a strike takes its coupling at the strike).
+    if (velw != nullptr && ! velw_.empty() && c.edgeVoiceFromBow != voicePercent_)
+    {
+        std::copy(velw, velw + velw_.size(), velw_.begin());
+        voicePercent_ = c.edgeVoiceFromBow;
+    }
     params_.edgeWanderDepth = c.edgeWanderDepth;
     params_.edgeWanderRate = c.edgeWanderRate;
 
@@ -3501,11 +3512,10 @@ void FastEngine::startStick(int slot, double velocity, double position, double l
     const ArticulationTuning& a = slotCurve_[size_t(slot)];
     if (! (a.stickGain > 0.0) || stickMaxLen_ <= 0)
         return;
-    const SlotData& s = bake_->slots[size_t(slot)];
     const double bowFrac = clamp01(1.0 - std::fabs(position - 0.5) / 0.5);
     const double bellFrac = clamp01((position - 0.5) / 0.5);
     const double edgeFrac = clamp01(1.0 - position / 0.5);
-    const double w = bowFrac * s.stickBowWeight + bellFrac * s.stickBellWeight + edgeFrac * s.stickEdgeWeight;
+    const double w = bowFrac * a.stickBowWeight + bellFrac * a.stickBellWeight + edgeFrac * a.stickEdgeWeight;
     if (! (w > 1e-6))
         return;
     const double lenMs = std::min(std::max(a.stickLenMs, kStickLenMinMs), kStickLenMaxMs);

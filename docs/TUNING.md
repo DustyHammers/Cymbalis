@@ -128,14 +128,17 @@ Attack time: bow 80 ms, bell 300 ms.
 | Attack band gains | `attack_band_gains_db`, `attack_band_gains_db_soft` | −12 to +12 dB per band | yes | 22 values per layer, see "Attack band gains". Default: the articulation's onset gains (0 dB without), in both layers |
 | Attack time | `attack_time_ms` | 10–1000 ms | yes | How fast the attack gains fade back to 0 dB. Default: the articulation's onset time (80 ms without onset gains) |
 | Brightness vs velocity | `brightness_db_per_oct` | −6 to +6 dB per octave | yes | Tilt of a velocity-0.3 strike relative to velocity 1.0, see below. Default 0 |
-| STICK CLICK gain | `stick_gain` | 0–24 | yes | Level of the stick click, see below. Default: the articulation's `stick_gain` (6.0 for SWISH `bow_tip`, 0 everywhere else: no click) |
+| STICK CLICK gain | `stick_gain` | 0–24 | yes | Level of the stick click, see below. Default: the articulation's `stick_gain` (6.0 for SWISH `bow_tip` and, since 2026-10-29, SWISH `edge`; 0 everywhere else: no click) |
 | STICK CLICK band low, band high | `stick_bp_lo`, `stick_bp_hi` | 100–16000 Hz, 200–20000 Hz | yes | Edges of the click's band-pass. Default: the preset's values (2000 and 6000 Hz for NOVA RIDE and SWISH; Python's defaults 2500 and 9000 Hz for the 602, Bettis and Raven) |
 | STICK CLICK length | `stick_len_ms` | 1–50 ms | yes | Length of the noise burst. Default: the preset's (NOVA RIDE 20, SWISH 8; Python's default 8) |
 | STICK CLICK decay | `stick_decay_ms` | 0.5–50 ms | yes | Exponential decay of the burst. Default: the preset's (3; Python's default 3) |
+| STICK CLICK bow weight, bell weight, edge weight | `stick_bow_weight`, `stick_bell_weight`, `stick_edge_weight` | 0–1 each | yes | The click's position weights, see below. Default: the articulation's own (NOVA RIDE and SWISH 1, 0, 0; SWISH `edge` 1, 0, 1 since 2026-10-29; Python's default 1, 1, 1 for the 602, Bettis, Raven and Konstan) |
 
 The **velocity curve** is a level offset on top of the current level law. It is interpolated in log velocity through three points: 0 dB at velocity 1.0, the 0.6 offset at 0.6, and the 0.3 offset at 0.3. Below 0.3 it continues with the 0.6-to-0.3 slope (clamped to ±60 dB). It changes the level only. The spectral velocity behaviour stays as it is: velocity tables, the Hertz tilt and the NPZ captures. The velocity is the engine's: the MIDI velocity after the Velocity Sensitivity knob.
 
-The **stick click** is the sound of the stick itself: a burst of noise at the strike, band-passed (order-2 Butterworth between the band edges) and decaying exponentially over the burst. Its level is the gain × the position weight × velocity^1.7, at the articulation's level (Python's `_add_transient`, `docs/PORT_MAP.md`, "Swish"). The position weight comes from the preset (`stick_bow_weight`, `stick_bell_weight`, `stick_edge_weight` over the strike's bow, bell and edge fractions; SWISH and NOVA RIDE click only towards the bow). The noise comes from the engine's random sequence. At gain 0 there is no click; every articulation but SWISH's `bow_tip` starts there.
+The **stick click** is the sound of the stick itself: a burst of noise at the strike, band-passed (order-2 Butterworth between the band edges) and decaying exponentially over the burst. Its level is the gain × the position weight × velocity^1.7, at the articulation's level (Python's `_add_transient`, `docs/PORT_MAP.md`, "Swish"). The position weight is bow fraction × bow weight + bell fraction × bell weight + edge fraction × edge weight, from the strike's position. The three weights are per articulation (STICK CLICK bow, bell and edge weight), starting at the articulation's own `stick_bow_weight`, `stick_bell_weight` and `stick_edge_weight` (Python's default 1 where it has none); NOVA RIDE and SWISH click only towards the bow, except SWISH's edge (below). The noise comes from the engine's random sequence. At gain 0 there is no click; every articulation but SWISH's `bow_tip` and `edge` starts there.
+
+**SWISH's edge** (`edge`, set 2026-10-29, Kris's choice by ear). Its band envelopes start 4–10 dB under their peak in every band and swell to it over 120–480 ms, so a hard edge hit peaked about 200 ms in: a synth envelope rather than a China's edge, which explodes on impact. It now has a stick click (edge weight 1, gain 6, 1000–10000 Hz, 12 ms, decay 5 ms) and attack gains, the same in both layers: 0 dB from 89 to 356 Hz, +4 dB from 449 to 898 Hz, +8 dB from 1131 to 2263 Hz, +10 dB from 2851 to 11404 Hz (bands named by their lower edges), with an attack time of 25 ms. A hard edge hit now peaks at the strike, and the recorded swell follows unchanged. Setting the edge weight or the gain to 0 switches the click off.
 
 **Brightness vs velocity** is how much brighter (positive) or darker (negative) a soft strike of the articulation is than a full one. The value is the spectral tilt, in dB per octave, at velocity 0.3 relative to velocity 1.0. It is interpolated in log velocity like the velocity curve: 0 at 1.0, the value at 0.3, and the same slope below 0.3 (within ±24 dB per octave). The tilt pivots at 1 kHz: at the strike, each mode's excitation is scaled by tilt × log2(f / 1 kHz) dB, so the level at 1 kHz is unchanged. It acts on the coupling, like the band gains, whatever path gives it. At 0 it is skipped.
 
@@ -231,6 +234,7 @@ In the window, the **BANDS** section below the articulations works like a graphi
 | | Bow, edge, bell weights | `lf_bow_weight`, `lf_edge_weight`, `lf_bell_weight` | 0–2 | all | |
 | | Wander-rate boost | `lf_wander_rate_boost` | 0–2 | all | The LF accumulator speeds up the wander |
 | Edge envelope | EDGE ONSET ENVELOPE | `edge_band_envelope` | on/off | 602, Bettis, Swish, Raven, Konstan | On (the bake; for Swish the bake switches it on, `docs/PORT_MAP.md`, "Swish"): an edge strike's level follows the NPZ band envelope for the window. Off: the strike rings from the start, with the onset ramp of its pk_t data, as Python plays Swish. Per strike |
+| | EDGE VOICE FROM BOW | `edge_voice_from_bow` | 0–100 % | 602, Bettis, Swish, Raven, Konstan | Within each envelope band, how far the edge's long-ringing modes take the bow's mode pattern; see "Edge voice from bow" below. The bakes start at 100 % for Konstan and at 0 % for the 602, Bettis, Swish and Raven. Per strike |
 | | Window | `edge_band_env_onset_s` | 0.1–30 s | 602, Bettis, Swish, Raven, Konstan | How long an edge strike follows the NPZ band envelope; per strike. A ring length above ×1 lengthens it, up to ×2 ("Ring length") |
 | | 20 ms frame-decay restart | `edge_frame_decay_restart` | on/off | 602, Bettis, Swish, Raven, Konstan | On (the bake): the in-frame decay restarts every 20 ms (`docs/PORT_MAP.md`, "The in-frame decay is a 50 Hz sawtooth"). Off: no in-frame decay; the level follows the band envelope alone. Per strike |
 | Energy cascade | Amount | `cascade_amount` | 0–1 | all | 0 (default) switches it off. See "Energy cascade" below |
@@ -298,6 +302,28 @@ In the window it is the **STEREO** group of WHOLE CYMBAL:
 
 **In the bake.** `tools/apply_tuning.py` stores the stereo values in the bake's tuning block. It also writes every mode's resulting left and right gains into a `stereo` block (`gain_l`, `gain_r`, checksummed like the other arrays). The plugin plays them at load as they are; a lean build (`CYMBALIS_WITH_TUNING` OFF) too. `pick_l` and `pick_r` stay as baked: the loader still regenerates them from the seed, and it checks that each stored gain pair keeps the level and signs of its pick vector entries. The high-pass settings go into the tuning block.
 
+#### Edge voice from bow
+
+On the presets with NPZ edge data, an edge strike's per-mode levels are the NPZ velw table, made by matching the recorded edge partials to the preset's modes. Those partials are dense and drift, so they land on other modes than the bow's. The edge's onset and band levels are right (Kris), but its tail rings on a different set of modes, so it sounds like a different cymbal. Of the 20 longest-ringing modes (coupling × √T60), the edge shares with the bow 8 on HAMMERED THIN RIDE (the closest by ear), 3 on KONSTAN, 2 on SMOKE and 0 on SWISH.
+
+**EDGE VOICE FROM BOW** (`edge_voice_from_bow`, 0–100 %, in the EDGE ENVELOPE group below EDGE ONSET ENVELOPE; not a host parameter; approved by Kris, 2026-10-29) gives the long-ringing modes of each envelope band the bow's pattern and leaves the short-ringing ones the edge's, so the crash and the onset stay as recorded. Each band keeps its level at every NPZ velocity and the envelopes are untouched, so the velocity behaviour does not change. With a = value / 100:
+
+1. **Weights per mode**, once when the preset loads (`edgeVoiceAlpha`, `plugin/dsp/Tuning.cpp`). For each envelope band, over its modes with `exc_norm` > 0 (at least 2): med = the median of their baked `t60_s` (of an even count, the mean of the middle two), and α = clamp((log2(T60 / med) + 1) / 2, 0, 1). A mode ringing half as long as the median or less has α = 0, twice as long or more α = 1. Modes with `exc_norm` 0, and bands with fewer than 2 such modes, have α = 0. The baked T60 is used, so the weights don't move with the ring length.
+2. **Per NPZ velocity row and band** (`edgeVoiceVelw`): with ne = the norm of the row's velw over the band's modes and ns = that of their `exc_norm` (a band where either is 0 is left alone), each mode's new value is (1 − a·α) · velw / ne + a·α · exc_norm / ns, and the band is scaled back to ne.
+3. **The engine** uses that table for the edge coupling from the next strike on; strikes already ringing keep their coupling. It is computed off the audio thread (when the preset loads, and by the Tuning window when the value changes) and handed over with the other values.
+
+It acts wherever the NPZ coupling does: every strike with an edge fraction above 0.1, so also a bow or bell row blended towards the edge. At 0 % the table is the bake's, and every preset plays bit for bit as without the value. KONSTAN CRASH 18" starts at 100 % (its tuning block), with EDGE re-trimmed to its SPEAR target at 100 %; SMOKE FLAT RIDE, SWISH, HAMMERED THIN RIDE and RAVEN start at 0 %. SMOKE FLAT RIDE was tried at 100 % and set back to 0 % by Kris by ear (2026-10-31): he prefers its edge as it was.
+
+The build checks these values at 100 % (`tools/pack_bake`), from the shipped bakes; the last column ranks the bow by `exc_norm` × √`t60_s` and the edge by the top velocity row of the new table × √`t60_s`:
+
+| Preset | Modes with α = 1 | Modes with 0 < α < 1 | Of the 20 longest-ringing edge modes, shared with the bow |
+|---|---|---|---|
+| SMOKE FLAT RIDE | 206 | 469 | 14 (2 at 0 %) |
+| SWISH | 226 | 378 | 6 (0 at 0 %) |
+| KONSTAN CRASH 18" | 67 | 556 | 10 (3 at 0 %) |
+
+No band has α = 1 for most of its modes: the most is 43 % (SMOKE's 566–713 Hz band, 15 of 35 modes).
+
 #### Energy cascade
 
 After hard hits, energy moves from lower bands into higher ones over time, and the cymbal's total energy stays the same: the bloom and wash of a crash. The bands are the 22 one-third-octave bands of the band gains. It is a plugin mechanism (`docs/PORT_MAP.md`, plugin mechanism 10) and acts on the whole cymbal, whatever struck it.
@@ -360,7 +386,7 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
 
 ## Tuning files
 
-**SAVE...** writes the current preset's tuning to a file (default name `<preset>.tuning.json`). **LOAD...** reads one. A file for another preset is refused with a message. So is a file for another bake format, an unknown value, band gains that are not 22 numbers from −24 to +12 dB, or a ring length, edge capture curve, wander rate or `tau_ref_ms` that is not above 0. Cymbalis also saves each preset's tuning (if it differs from the bake) in its session state, and restores it with the session. A session without tuning, such as one saved by Cymbalis before it had the Tuning window, loads with every preset at its bake's values.
+**SAVE...** writes the current preset's tuning to a file (default name `<preset>.tuning.json`). **LOAD...** reads one. A file for another preset is refused with a message. So is a file for another bake format, an unknown value, band gains that are not 22 numbers from −24 to +12 dB, or a ring length, edge capture curve, wander rate or `tau_ref_ms` that is not above 0, an `edge_voice_from_bow` outside 0–100 % or a stick click weight outside 0–1. Cymbalis also saves each preset's tuning (if it differs from the bake) in its session state, and restores it with the session. A session without tuning, such as one saved by Cymbalis before it had the Tuning window, loads with every preset at its bake's values.
 
 ```json
 {
@@ -388,6 +414,7 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
 ```
 
 - `cymbal` and `articulations` hold only the values that differ from the bake; loading a file applies these on top of the bake. A per-band cymbal value (`ring_length_bands`) is written as all 22 bands, lowest first, when any differs. `rehit_damp_weights` is written with every articulation's weight, by articulation id, when any differs. An articulation's `band_gains_db`, `attack_band_gains_db`, `onset_delay_ms` and `onset_speed` are each written as all 22 bands, lowest first, when any of them differs. The last three are the HARD layers; their SOFT layers, `attack_band_gains_db_soft`, `onset_delay_ms_soft` and `onset_speed_soft`, are written with them when either layer differs. A file without the `_soft` keys (from before the layers) gives both layers its values.
+- `edge_voice_from_bow` is always written for the presets with NPZ edge data, even when it is the bake's. So a file without it is from before EDGE VOICE FROM BOW and was tuned without it: it loads as 0 %, in the window, from a session and in `tools/apply_tuning.py`.
 - `effective` is a full copy of every value for reference; nothing reads it.
 - `entry` names the bake entry (slot) of an articulation.
 - `preset` is the preset id (`nova_ride`, `smoke_flat_ride`, `hammered_thin_ride`, `swish`, `raven`, `konstan`); `bake_format_version` is the bake's `format_version`.
@@ -407,9 +434,10 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
    - Each articulation's **band gains** go into its excitation data, `slots[].excitation_band_gains_db`: `{"band_edges_hz": [23 edges], "gains_db": [22 gains], "set_by"}`. An articulation whose bands are all 0 dB has no entry; applying FLAT removes it.
    - Each articulation's **onset shift** goes into its onset data, `slots[].onset_shift`: `{"band_edges_hz": [23 edges], "delay_ms": [22], "speed": [22], "delay_ms_soft": [22], "speed_soft": [22], "set_by"}`, both velocity layers. An articulation with delay 0 and speed 1 in every band of both layers has no entry.
    - Each articulation's **attack band gains and time** go into its attack data, `slots[].attack_band_gains`: `{"band_edges_hz": [23 edges], "gains_db": [22], "gains_db_soft": [22], "time_ms", "set_by"}`. An articulation whose values are those its onset gains give, in both layers (0 dB and 80 ms without onset gains), has no entry; the loader then takes them from the onset gains. A bake entry without the `_soft` arrays (from before the layers) uses its values for both layers.
-   - Each articulation's **brightness vs velocity** goes into the tuning block with its velocity curve, and so does its **stick click** where it differs from the slot's own values (its `stick_*` parameters, Python's defaults where it has none).
+   - Each articulation's **brightness vs velocity** goes into the tuning block with its velocity curve, and so does its **stick click**, position weights included, where it differs from the slot's own values (its `stick_*` parameters, Python's defaults where it has none).
    - The **stereo** values go into the tuning block, and every mode's resulting left and right gains into the bake's `stereo` block (`gain_l`, `gain_r`). Centre and 100 % everywhere removes the block. The **right-channel high-pass** (on/off, frequency) goes into the tuning block.
    - **Every other value that differs from the bake's own** (the cymbal values and the velocity curves) goes into the bake's top-level `tuning` block: `{"format": "cymbalis-tuning", "version": 1, "applied_utc", "source", "cymbal": {...}, "articulations": {id: {"vel_0.6_db", "vel_0.3_db"}}}`. A per-band cymbal value is stored there as its 22 numbers.
+   - **EDGE VOICE FROM BOW** goes into the tuning block like the other cymbal values (0 %, the neutral value, drops out). On a bake with NPZ edge data, a file without it gives 0 %.
    - A value equal to the bake's own drops out of the block, so applying the same file twice gives the same bake. Nothing else in the bake changes.
 3. Rebuild the plugin. Its bake loader (`plugin/dsp/Bake.cpp`, `Tuning.cpp`) applies the block (`applyTuning`):
    - the parameters;

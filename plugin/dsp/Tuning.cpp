@@ -41,6 +41,7 @@ const std::vector<CymbalKey>& cymbalKeys()
         { "lf_bell_weight", &CymbalTuning::lfWBell },
         { "lf_wander_rate_boost", &CymbalTuning::lfWanderRateBoost },
         { "edge_band_env_onset_s", &CymbalTuning::edgeEnvWindowS },
+        { kEdgeVoiceKey, &CymbalTuning::edgeVoiceFromBow },
         { "cascade_amount", &CymbalTuning::cascadeAmount },
         { "cascade_threshold_db", &CymbalTuning::cascadeThresholdDb },
         { "cascade_speed_ms", &CymbalTuning::cascadeSpeedMs },
@@ -230,6 +231,72 @@ double velocityCurveDb(const ArticulationTuning& a, double v) noexcept
     const double x = std::log(std::min(std::max(v, 1e-4), 1.0));
     const double db = x >= x6 ? a.vel06Db * x / x6 : a.vel06Db + (a.vel03Db - a.vel06Db) * (x - x6) / (x3 - x6);
     return std::min(std::max(db, -60.0), 60.0);
+}
+
+void edgeVoiceAlpha(const BakeData& b, double* alpha)
+{
+    const EdgeNpz& z = b.edgeNpz;
+    const size_t n = z.bandIndex.size();
+    std::fill(alpha, alpha + n, 0.0);
+    std::vector<double> t60;
+    for (int band = 0; band < z.numBands; ++band)
+    {
+        t60.clear();
+        for (size_t i = 0; i < n; ++i)
+            if (z.bandIndex[i] == band && b.excNorm[i] > 0.0)
+                t60.push_back(b.pythonT60S[i]);
+        if (t60.size() < 2)
+            continue;
+        // The median (of an even count, the mean of the middle two, as numpy's).
+        std::sort(t60.begin(), t60.end());
+        const size_t m = t60.size() / 2;
+        const double med = t60.size() % 2 != 0 ? t60[m] : 0.5 * (t60[m - 1] + t60[m]);
+        for (size_t i = 0; i < n; ++i)
+            if (z.bandIndex[i] == band && b.excNorm[i] > 0.0)
+                alpha[i] = std::min(std::max((std::log2(b.pythonT60S[i] / med) + 1.0) / 2.0, 0.0), 1.0);
+    }
+}
+
+void edgeVoiceVelw(const BakeData& b, double percent, double* out)
+{
+    const EdgeNpz& z = b.edgeNpz;
+    std::copy(z.velw.begin(), z.velw.end(), out);
+    const double a = std::min(std::max(percent, 0.0), kEdgeVoiceMax) / kEdgeVoiceMax;
+    const size_t n = z.bandIndex.size(), nv = z.velocities.size(), nb = size_t(z.numBands);
+    if (! (a > 0.0) || z.voiceAlpha.size() != n)
+        return;
+    std::vector<double> ns(nb, 0.0), ne(nb), nn(nb);
+    for (size_t i = 0; i < n; ++i)
+        ns[size_t(z.bandIndex[i])] += b.excNorm[i] * b.excNorm[i];
+    for (auto& x : ns)
+        x = std::sqrt(x);
+    for (size_t v = 0; v < nv; ++v)
+    {
+        const double* row = z.velw.data() + v * n;
+        std::fill(ne.begin(), ne.end(), 0.0);
+        for (size_t i = 0; i < n; ++i)
+            ne[size_t(z.bandIndex[i])] += row[i] * row[i];
+        for (auto& x : ne)
+            x = std::sqrt(x);
+        auto mixed = [&](size_t i) {
+            const size_t k = size_t(z.bandIndex[i]);
+            const double w = a * z.voiceAlpha[i];
+            return (1.0 - w) * row[i] / ne[k] + w * b.excNorm[i] / ns[k];
+        };
+        std::fill(nn.begin(), nn.end(), 0.0);
+        for (size_t i = 0; i < n; ++i)
+        {
+            const size_t k = size_t(z.bandIndex[i]);
+            if (ne[k] > 0.0 && ns[k] > 0.0)
+                nn[k] += mixed(i) * mixed(i);
+        }
+        for (size_t i = 0; i < n; ++i)
+        {
+            const size_t k = size_t(z.bandIndex[i]);
+            if (ne[k] > 0.0 && ns[k] > 0.0 && nn[k] > 0.0)
+                out[v * n + i] = ne[k] * mixed(i) / std::sqrt(nn[k]);
+        }
+    }
 }
 
 // 1 / (1 + exp(-(f - cutoff) / 200)), line 393.
@@ -445,6 +512,9 @@ Tuning parseTuningBlock(const json::Value& block, const BakeData& b, const Tunin
                 else if (v.first == kStickHiKey) t.articulations[size_t(slot)].stickHiHz = x;
                 else if (v.first == kStickLenKey) t.articulations[size_t(slot)].stickLenMs = x;
                 else if (v.first == kStickDecayKey) t.articulations[size_t(slot)].stickDecayMs = x;
+                else if (v.first == kStickBowWeightKey) t.articulations[size_t(slot)].stickBowWeight = x;
+                else if (v.first == kStickBellWeightKey) t.articulations[size_t(slot)].stickBellWeight = x;
+                else if (v.first == kStickEdgeWeightKey) t.articulations[size_t(slot)].stickEdgeWeight = x;
                 else
                     throw std::runtime_error("tuning: unknown articulation value \"" + v.first + "\" (the level is "
                                              "slots[].level_trim.gain_db)");
@@ -456,6 +526,15 @@ Tuning parseTuningBlock(const json::Value& block, const BakeData& b, const Tunin
         throw std::runtime_error("tuning: stereo_width must lie in 0 to 200");
     if (! (t.cymbal.highPassHz >= kHighPassMinHz && t.cymbal.highPassHz <= kHighPassMaxHz))
         throw std::runtime_error("tuning: right_highpass_hz must lie in 20 to 300");
+    if (! (t.cymbal.edgeVoiceFromBow >= 0.0 && t.cymbal.edgeVoiceFromBow <= kEdgeVoiceMax))
+        throw std::runtime_error("tuning: edge_voice_from_bow must lie in 0 to 100");
+    for (int s = 0; s < t.numArticulations && s < kMaxArticulations; ++s)
+    {
+        const ArticulationTuning& a = t.articulations[size_t(s)];
+        for (double w : { a.stickBowWeight, a.stickBellWeight, a.stickEdgeWeight })
+            if (! (w >= 0.0 && w <= kStickWeightMax))
+                throw std::runtime_error("tuning: the stick click weights must lie in 0 to 1");
+    }
     return t;
 }
 
