@@ -33,7 +33,7 @@ struct VoiceCheck
 const VoiceCheck voiceChecks[] = {
     { "smoke_flat_ride.bake.json", 206, 469, 14 },
     { "swish.bake.json", 226, 378, 6 },
-    { "konstan.bake.json", 67, 556, 10 },
+    { "konstan.bake.json", 42, 592, 10 },
 };
 
 // The indices of the `k` largest of `x` (n values).
