@@ -4,10 +4,10 @@
 
 Every push to `main` runs **Actions → Build macOS (VST3 + AU)**. It builds one plugin, **Cymbalis**, with everything: the editor, and the TUNING button and Tuning window (`docs/TUNING.md`). It produces:
 
-- Universal binaries (Apple Silicon + Intel), minimum macOS 11
-- JUCE 7.0.12, built with Xcode 15
+- Universal binaries (Apple Silicon + Intel), minimum macOS 11: the build fails if either slice of the VST3 or the AU has another minimum (`LC_BUILD_VERSION` minos)
+- JUCE 7.0.12, built on GitHub's `macos-15` runner with Xcode 16.4 (macOS 15.5 SDK), pinned (see "The runner and Xcode" below)
 - The Intel slice capped at SSE4.1, and the build fails if any AVX instructions appear
-- Validation with pluginval (VST3) and auval (AU, native and under Rosetta)
+- Validation with pluginval (VST3) and auval (AU, native and under Rosetta; the step installs Rosetta if the runner lacks it)
 - An editor mouse test in an AU and a VST3 host (`tools/cymbalis_uitest`): real mouse events change the MIDI channel, notes, a stick, the preset and a stick of that preset, checked in the plugin's saved state, and the scroll wheel over the knobs and boxes must change nothing; then a real click on TUNING must show the Tuning window, visible and in front of the editor and attached to its window, the wheel over its sliders and numeric boxes must change nothing, and a second click must hide it
 - A hit display timing (`CymbalisUiTest hits`): processBlock at 44.1 kHz, with 256- and 128-sample blocks and the audio thread at normal priority and real-time, with the editor closed, open and idle, and open with 16 hits moving the wireframe cymbal, each case three times, then the three cases once more with HAMMERED THIN RIDE selected, and once each with SWISH, RAVEN and KONSTAN CRASH 18" (the heaviest cymbals to draw: their dented meshes, with the size of each cymbal and how long it took to build); with the CPU used besides, the editor's paint calls and the cymbal's OpenGL frames, and once a check that nothing is drawn after every hit is older than 6 s; printed to the log and the job summary. The runner's Mac has no GPU: it draws OpenGL with the Apple Software Renderer (the step prints the renderer), so its OpenGL frame times are a CPU's, not a GPU's
 - Ad-hoc code signing
@@ -15,6 +15,14 @@ Every push to `main` runs **Actions → Build macOS (VST3 + AU)**. It builds one
 The run's **Artifacts** section has one artifact, `Cymbalis-macOS-<shortsha>`, with two zips and nothing else: `Cymbalis-VST3-macOS-<shortsha>.zip` and `Cymbalis-AU-macOS-<shortsha>.zip`.
 
 The job summary also shows the CPU cost of the engine on the runner for each preset (`cymbalis_bench`, every slot playing; it fails if the output is not finite), and its block times in dense playing (`cymbalis_bench --dense`: a strike every 24 ms, every preset at 44.1 and 96 kHz with 128- and 64-sample blocks on a real-time thread, each case three times; then `cymbalis_bench_profile`, the time of the engine's parts; docs/PORT_MAP.md, "Cost of a strike"). The runner is a virtual machine: a block that is slow in one run only is the machine's, not the engine's, which is why the dense mode reports the smallest of the three runs per block. Pushing a `v*` tag also creates a GitHub Release with the two zips attached.
+
+If Configure or Build fails, its error lines also appear as the job's annotations (`.github/scripts/annotate_errors.sh`), and Configure prints the toolchain (CMake, Xcode, SDK, deployment target) as a notice, so a failure can be read without the job's log.
+
+### The runner and Xcode
+
+GitHub retires the `macos-14` runner images on 2026-11-02, with scheduled brownouts before that ([changelog](https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement)), so the build runs on `macos-15` (2026-10-31). That image has no Xcode 15: the build selects `/Applications/Xcode_16.4.app` (`XCODE_VERSION` in the workflow) and fails if the image doesn't have it, rather than taking the image's default, which may move to Xcode 26.
+
+JUCE 7.0.12 predates the macOS 15 SDK, and the plugin stays on it (JUCE 8 is a licence decision). Its helper program juceaide is built during configure in a CMake build of JUCE's own, which doesn't get the deployment target from `CMakeLists.txt`. Without one, juceaide targets the SDK's macOS 15.5, where `CGWindowListCreateImage` (in JUCE's macOS windowing code) is obsoleted and fails to compile; at macOS 11 it is only deprecated. The job therefore sets `MACOSX_DEPLOYMENT_TARGET=11.0`, which that build's CMake and clang take as their deployment target. The plugin's own targets get 11.0 from `CMakeLists.txt` as before. The JUCE cache (`.deps`, which holds juceaide's build) is keyed by the Xcode version, so a cache made with another Xcode isn't reused.
 
 **Cymbalis Tuning** (plugin code `CymT`), the separate tuning build of earlier versions, is no longer built; Cymbalis now does everything it did. Its plugin ID differs from Cymbalis's, so a host does not swap one for the other: to carry tuning from a Cymbalis Tuning session over, **SAVE...** it there as a tuning file and **LOAD...** it in Cymbalis. The old Cymbalis Tuning bundles can then be deleted.
 
@@ -97,9 +105,12 @@ The tuning block also holds EDGE VOICE FROM BOW (`edge_voice_from_bow`, `docs/TU
 ## Local build (Mac)
 
 ```
+export MACOSX_DEPLOYMENT_TARGET=11.0
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
 cmake --build build --target Cymbalis_VST3 Cymbalis_AU
 ```
+
+`MACOSX_DEPLOYMENT_TARGET=11.0` is needed with Xcode 16 or later (macOS 15 SDK or later) for JUCE's juceaide, as in CI (see "The runner and Xcode"); it makes no difference with Xcode 15. Start from a new build directory if one was configured without it.
 
 The CMake option `CYMBALIS_WITH_TUNING` (ON by default) builds the tuning code in: the TUNING button, the Tuning window, live tuning, tuning files and tuning in the session. `-DCYMBALIS_WITH_TUNING=OFF` builds a lean Cymbalis without any of it, under the same identity. It plays the same bakes the same way; tuning stored in a session is ignored when it loads one and is not saved with it. CI builds only the full plugin.
 
