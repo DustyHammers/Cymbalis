@@ -44,6 +44,9 @@
 //   clickweights click the first articulation's STICK CLICK bow, bell and edge weight sliders a
 //                quarter of the way along                            -> the three weights moved
 //                (to between 0.1 and 0.6, from the bake's 0 or 1)
+//   hitvariation click HIT VARIATION's switch, then its POSITION SPREAD and VELOCITY SPREAD
+//                sliders 60 % of the way along                       -> the switch flipped, the
+//                spreads moved (to between 0.07 and 0.11, and 7 and 11 %, from 0.04 and 3 %)
 //   savetuning   click SAVE...; the save panel answers a file in a temporary folder
 //                                                                    -> the file holds the current tuning
 //   loadtuning   (after savetuning) click RESET ALL, then LOAD...; the open panel answers that file
@@ -460,6 +463,42 @@ private:
                 return moved ? juce::String ("moved") : first + ":" + values;
             };
         }
+        else if (name == "hitvariation")
+        {
+            s.actions = { [this] {
+                             hitBefore = currentTuning (sessionNow())["effective"]["cymbal"]["hit_variation"];
+                             actionError = cymbalis::uitest::clickTuningButton (*editor, "HIT VARIATION (off: every strike plays as without it)", true);
+                         },
+                          wait,
+                          [this] {
+                              if (actionError.isEmpty())
+                                  actionError = cymbalis::uitest::clickTuningSlider (*editor, "POSITION SPREAD", 0.6f);
+                          },
+                          wait,
+                          [this] {
+                              if (actionError.isEmpty())
+                                  actionError = cymbalis::uitest::clickTuningSlider (*editor, "VELOCITY SPREAD", 0.6f);
+                          },
+                          wait, wait };
+            s.key = "hit variation";
+            s.expected = "moved";
+            s.probe = [this] {
+                if (actionError.isNotEmpty())
+                    return actionError;
+                if (! hitBefore.isBool())
+                    return juce::String ("no hit_variation in the preset's tuning before the clicks");
+                const auto c = currentTuning (sessionNow())["effective"]["cymbal"];
+                const auto& on = c["hit_variation"];
+                const auto& ps = c["hit_position_spread"];
+                const auto& vs = c["hit_velocity_spread_pct"];
+                const auto values = "hit_variation " + hitBefore.toString() + " -> " + on.toString() + ", hit_position_spread "
+                                    + ps.toString() + ", hit_velocity_spread_pct " + vs.toString();
+                std::printf ("      %s\n", values.toRawUTF8());
+                const bool moved = on.isBool() && (bool) on != (bool) hitBefore && ! ps.isVoid() && (double) ps > 0.07
+                                   && (double) ps < 0.11 && ! vs.isVoid() && (double) vs > 7.0 && (double) vs < 11.0;
+                return moved ? juce::String ("moved") : values;
+            };
+        }
         else if (name == "savetuning")
         {
             s.actions = { [this] {
@@ -605,6 +644,7 @@ private:
     int stepIndex = 0, actionIndex = 0, passed = 0;
     juce::String before, wheelError; // the wheel steps
     juce::String actionError;        // what failed in the current step's actions
+    juce::var hitBefore;             // hitvariation: the switch before the click
 };
 
 START_JUCE_APPLICATION (UiTestApp)

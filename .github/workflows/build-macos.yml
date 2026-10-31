@@ -215,14 +215,15 @@ jobs:
       # the editor and attached to it;
       # the wheel over its sliders and numeric boxes must change nothing; EDGE VOICE FROM BOW
       # must move on KONSTAN, RAVEN, SWISH, HAMMERED and SMOKE; NOVA's first articulation's
-      # three STICK CLICK weights must move; a tuning file saved and loaded back (through
+      # three STICK CLICK weights must move; HIT VARIATION's switch must flip and its two spreads
+      # move (NOVA); a tuning file saved and loaded back (through
       # stand-ins for the file panels) must hold and restore the tuning; a second click on
       # TUNING hides the window (tools/cymbalis_uitest).
       - name: Editor mouse test (AU and VST3)
         timeout-minutes: 5
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
-          STEPS="edge channel drag reset none edgereset list stick preset shoulder swish raven konstan wheel tuning wheeltuning voice raven voice swish voice preset voice smoke voice nova clickweights savetuning loadtuning tuningclose"
+          STEPS="edge channel drag reset none edgereset list stick preset shoulder swish raven konstan wheel tuning wheeltuning voice raven voice swish voice preset voice smoke voice nova clickweights hitvariation savetuning loadtuning tuningclose"
           echo "--- VST3 ---"
           "$UITEST" "$PWD/$VST3" $STEPS
           echo "--- AU ---"
