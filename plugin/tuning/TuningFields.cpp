@@ -167,7 +167,7 @@ const std::vector<CymbalBandField>& cymbalBandFields()
 
 const NovaShoulderProfile* novaShoulderProfile (const BakeData& b, const juce::String& presetId, size_t slot)
 {
-    if (presetId == "nova_ride" || slot >= b.slots.size() || b.slots[slot].copyOf.empty())
+    if (presetId == "nova_ride" || slot >= b.slots.size())
         return nullptr;
     const auto& id = b.slots[slot].id;
     if (id == "bell_shoulder")

@@ -121,8 +121,8 @@ struct CymbalBandField
 const std::vector<CymbalBandField>& cymbalBandFields();
 
 // NOVA SHOULDER PROFILE (ShoulderProfiles.h): the band gains, attack gains and attack time
-// for a shoulder articulation that is a copy of its tip (SMOKE FLAT RIDE, HAMMERED THIN RIDE,
-// SWISH's bell_shoulder): the bell profile for bell_shoulder, the bow profile for
+// for a shoulder articulation of any preset but NOVA RIDE, a copy of its tip or its own
+// capture (SWISH's bow_shoulder): the bell profile for bell_shoulder, the bow profile for
 // bow_shoulder and center_shoulder; nullptr for any other.
 const NovaShoulderProfile* novaShoulderProfile (const BakeData& bake, const juce::String& presetId, size_t slot);
 

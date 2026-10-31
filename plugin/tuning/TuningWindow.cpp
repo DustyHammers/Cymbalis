@@ -649,8 +649,8 @@ void TuningPanel::rebuild()
                 place (*row);
                 rows.push_back (std::move (row));
             }
-            // A shoulder articulation copied from its tip (SMOKE FLAT RIDE, HAMMERED THIN RIDE,
-            // SWISH's bell_shoulder): Nova's shoulder-minus-tip band gains, on request.
+            // A shoulder articulation of any preset but NOVA RIDE, copied from its tip or captured
+            // (SWISH's bow_shoulder): Nova's shoulder-minus-tip band gains, on request.
             if (const auto* profile = novaShoulderProfile (*bake, cymbalis::kPresets[(size_t) preset].id, s))
             {
                 auto row = std::make_unique<ButtonRow> (juce::String ("Band gains, attack gains and time: Nova's ") + profile->name

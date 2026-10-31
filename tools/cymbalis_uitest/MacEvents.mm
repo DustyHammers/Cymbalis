@@ -387,6 +387,17 @@ juce::String clickTuningButton (juce::Component& editor, const juce::String& tex
     return {};
 }
 
+juce::String tuningShows (juce::Component& editor, const juce::String& text)
+{
+    juce::String error;
+    NSWindow* tuning = visibleTuningWindow (editor, error);
+    if (tuning == nil)
+        return error;
+    if (scrollToShow (tuning, [NSString stringWithUTF8String: text.toRawUTF8()], false, error) != nil)
+        return "shown";
+    return error.startsWith ("nothing shows") ? juce::String ("none") : error;
+}
+
 void answerFilePanels (const juce::File& file)
 {
     endFilePanels();

@@ -43,6 +43,10 @@ juce::String clickTuningSlider (juce::Component& editor, const juce::String& row
 // one of the window's top bar).
 juce::String clickTuningButton (juce::Component& editor, const juce::String& text, bool inList);
 
+// "shown" when the Tuning window's list shows `text` (an exact match) somewhere down it,
+// "none" when nothing does, otherwise what failed.
+juce::String tuningShows (juce::Component& editor, const juce::String& text);
+
 // From now on the next save or open panel (NSSavePanel, NSOpenPanel) is not shown: it answers
 // at once, OK, with `file`. endFilePanels() puts the panels back.
 void answerFilePanels (const juce::File& file);
