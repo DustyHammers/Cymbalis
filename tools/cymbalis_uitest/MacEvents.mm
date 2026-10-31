@@ -4,6 +4,7 @@
 #import <objc/runtime.h>
 
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <vector>
 
@@ -64,6 +65,53 @@ juce::String wheelAt (NSWindow* window, NSPoint location, std::initializer_list<
         [view scrollWheel: e];
     }
     return {};
+}
+
+// JUCE ignores a click on its window at a point where another window is in front
+// (NSViewComponentPeer::contains), as a user's click would land on that window. The Tuning
+// window is placed below the editor's top right (TuningWindow::placeClearOf); on a narrow
+// screen it reaches over the CYMBAL box and the TUNING button. A window of this process in
+// front of `window` at `location` (window base coordinates) is therefore moved aside first,
+// as a user would move it: to the right of the point. putBack() returns it to where it was.
+// Prints what it did; another application's window is only reported.
+NSWindow* movedWindow = nil;
+NSPoint movedFrom = NSZeroPoint;
+
+void uncover (NSWindow* window, NSPoint location)
+{
+    const NSPoint p = [window convertRectToScreen: NSMakeRect (location.x, location.y, 0.0, 0.0)].origin;
+    const NSInteger front = [NSWindow windowNumberAtPoint: p belowWindowWithWindowNumber: 0];
+    if (front == [window windowNumber])
+        return;
+    const NSRect screen = [[[NSScreen screens] firstObject] frame];
+    NSWindow* other = [NSApp windowWithWindowNumber: front];
+    if (other == nil)
+    {
+        NSString* owner = @"?";
+        CFArrayRef info = CGWindowListCopyWindowInfo (kCGWindowListOptionIncludingWindow, (CGWindowID) front);
+        if (info != nullptr && CFArrayGetCount (info) > 0)
+            if (NSString* name = ((__bridge NSDictionary*) CFArrayGetValueAtIndex (info, 0))[(__bridge NSString*) kCGWindowOwnerName])
+                owner = name;
+        if (info != nullptr)
+            CFRelease (info);
+        std::printf ("      the click at (%.0f, %.0f) on the %.0f x %.0f screen is covered by window %ld of %s\n", p.x, p.y,
+                     NSWidth (screen), NSHeight (screen), (long) front, [owner UTF8String]);
+        std::fflush (stdout);
+        return;
+    }
+    const NSRect f = [other frame];
+    NSString* title = [other title] != nil ? [other title] : @"";
+    std::printf ("      \"%s\" (%.0f x %.0f at x %.0f, y %.0f) covers the click at (%.0f, %.0f) on the %.0f x %.0f screen: "
+                 "moved to x %.0f\n",
+                 [title UTF8String], NSWidth (f), NSHeight (f), NSMinX (f), NSMinY (f), p.x, p.y, NSWidth (screen),
+                 NSHeight (screen), p.x + 24.0);
+    std::fflush (stdout);
+    if (movedWindow == nil)
+    {
+        movedWindow = other;
+        movedFrom = f.origin;
+    }
+    [other setFrameOrigin: NSMakePoint (p.x + 24.0, NSMinY (f))];
 }
 
 void post (NSWindow* window, NSEventType type, NSPoint location)
@@ -230,9 +278,18 @@ void click (juce::Component& target, juce::Point<float> p)
     const NSPoint loc = windowPoint (target, p, window);
     [NSApp activateIgnoringOtherApps: YES];
     [window makeKeyAndOrderFront: nil];
+    uncover (window, loc);
     post (window, NSEventTypeMouseMoved, loc);
     post (window, NSEventTypeLeftMouseDown, loc);
     post (window, NSEventTypeLeftMouseUp, loc);
+}
+
+void putBack()
+{
+    if (movedWindow == nil)
+        return;
+    [movedWindow setFrameOrigin: movedFrom];
+    movedWindow = nil;
 }
 
 juce::String wheel (juce::Component& target, juce::Point<float> p)
