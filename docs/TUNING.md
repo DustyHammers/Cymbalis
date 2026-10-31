@@ -214,6 +214,9 @@ In the window, the **BANDS** section below the articulations works like a graphi
 | | Ring length | `ring_length` | 0.5–2.0 × | all | Multiplier of the baked T60 of every mode (t60_scale), and of the length of an edge strike's band envelope after the kept onset; see "Ring length" below. Rebuilds the engine |
 | | Kept onset | `edge_ring_keep_ms` | 0–300 ms | 602, Bettis, Swish, Raven, Konstan | How much of an edge strike's band envelope the ring length leaves as recorded; it scales the time after it ("Ring length"). Default 60 ms. Per strike |
 | | Ring length per band | `ring_length_bands` | ×0.25–×4 per band | all | 22 values, see below. Default ×1 |
+| Hit variation | HIT VARIATION | `hit_variation` | on/off | all | Switches both spreads below. Off: every strike plays exactly as without it. Default off; every bake starts on (2026-10-31). See "Hit variation" below |
+| | POSITION SPREAD | `hit_position_spread` | 0–0.15 (position units: 0 edge, 0.5 bow, 1 bell) | all | Each strike's position moves by a uniform random amount in ±spread. Default 0.04 |
+| | VELOCITY SPREAD | `hit_velocity_spread_pct` | 0–15 % | all | Each strike's velocity is multiplied by 1 + a uniform random amount in ±spread. Default 3 % |
 | Stereo | Pan per band | `stereo_pan_bands` | L100 to R100 per band | all | 22 values, −100 (L100) to 100 (R100). Default centre (0). See "Stereo" below |
 | | Width per band | `stereo_width_bands` | 0–200 % per band | all | 22 values. Default 100 % |
 | | Overall width | `stereo_width` | 0–200 % | all | Multiplies every band's width. Default 100 % |
@@ -278,6 +281,27 @@ Each of the 22 one-third-octave bands of the band gains has a ring-length multip
 In the window it is the **RING LENGTH PER BAND** row in the CYMBAL group: 22 vertical sliders on a logarithmic scale with ×1 in the middle, numeric entry, a per-band reset and FLAT (every band to ×1).
 
 A change applies live, at the next control point (about 2.8 ms). The new decay coefficients are computed off the audio thread and handed over; there the ringing state is re-anchored, as a strike does without its contact, and every ringing strike decays at the new rates from that sample. Nothing steps. A band envelope keeps the factors of its strike; the change reaches the envelopes of the strikes after it. With every band at ×1 nothing changes and nothing is computed.
+
+#### Hit variation
+
+Every strike draws fresh random mode phases, so the beating of close modes and the attack's fine texture change from hit to hit, but a mode's level is fixed by the row, the velocity, the stick and the BLEND POSITION knobs: eight identical RAVEN bow tip hits differ by 0.56 dB in level and 0.07 dB in a typical band, and repeated hits sound like copies. On a real cymbal most of the difference between hits comes from where the stick lands, which the engine models through the strike position. **HIT VARIATION** (the HIT VARIATION group, below CYMBAL; not host parameters; approved by Kris, 2026-10-31, who chose the amounts by ear) moves each strike's position and velocity a little: with the defaults (position ±0.04, velocity ±3 %, version B of three RAVEN renders) the eight hits differ by 1.2 dB in level and 0.33 dB in a typical band.
+
+It is one cymbal-wide setting and applies to every articulation of every preset (bell, bow, edge, center and the shoulder copies) and to every row of the editor. When it is on, each strike draws two numbers, before anything else in the strike:
+
+- **Position**: p′ = p + U(−s, s), with p the strike's position after the BLEND POSITION knobs and s the POSITION SPREAD.
+  - **Mirrored at the ends**: below 0, p′ = −p′; above 1, p′ = 2 − p′. The EDGE rows (0.0) and bell rows (1.0) vary inward instead of sticking at the end.
+  - **Never crosses 0.45**: a strike at p ≥ 0.45 stays at 0.45 or above, one below 0.45 stays below it (at most the double just under 0.45). So it stays on the same side of the bow ↔ edge switch, the edge fraction's 0.1 (`docs/PORT_MAP.md`, live-engine decision 22): a bow hit never becomes an NPZ or envelope edge hit, nor the reverse.
+  - p′ replaces p wherever the strike uses its position: the position weights, the edge and bell fractions, the NPZ coupling and band envelope, the onset ramp, the stick click weights and the contact.
+- **Velocity**: v′ = v · (1 + U(−d, d)), with v the engine's velocity (after the Velocity Sensitivity knob) and d the VELOCITY SPREAD, at most 1. v′ replaces v wherever the strike uses its velocity: its level, the velocity tables, the NPZ velocity, the envelopes, the onset layers, the stick click and the velocity curve.
+
+The two numbers come from a random sequence of their own, not the engine's: the mode phases and the stick click's noise draw what they drew before. It is seeded from the bake's strike-phase seed and a constant, so a preset plays the same variation each time it is loaded, and offline renders repeat; presets whose bakes share a seed (SMOKE FLAT RIDE and HAMMERED THIN RIDE, SWISH and NOVA RIDE, RAVEN and KONSTAN CRASH 18") get the same sequence. Nothing is allocated or locked on the audio thread. A change of the switch or a spread applies from the next strike. The hit display shows the row's position and velocity before the variation; the LAST HIT meter gives the velocity before the variation, with the level the varied strike played.
+
+Two consequences of the rules, measured in memory (2026-10-31; trims unchanged):
+
+- **The bell rows get louder on average.** A strike at an end can only move inward, so the bell rows (1.0) take in some of the bow's modes. Over 48 strikes at velocity 1.0 (NOVA 0.9), each against the same strike without the variation: KONSTAN's BELL and BELL_SHOULDER +3.9 dB (single strikes +0.1 to +6.9 dB; its bell is trimmed +26 dB), NOVA's BELL2 at BLEND POSITION 1 = 0 +1.8 dB and BELL +1.0 dB, RAVEN's BELL and BELL_SHOULDER +0.75 dB, HAMMERED's BELL +0.4 dB. Every other row moves by 0.3 dB or less (BOW −0.1 to −0.3 dB, partly because a velocity of 1.0 can only go down).
+- **The stick click can come in.** Where an articulation's click weight is 0 at its position, a varied strike can get a quiet click: on SWISH, BOW2 at BLEND POSITION 2 = 100 % strikes the bow articulation (bow weight 1, edge weight 0) at 0.0, and moved inward to at most 0.04 it clicks with a weight of at most 0.08. That click's noise comes from the engine's random sequence, so every later strike's phases are drawn further along it than without the variation.
+
+With HIT VARIATION off, every preset plays bit for bit as it did before it existed.
 
 #### Stereo
 
@@ -386,7 +410,7 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
 
 ## Tuning files
 
-**SAVE...** writes the current preset's tuning to a file (default name `<preset>.tuning.json`). **LOAD...** reads one. A file for another preset is refused with a message. So is a file for another bake format, an unknown value, band gains that are not 22 numbers from −24 to +12 dB, or a ring length, edge capture curve, wander rate or `tau_ref_ms` that is not above 0, an `edge_voice_from_bow` outside 0–100 % or a stick click weight outside 0–1. Cymbalis also saves each preset's tuning (if it differs from the bake) in its session state, and restores it with the session. A session without tuning, such as one saved by Cymbalis before it had the Tuning window, loads with every preset at its bake's values.
+**SAVE...** writes the current preset's tuning to a file (default name `<preset>.tuning.json`). **LOAD...** reads one. A file for another preset is refused with a message. So is a file for another bake format, an unknown value, band gains that are not 22 numbers from −24 to +12 dB, or a ring length, edge capture curve, wander rate or `tau_ref_ms` that is not above 0, an `edge_voice_from_bow` outside 0–100 %, a stick click weight outside 0–1, a `hit_position_spread` outside 0–0.15 or a `hit_velocity_spread_pct` outside 0–15 %. Cymbalis also saves each preset's tuning (if it differs from the bake) in its session state, and restores it with the session. A session without tuning, such as one saved by Cymbalis before it had the Tuning window, loads with every preset at its bake's values.
 
 ```json
 {
@@ -415,6 +439,7 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
 
 - `cymbal` and `articulations` hold only the values that differ from the bake; loading a file applies these on top of the bake. A per-band cymbal value (`ring_length_bands`) is written as all 22 bands, lowest first, when any differs. `rehit_damp_weights` is written with every articulation's weight, by articulation id, when any differs. An articulation's `band_gains_db`, `attack_band_gains_db`, `onset_delay_ms` and `onset_speed` are each written as all 22 bands, lowest first, when any of them differs. The last three are the HARD layers; their SOFT layers, `attack_band_gains_db_soft`, `onset_delay_ms_soft` and `onset_speed_soft`, are written with them when either layer differs. A file without the `_soft` keys (from before the layers) gives both layers its values.
 - `edge_voice_from_bow` is always written for the presets with NPZ edge data, even when it is the bake's. So a file without it is from before EDGE VOICE FROM BOW and was tuned without it: it loads as 0 %, in the window, from a session and in `tools/apply_tuning.py`.
+- `hit_variation` (true or false), `hit_position_spread` and `hit_velocity_spread_pct` are written when they differ from the bake. A file without them, such as one from before HIT VARIATION, keeps the bake's values, in the window, from a session and in `tools/apply_tuning.py`.
 - `effective` is a full copy of every value for reference; nothing reads it.
 - `entry` names the bake entry (slot) of an articulation.
 - `preset` is the preset id (`nova_ride`, `smoke_flat_ride`, `hammered_thin_ride`, `swish`, `raven`, `konstan`); `bake_format_version` is the bake's `format_version`.
