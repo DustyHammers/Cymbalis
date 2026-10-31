@@ -35,6 +35,9 @@ can prove that it parsed every value exactly.
   * velocity-table fixes (VP_COLUMN_FIXES): columns of an overlay's velocity table replaced
     with another column of the same table, in the bake only (presets/ is unchanged), for every
     entry with that overlay, copies included. Each fix is recorded in the bake's notes.
+  * uncapped T60s (T60_UNCAPPED): for these presets every mode's T60 is the fingerprint's
+    without V19's cap (_T60_CAP_F / _T60_CAP_VAL), with the mode step and the calibration
+    scalar that follow from it (uncap_t60); recorded in the bake's notes.
 
 Usage:
     python tools/bake_preset.py --overrides-from tests/sequences/edge_3hits_15s.json --out bake.json
@@ -79,6 +82,11 @@ COPIED_ENTRIES = {
     'konstan': [('BELL_SHOULDER', 'bell_shoulder', 'BELL', 1.0),
                 ('BOW_SHOULDER', 'bow_shoulder', 'BOW', 0.5)],
 }
+# Presets whose mode T60s are the fingerprint's without V19's T60 cap (multi_strike_engine_v19.py
+# lines 136-138, _T60_CAP_F / _T60_CAP_VAL: 12 s at 200 Hz, 6 s at 1 kHz, 3 s at 4 kHz, 1.6 s at
+# 10 kHz). KONSTAN's fingerprint holds T60s refit from its bow captures, meant to be used
+# uncapped (docs/BASELINE_MANIFEST.md, Konstan; docs/PORT_MAP.md, "Konstan Crash 18"").
+T60_UNCAPPED = {'konstan'}
 # Presets whose NPZ edge band envelope the bake switches on (docs/PORT_MAP.md, "Swish"):
 # preset -> the reason recorded in edge_npz.envelope_set_by.
 ENVELOPE_ON = {
@@ -333,6 +341,27 @@ def edge_npz_block(eng):
     }
 
 
+def uncap_t60(eng):
+    """Every body mode's T60 without V19's cap: max(fingerprint t60 x t60_scale, 0.02) in place
+    of _bT (__init__ lines 136-138 without the cap), the contact-phase mode step from it with
+    V19's formula (lines 277-278), and the calibration scalar again, since its reference edge
+    strike rings with these T60s (_compute_calib_scalar, lines 450-476). The engine's code is
+    unchanged; this only replaces its values. Returns how many T60s change and the old and new
+    calibration scalars."""
+    g = engine_globals(eng)
+    sp = eng._spear
+    body_mask = sp.births < float(eng._params.get('birth_gate_s', g['_BIRTH_GATE']))
+    raw_t60 = sp.t60s[body_mask] * eng._params['t60_scale']
+    t60 = np.maximum(raw_t60, 0.02)
+    changed = int(np.sum(t60 != eng._bT))
+    eng._bT = t60
+    eng._mode_step = (np.exp(1j * 2.0 * np.pi * eng._bF / g['SR'])
+                      * np.exp(-g['LOG1000'] / (eng._bT * g['SR'])))
+    old_calib = eng._calib_scalar
+    eng._calib_scalar = eng._compute_calib_scalar()
+    return changed, old_calib, eng._calib_scalar
+
+
 def python_contact_force(eng, SE, position):
     """The per-mode contact force matrix Python builds for a strike at this position
     (_apply_strike lines 1067-1093), as a check value for the C++ computation. Mutates
@@ -544,13 +573,21 @@ def bake(overrides, preset='nova', allow_manifest_mismatch=False):
     slots = ab.PRESETS[preset]['slots']
     engines = []
     strike_event = None
+    uncapped = []
     for name, overlay, pos in slots:
         eng, SE = ab.load_python_engine(overlay, overrides, preset)
+        if preset in T60_UNCAPPED:
+            uncapped.append((name, uncap_t60(eng)))
         strike_event = SE
         engines.append((name, overlay, pos, eng))
 
     ref_name, _, _, ref_eng = engines[0]
     notes = []
+    for result in sorted({r for _, r in uncapped}):
+        changed, old_calib, new_calib = result
+        names = ', '.join(n for n, r in uncapped if r == result)
+        notes.append(f'T60s without V19\'s cap (T60_UNCAPPED), {names}: {changed} of {len(ref_eng._bT)} '
+                     f'differ from the capped ones; calibration scalar {old_calib!r} -> {new_calib!r}')
     ref_arrays = shared_arrays(ref_eng, notes)
     ref_scalars = scalar_shared(ref_eng)
     ref_npz = edge_npz_block(ref_eng)

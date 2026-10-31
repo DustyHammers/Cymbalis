@@ -304,7 +304,7 @@ In the window it is the **STEREO** group of WHOLE CYMBAL:
 
 #### Edge voice from bow
 
-On the presets with NPZ edge data, an edge strike's per-mode levels are the NPZ velw table, made by matching the recorded edge partials to the preset's modes. Those partials are dense and drift, so they land on other modes than the bow's. The edge's onset and band levels are right (Kris), but its tail rings on a different set of modes, so it sounds like a different cymbal. Of the 20 longest-ringing modes (coupling × √T60), the edge shares with the bow 8 on HAMMERED THIN RIDE (the closest by ear), 3 on KONSTAN, 2 on SMOKE and 0 on SWISH.
+On the presets with NPZ edge data, an edge strike's per-mode levels are the NPZ velw table, made by matching the recorded edge partials to the preset's modes. Those partials are dense and drift, so they land on other modes than the bow's. The edge's onset and band levels are right (Kris), but its tail rings on a different set of modes, so it sounds like a different cymbal. Of the 20 longest-ringing modes (coupling × √T60), the edge shares with the bow 8 on HAMMERED THIN RIDE (the closest by ear), 3 on KONSTAN (2 since its T60 refit), 2 on SMOKE and 0 on SWISH.
 
 **EDGE VOICE FROM BOW** (`edge_voice_from_bow`, 0–100 %, in the EDGE ENVELOPE group below EDGE ONSET ENVELOPE; not a host parameter; approved by Kris, 2026-10-29) gives the long-ringing modes of each envelope band the bow's pattern and leaves the short-ringing ones the edge's, so the crash and the onset stay as recorded. Each band keeps its level at every NPZ velocity and the envelopes are untouched, so the velocity behaviour does not change. With a = value / 100:
 
@@ -320,7 +320,7 @@ The build checks these values at 100 % (`tools/pack_bake`), from the shipped bak
 |---|---|---|---|
 | SMOKE FLAT RIDE | 206 | 469 | 14 (2 at 0 %) |
 | SWISH | 226 | 378 | 6 (0 at 0 %) |
-| KONSTAN CRASH 18" | 67 | 556 | 10 (3 at 0 %) |
+| KONSTAN CRASH 18" | 42 | 592 | 10 (2 at 0 %) |
 
 No band has α = 1 for most of its modes: the most is 43 % (SMOKE's 566–713 Hz band, 15 of 35 modes).
 
