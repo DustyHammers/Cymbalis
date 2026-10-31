@@ -602,6 +602,7 @@ void TuningPanel::rebuild()
     restartRow.reset();
     envelopeRow.reset();
     highPassRow.reset();
+    hitVariationRow.reset();
     bandEq.reset();
     cymbalBandRows.clear();
     list.removeAllChildren();
@@ -739,8 +740,8 @@ void TuningPanel::rebuild()
         // Per cymbal, by group. A value that acts on some articulations only names them.
         addPart ("WHOLE CYMBAL", "affects every articulation");
         y += 4;
-        for (auto group : { Group::cymbal, Group::stereo, Group::wander, Group::mf, Group::lf, Group::edgeEnvelope,
-                            Group::cascade, Group::loudDamping, Group::rehitDamping })
+        for (auto group : { Group::cymbal, Group::hitVariation, Group::stereo, Group::wander, Group::mf, Group::lf,
+                            Group::edgeEnvelope, Group::cascade, Group::loudDamping, Group::rehitDamping })
         {
             bool any = false;
             for (const auto& f : cymbalFields())
@@ -748,6 +749,13 @@ void TuningPanel::rebuild()
             if (! any)
                 continue;
             addHeader (groupName (group));
+            // HIT VARIATION: whether each strike's position and velocity vary (its spreads below).
+            if (group == Group::hitVariation)
+            {
+                hitVariationRow = std::make_unique<ToggleRow> ("HIT VARIATION (off: every strike plays as without it)");
+                hitVariationRow->onChange = [this] (bool v) { change ([&] (Tuning& t) { t.cymbal.hitVariation = v; }); };
+                place (*hitVariationRow);
+            }
             // EDGE ONSET ENVELOPE: whether edge strikes follow the NPZ band envelope.
             if (group == Group::edgeEnvelope)
             {
@@ -842,6 +850,8 @@ void TuningPanel::showValues()
         envelopeRow->setValues (processor.tuning (preset).cymbal.edgeEnvelope, bake->tuning.cymbal.edgeEnvelope);
     if (highPassRow != nullptr && bake != nullptr)
         highPassRow->setValues (processor.tuning (preset).cymbal.highPassOn, bake->tuning.cymbal.highPassOn);
+    if (hitVariationRow != nullptr && bake != nullptr)
+        hitVariationRow->setValues (processor.tuning (preset).cymbal.hitVariation, bake->tuning.cymbal.hitVariation);
     modified = bake != nullptr && isModified (*bake, processor.tuning (preset));
     repaint (0, 0, getWidth(), kTopHeight);
 }

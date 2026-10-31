@@ -1279,11 +1279,12 @@
     "format": "cymbalis-tuning",
     "version": 1,
     "applied_by": "tools/apply_tuning.py",
-    "applied_utc": "2026-10-25T16:58:23Z",
+    "applied_utc": "2026-10-31T15:45:34Z",
     "source": "nova_ride.tuning.json",
-    "source_date": "2026-10-25T00:00:00.000+00:00",
+    "source_date": "2026-10-31T00:00:00.000+00:00",
     "cymbal": {
-      "output_gain_db": -11.0
+      "output_gain_db": -11.0,
+      "hit_variation": true
     },
     "articulations": {}
   }

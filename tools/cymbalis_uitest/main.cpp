@@ -44,6 +44,10 @@
 //   clickweights click the first articulation's STICK CLICK bow, bell and edge weight sliders a
 //                quarter of the way along                            -> the three weights moved
 //                (to between 0.1 and 0.6, from the bake's 0 or 1)
+//   hitvariation click HIT VARIATION's switch, then its POSITION SPREAD and VELOCITY SPREAD
+//                sliders halfway along                               -> the switch flipped, the
+//                spreads moved (to above 0.06 and 6 %, from 0.04 and 3 %; the slider's
+//                frame holds its text box too, so halfway is about 0.6 of the range)
 //   savetuning   click SAVE...; the save panel answers a file in a temporary folder
 //                                                                    -> the file holds the current tuning
 //   loadtuning   (after savetuning) click RESET ALL, then LOAD...; the open panel answers that file
@@ -460,6 +464,42 @@ private:
                 return moved ? juce::String ("moved") : first + ":" + values;
             };
         }
+        else if (name == "hitvariation")
+        {
+            s.actions = { [this] {
+                             hitBefore = currentTuning (sessionNow())["effective"]["cymbal"]["hit_variation"];
+                             actionError = cymbalis::uitest::clickTuningButton (*editor, "HIT VARIATION (off: every strike plays as without it)", true);
+                         },
+                          wait,
+                          [this] {
+                              if (actionError.isEmpty())
+                                  actionError = cymbalis::uitest::clickTuningSlider (*editor, "POSITION SPREAD", 0.5f);
+                          },
+                          wait,
+                          [this] {
+                              if (actionError.isEmpty())
+                                  actionError = cymbalis::uitest::clickTuningSlider (*editor, "VELOCITY SPREAD", 0.5f);
+                          },
+                          wait, wait };
+            s.key = "hit variation";
+            s.expected = "moved";
+            s.probe = [this] {
+                if (actionError.isNotEmpty())
+                    return actionError;
+                if (! hitBefore.isBool())
+                    return juce::String ("no hit_variation in the preset's tuning before the clicks");
+                const auto c = currentTuning (sessionNow())["effective"]["cymbal"];
+                const auto& on = c["hit_variation"];
+                const auto& ps = c["hit_position_spread"];
+                const auto& vs = c["hit_velocity_spread_pct"];
+                const auto values = "hit_variation " + hitBefore.toString() + " -> " + on.toString() + ", hit_position_spread "
+                                    + ps.toString() + ", hit_velocity_spread_pct " + vs.toString();
+                std::printf ("      %s\n", values.toRawUTF8());
+                const bool moved = on.isBool() && (bool) on != (bool) hitBefore && ! ps.isVoid() && (double) ps > 0.06
+                                   && (double) ps <= 0.15 && ! vs.isVoid() && (double) vs > 6.0 && (double) vs <= 15.0;
+                return moved ? juce::String ("moved") : values;
+            };
+        }
         else if (name == "savetuning")
         {
             s.actions = { [this] {
@@ -566,6 +606,8 @@ private:
         if (stepIndex >= (int) steps.size())
         {
             stopTimer();
+            for (const auto& f : failures)
+                std::printf ("failed: %s\n", f.toRawUTF8());
             std::printf ("%d of %d steps passed\n", passed, (int) steps.size());
             setApplicationReturnValue (passed == (int) steps.size() ? 0 : 1);
             quit();
@@ -591,7 +633,11 @@ private:
         std::printf ("%s: %s %s = %s (expected %s)\n", ok ? "PASS" : "FAIL", step.name.toRawUTF8(), step.key.toRawUTF8(),
                      value.isEmpty() ? "?" : value.toRawUTF8(), step.expected.toRawUTF8());
         if (! ok)
+        {
             std::printf ("      session: %s\n", session.toRawUTF8());
+            failures.add (step.name + " " + step.key + " = " + (value.isEmpty() ? juce::String ("?") : value) + " (expected "
+                          + step.expected + ")");
+        }
         std::fflush (stdout);
         ++stepIndex;
         actionIndex = 0;
@@ -605,6 +651,8 @@ private:
     int stepIndex = 0, actionIndex = 0, passed = 0;
     juce::String before, wheelError; // the wheel steps
     juce::String actionError;        // what failed in the current step's actions
+    juce::var hitBefore;             // hitvariation: the switch before the click
+    juce::StringArray failures;      // the failed steps, listed again at the end
 };
 
 START_JUCE_APPLICATION (UiTestApp)
