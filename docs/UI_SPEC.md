@@ -201,7 +201,7 @@ CENTER and CENTER2 strike where the bell rows do, at 1.0 − 0.5·blend_1. The 6
 
 Each copy has its own level trim, initialised to its source's. In both presets BELL and BOW (CENTER and BOW on SMOKE FLAT RIDE) start on TIP, BELL2 and BOW2 (CENTER2 and BOW2) on SHOULDER ("Default sticks" above). The blend knobs move whichever rows play, with either stick. In SMOKE FLAT RIDE, Blend 1 moves CENTER and CENTER2, and its end labels read CENTER · BOW.
 
-**SWISH** (22" China, `resources/presets/swish.bake.json`): the bell is the base preset at the bell position with the v11 bell ratios (TIP); its SHOULDER version, **bell_shoulder**, is a copy of it, tuned on its own. The bow has both captures as overlays: **bow_tip** (with the stick click) and **bow_shoulder**. The edge is the base preset at the edge position (SHOULDER).
+**SWISH** (22" China, `resources/presets/swish.bake.json`): the bell is the base preset at the bell position with the v11 bell ratios (TIP); its SHOULDER version, **bell_shoulder**, is a copy of it, tuned on its own. The bow has two overlays, **bow_tip** (with the stick click) and **bow_shoulder** (without it). They are not separate captures: the overlays only set the stick click gain (6.0 and 0.0), so the two play the same data apart from the click and their level trims (+8.86 and +8.96 dB). The edge is the base preset at the edge position (SHOULDER).
 
 | Slot | TIP | SHOULDER | Stick box |
 |---|---|---|---|
