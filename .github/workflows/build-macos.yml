@@ -25,19 +25,23 @@ env:
 
 jobs:
   build:
-    runs-on: macos-14
+    # macos-14 is retired on 2026-11-02 (brownouts before that); macos-15 replaces it.
+    runs-on: macos-15
     timeout-minutes: 60
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # JUCE 7.0.12 predates the macOS 15 SDK; build against Xcode 15.x (macOS 14 SDK).
+      # JUCE 7.0.12 predates the macOS 15 SDK; build against Xcode 15.x (macOS 14 SDK) when the
+      # image has one, otherwise with the image's default Xcode.
       - name: Select Xcode 15
         run: |
+          ls -d /Applications/Xcode*.app
           XCODE=$(ls -d /Applications/Xcode_15*.app 2>/dev/null | sort -V | tail -1)
           if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE"; fi
           xcodebuild -version
+          xcrun --show-sdk-version
 
       - name: Install Ninja
         run: brew list ninja >/dev/null 2>&1 || brew install ninja
