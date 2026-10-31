@@ -219,6 +219,7 @@ void clickAtScreenPoint (NSWindow* window, NSPoint p)
     const NSPoint loc = [window convertRectFromScreen: NSMakeRect (p.x, p.y, 0.0, 0.0)].origin;
     [NSApp activateIgnoringOtherApps: YES];
     [window makeKeyAndOrderFront: nil];
+    uncover (window, loc);
     post (window, NSEventTypeMouseMoved, loc);
     post (window, NSEventTypeLeftMouseDown, loc);
     post (window, NSEventTypeLeftMouseUp, loc);

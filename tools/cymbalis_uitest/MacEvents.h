@@ -33,7 +33,8 @@ juce::String tuningWindowState (juce::Component& editor);
 // elements (JUCE gives a label's text as its value, a button's as its title). A row in the
 // list is first scrolled into view: the list to its top, then down with the scroll wheel
 // until the row is between a quarter and three quarters of the window's height. Clicks are
-// real mouse events, as click(). Each returns what failed, or nothing.
+// real mouse events, as click(), and a window in front of the Tuning window at the point is
+// moved aside or reported the same way. Each returns what failed, or nothing.
 
 // Clicks the slider of the row whose name starts with `rowName`, at `fraction` of the
 // slider's width from its left.

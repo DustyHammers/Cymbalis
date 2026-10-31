@@ -283,6 +283,17 @@ private:
         return [this, x, y] { cymbalis::uitest::click (*editor, at (x, y)); };
     }
 
+    // An action that is run again at each tick until `done` holds or `ticks` ticks have
+    // passed; `*waited` gets the ticks it took. For results that arrive asynchronously (the
+    // file panels' answers), so that a slow machine is waited for rather than failed.
+    std::function<void()> waitUntil (std::function<bool()> done, int ticks, std::shared_ptr<int> waited)
+    {
+        return [this, done, ticks, waited] {
+            if (! done() && ++*waited < ticks)
+                --actionIndex; // this action again at the next tick
+        };
+    }
+
     // The saved session settings and every parameter's value, through the host API.
     juce::String snapshot()
     {
@@ -571,16 +582,20 @@ private:
         }
         else if (name == "savetuning")
         {
+            // The panel answers asynchronously: wait for the file (up to about 10 s), with the
+            // stand-in panels in place until then.
+            auto waited = std::make_shared<int> (0);
             s.actions = { [this] {
                              tuningFile().deleteFile();
                              cymbalis::uitest::answerFilePanels (tuningFile());
                              actionError = cymbalis::uitest::clickTuningButton (*editor, "SAVE...", false);
                          },
-                          wait, wait };
+                          waitUntil ([this] { return actionError.isNotEmpty() || tuningFile().existsAsFile(); }, 30, waited), wait };
             s.key = "tuning file";
             s.expected = "saved";
-            s.probe = [this] {
+            s.probe = [this, waited] {
                 cymbalis::uitest::endFilePanels();
+                std::printf ("      the file after %d tick(s) of 350 ms\n", *waited);
                 if (actionError.isNotEmpty())
                     return actionError;
                 if (! tuningFile().existsAsFile())
@@ -595,6 +610,13 @@ private:
         }
         else if (name == "loadtuning")
         {
+            // As savetuning: wait for the file's tuning to arrive (up to about 10 s).
+            auto waited = std::make_shared<int> (0);
+            auto loaded = [this] {
+                const auto now = currentTuning (sessionNow());
+                return ! now.isVoid()
+                       && juce::JSON::toString (juce::JSON::parse (tuningFile())["effective"]) == juce::JSON::toString (now["effective"]);
+            };
             s.actions = { [this] { actionError = cymbalis::uitest::clickTuningButton (*editor, "RESET ALL", false); },
                           wait,
                           [this] {
@@ -606,11 +628,12 @@ private:
                               cymbalis::uitest::answerFilePanels (tuningFile());
                               actionError = cymbalis::uitest::clickTuningButton (*editor, "LOAD...", false);
                           },
-                          wait, wait };
+                          waitUntil ([this, loaded] { return actionError.isNotEmpty() || loaded(); }, 30, waited), wait };
             s.key = "tuning";
             s.expected = "loaded";
-            s.probe = [this] {
+            s.probe = [this, waited] {
                 cymbalis::uitest::endFilePanels();
+                std::printf ("      the tuning after %d tick(s) of 350 ms\n", *waited);
                 if (actionError.isNotEmpty())
                     return actionError;
                 const auto saved = juce::JSON::parse (tuningFile());
@@ -703,7 +726,16 @@ private:
                      value.isEmpty() ? "?" : value.toRawUTF8(), step.expected.toRawUTF8());
         if (! ok)
         {
-            std::printf ("      session: %s\n", session.toRawUTF8());
+            // The session without its Tuning elements (each preset's tuning file, long), so that
+            // the step's lines stay near the end of the log.
+            juce::String brief = session;
+            if (auto x = juce::parseXML (session))
+            {
+                while (auto* t = x->getChildByName ("Tuning"))
+                    x->removeChildElement (t, true);
+                brief = x->toString (juce::XmlElement::TextFormat().singleLine().withoutHeader());
+            }
+            std::printf ("      session (without its tunings): %s\n", brief.toRawUTF8());
             failures.add (step.name + " " + step.key + " = " + (value.isEmpty() ? juce::String ("?") : value) + " (expected "
                           + step.expected + ")");
         }
