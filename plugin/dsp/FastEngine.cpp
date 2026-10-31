@@ -307,6 +307,16 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
         logF1k_[i] = std::log(b.freqHz[i] / 1000.0);
     ringBandNow_ = b.tuning.cymbal.ringBand;
     ringLengthBuilt_ = b.tuning.cymbal.ringLength;
+    hitVar_ = b.tuning.cymbal.hitVariation;
+    hitPosSpread_ = b.tuning.cymbal.hitPositionSpread;
+    hitVelSpread_ = b.tuning.cymbal.hitVelocitySpreadPct * 0.01;
+    {
+        // HIT VARIATION's stream: two outputs of a copy of the render stream (the strike
+        // phases are not touched), mixed with constants, as its state.
+        Pcg64 g = b.renderStream;
+        const uint64_t hi = g.nextU64() ^ 0x4849545641524941ULL, lo = g.nextU64() ^ 0x9E3779B97F4A7C15ULL;
+        hitRng_ = Pcg64(Pcg64::make128(hi, lo), Pcg64::make128(0xDA3E39CB94B95BDBULL, 0x5851F42D4C957F2DULL | 1u));
+    }
     remapExp_ = b.edgeNpz.remapExponent;
     envWindowS_ = b.edgeNpz.onsetS;
     frameRestart_ = b.edgeNpz.frameDecayRestart;
@@ -2997,6 +3007,9 @@ void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecayS
     envRingKeepS_ = std::max(c.edgeRingKeepMs, 0.0) * 1e-3; // from the next strike
     frameRestart_ = c.frameDecayRestart;
     envOn_ = envBake_ && c.edgeEnvelope; // from the next strike
+    hitVar_ = c.hitVariation;               // HIT VARIATION, from the next strike
+    hitPosSpread_ = c.hitPositionSpread;
+    hitVelSpread_ = c.hitVelocitySpreadPct * 0.01;
     // EDGE VOICE FROM BOW: the table computed off the audio thread for this value, from the
     // next strike (a strike takes its coupling at the strike).
     if (velw != nullptr && ! velw_.empty() && c.edgeVoiceFromBow != voicePercent_)
@@ -3129,10 +3142,30 @@ void FastEngine::drawPhasesAhead(int count) noexcept
     aheadDone_ = end;
 }
 
+// HIT VARIATION (docs/TUNING.md): this strike's position p moves to p + U(-s, s), mirrored at
+// 0 and 1 (below 0: -p'; above 1: 2 - p') and kept on its side of 0.45, the edge fraction's 0.1
+// (p >= 0.45: at least 0.45; below: under it), so a bow strike never takes the edge's paths nor
+// the reverse. Its velocity v becomes v (1 + U(-d, d)), at most 1. Two draws from hitRng_.
+void FastEngine::varyHit(double& position, double& velocity) noexcept
+{
+    const double du = 2.0 * hitRng_.nextDouble() - 1.0;
+    const double dv = 2.0 * hitRng_.nextDouble() - 1.0;
+    double q = position + du * hitPosSpread_;
+    if (q < 0.0)
+        q = -q;
+    if (q > 1.0)
+        q = 2.0 - q;
+    position = position >= 0.45 ? std::max(q, 0.45) : std::min(q, std::nextafter(0.45, 0.0));
+    if (velocity > 0.0)
+        velocity = std::min(velocity * (1.0 + dv * hitVelSpread_), 1.0);
+}
+
 void FastEngine::strike(int slotIndex, double velocity, double position) noexcept
 {
     if (!isPrepared() || slotIndex < 0 || slotIndex >= numSlots()) return;
     CYM_PROF_BEGIN(strike);
+    if (hitVar_)
+        varyHit(position, velocity); // every use of the strike's position and velocity below takes these
     const SlotData& s = bake_->slots[size_t(slotIndex)];
     const BakeData& b = *bake_;
     const EngineParams& p = params_;

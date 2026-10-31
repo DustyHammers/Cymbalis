@@ -42,6 +42,8 @@ const std::vector<CymbalKey>& cymbalKeys()
         { "lf_wander_rate_boost", &CymbalTuning::lfWanderRateBoost },
         { "edge_band_env_onset_s", &CymbalTuning::edgeEnvWindowS },
         { kEdgeVoiceKey, &CymbalTuning::edgeVoiceFromBow },
+        { kHitPositionSpreadKey, &CymbalTuning::hitPositionSpread },
+        { kHitVelocitySpreadKey, &CymbalTuning::hitVelocitySpreadPct },
         { "cascade_amount", &CymbalTuning::cascadeAmount },
         { "cascade_threshold_db", &CymbalTuning::cascadeThresholdDb },
         { "cascade_speed_ms", &CymbalTuning::cascadeSpeedMs },
@@ -429,6 +431,11 @@ Tuning parseTuningBlock(const json::Value& block, const BakeData& b, const Tunin
                 t.cymbal.highPassOn = kv.second.boolean();
                 continue;
             }
+            if (kv.first == kHitVariationKey)
+            {
+                t.cymbal.hitVariation = kv.second.boolean();
+                continue;
+            }
             if (kv.first == kPanBandsKey || kv.first == kWidthBandsKey)
             {
                 const bool pan = kv.first == kPanBandsKey;
@@ -528,6 +535,9 @@ Tuning parseTuningBlock(const json::Value& block, const BakeData& b, const Tunin
         throw std::runtime_error("tuning: right_highpass_hz must lie in 20 to 300");
     if (! (t.cymbal.edgeVoiceFromBow >= 0.0 && t.cymbal.edgeVoiceFromBow <= kEdgeVoiceMax))
         throw std::runtime_error("tuning: edge_voice_from_bow must lie in 0 to 100");
+    if (! (t.cymbal.hitPositionSpread >= 0.0 && t.cymbal.hitPositionSpread <= kHitPositionSpreadMax)
+        || ! (t.cymbal.hitVelocitySpreadPct >= 0.0 && t.cymbal.hitVelocitySpreadPct <= kHitVelocitySpreadMax))
+        throw std::runtime_error("tuning: hit_position_spread must lie in 0 to 0.15 and hit_velocity_spread_pct in 0 to 15");
     for (int s = 0; s < t.numArticulations && s < kMaxArticulations; ++s)
     {
         const ArticulationTuning& a = t.articulations[size_t(s)];

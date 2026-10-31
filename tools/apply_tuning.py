@@ -37,6 +37,8 @@ tuning block it already has). Then:
     gain_r), which the plugin plays as they are; centre and 100 % everywhere removes it;
   * the right-channel high-pass (right_highpass on / off, right_highpass_hz) goes into the
     tuning block;
+  * HIT VARIATION (hit_variation on / off, hit_position_spread, hit_velocity_spread_pct) goes
+    into the tuning block where it differs from off, 0.04 and 3 %;
   * every other value that differs from the bake's own value goes into the bake's
     "tuning" block, which the plugin's bake loader applies; per-band cymbal values
     (ring_length_bands, stereo_pan_bands, stereo_width_bands) as 22 values. The plugin's own mechanisms (energy cascade
@@ -72,7 +74,7 @@ CYMBAL_KEYS = [
     'mf_bow_weight', 'mf_edge_weight', 'mf_bell_weight', 'mf_lo_hz', 'mf_hi_hz',
     'lf_sens_depth', 'lf_sens_tau', 'lf_min_scale', 'lf_max_scale', 'lf_cutoff_hz',
     'lf_bow_weight', 'lf_edge_weight', 'lf_bell_weight', 'lf_wander_rate_boost',
-    'edge_band_env_onset_s', 'edge_voice_from_bow',
+    'edge_band_env_onset_s', 'edge_voice_from_bow', 'hit_position_spread', 'hit_velocity_spread_pct',
     'cascade_amount', 'cascade_threshold_db', 'cascade_speed_ms', 'cascade_release_ms',
     'cascade_spread', 'cascade_low_band', 'cascade_high_band',
     'loud_damp_amount', 'loud_damp_threshold_db', 'loud_damp_tilt',
@@ -84,6 +86,8 @@ CYMBAL_KEYS = [
 PLUGIN_KEYS = {
     'edge_ring_keep_ms': (60.0, (0.0, 300.0, False)),
     'edge_voice_from_bow': (0.0, (0.0, 100.0, False)),
+    'hit_position_spread': (0.04, (0.0, 0.15, False)),
+    'hit_velocity_spread_pct': (3.0, (0.0, 15.0, False)),
     'cascade_amount': (0.0, (0.0, 1.0, False)),
     'cascade_threshold_db': (-12.0, (-120.0, 40.0, False)),
     'cascade_speed_ms': (100.0, (0.1, 60000.0, False)),
@@ -106,6 +110,7 @@ RESTART_KEY = 'edge_frame_decay_restart'
 ENVELOPE_KEY = 'edge_band_envelope'   # EDGE ONSET ENVELOPE: the bake's edge_npz.envelope_active
 VOICE_KEY = 'edge_voice_from_bow'     # EDGE VOICE FROM BOW, %: 0 if a file has none
 HIGHPASS_KEY = 'right_highpass'       # the right channel's 120 Hz high-pass on (the bake's own) or off
+HITVAR_KEY = 'hit_variation'          # HIT VARIATION on or off (the bake's own: off)
 # Per-band cymbal values (22 values, lowest band first): name -> (range, unit, neutral value).
 CYMBAL_BAND_KEYS = {
     'ring_length_bands': ((0.25, 4.0), 'x', 1.0),
@@ -170,6 +175,7 @@ def own_values(bake):
     own[RESTART_KEY] = True
     own[ENVELOPE_KEY] = bool(npz['envelope_active']) if npz else False
     own[HIGHPASS_KEY] = True
+    own[HITVAR_KEY] = False
     for key, (neutral, _) in PLUGIN_KEYS.items():
         own[key] = neutral
     for key, (_, _, neutral) in CYMBAL_BAND_KEYS.items():
@@ -347,7 +353,7 @@ def main():
     for key, v in (tun.get('cymbal') or {}).items():
         if key == VOICE_KEY and not bake.get('edge_npz'):
             fail(f'{VOICE_KEY}: the bake has no NPZ edge data')
-        if key in (RESTART_KEY, ENVELOPE_KEY, HIGHPASS_KEY):
+        if key in (RESTART_KEY, ENVELOPE_KEY, HIGHPASS_KEY, HITVAR_KEY):
             if not isinstance(v, bool):
                 fail(f'{key} must be true or false')
             if key == ENVELOPE_KEY and not bake.get('edge_npz'):
@@ -416,7 +422,7 @@ def main():
                 fail(f'unknown articulation value {aid}.{key}')
 
     # The new tuning block: what differs from the bake's own values.
-    new_cymbal = {k: current[k] for k in CYMBAL_KEYS + [RESTART_KEY, ENVELOPE_KEY, HIGHPASS_KEY] + list(CYMBAL_BAND_KEYS)
+    new_cymbal = {k: current[k] for k in CYMBAL_KEYS + [RESTART_KEY, ENVELOPE_KEY, HIGHPASS_KEY, HITVAR_KEY] + list(CYMBAL_BAND_KEYS)
                   + [WEIGHTS_KEY]
                   if k in current and current[k] != own.get(k)}
     new_arts = {}

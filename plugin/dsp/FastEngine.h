@@ -319,6 +319,7 @@ private:
     double envelopeAt(const Component& c, int band, double te) const noexcept;
     double ringTime(const Component& c, int band, double te) const noexcept;
     void computeEnvRing() noexcept;
+    void varyHit(double& position, double& velocity) noexcept;
     void restartFrames(Component& c, double elapsed) noexcept;
 
     std::shared_ptr<const BakeData> bake_;
@@ -435,6 +436,12 @@ private:
     // FROM BOW 0 %, else edgeVoiceVelw at voicePercent_.
     std::vector<double> velw_;
     double voicePercent_ = 0.0;
+    // HIT VARIATION (docs/TUNING.md): on, each strike's position and velocity vary (varyHit)
+    // by draws from hitRng_, a stream of its own (the strike phases draw from rng_ as before),
+    // fixed per preset: a copy of the bake's render stream mixed with constants.
+    bool hitVar_ = false;
+    double hitPosSpread_ = 0.04, hitVelSpread_ = 0.03; // position units; a fraction
+    Pcg64 hitRng_;
     std::vector<double> bandVal0_, bandVal1_; // per band, scratch for one block
     std::vector<double> envPeakS_;            // per band: when the latest envelope strike's envelope peaks (s)
     // The ring length on the band envelope (docs/TUNING.md, "Ring length"): per band 1 / its

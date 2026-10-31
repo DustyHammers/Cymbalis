@@ -16,6 +16,7 @@ const char* groupName (Group g)
         case Group::mf: return "MF BUILD-UP";
         case Group::lf: return "LF BUILD-UP";
         case Group::edgeEnvelope: return "EDGE ENVELOPE";
+        case Group::hitVariation: return "HIT VARIATION";
         case Group::cascade: return "ENERGY CASCADE";
         case Group::loudDamping: return "LOUD-BAND DAMPING";
         case Group::rehitDamping: return "RE-HIT DAMPING";
@@ -65,6 +66,9 @@ const std::vector<Field>& cymbalFields()
         { "tau_ref_ms", "Bow brightness vs velocity (tau_ref)", "ms", Group::cymbal, Needs::noVelocityTables, 0.05, 8.0, 2, &C::tauRefMs, false, Scope::hertz },
         { "ring_length", "Ring length (x t60_scale)", "x", Group::cymbal, Needs::always, 0.5, 2.0, 2, &C::ringLength, true },
         { "edge_ring_keep_ms", "Kept onset (ring length acts after it)", "ms", Group::cymbal, Needs::envelope, 0.0, 300.0, 0, &C::edgeRingKeepMs, false, Scope::edge },
+
+        { kHitPositionSpreadKey, "POSITION SPREAD (0 edge, 0.5 bow, 1 bell)", "", Group::hitVariation, Needs::always, 0.0, kHitPositionSpreadMax, 3, &C::hitPositionSpread, false },
+        { kHitVelocitySpreadKey, "VELOCITY SPREAD", "%", Group::hitVariation, Needs::always, 0.0, kHitVelocitySpreadMax, 1, &C::hitVelocitySpreadPct, false },
 
         { "stereo_width", "Overall width (x every band's width)", "%", Group::stereo, Needs::always, 0.0, kWidthMax, 0, &C::stereoWidth, false },
         { "right_highpass_hz", "Right-channel high-pass frequency", "Hz", Group::stereo, Needs::always, kHighPassMinHz, kHighPassMaxHz, 0, &C::highPassHz, false },
@@ -223,6 +227,8 @@ juce::var cymbalObject (const BakeData& b, const Tuning& t, bool onlyChanged)
         o->setProperty (kEdgeEnvelopeKey, t.cymbal.edgeEnvelope);
     if (! onlyChanged || t.cymbal.highPassOn != b.tuning.cymbal.highPassOn)
         o->setProperty (kHighPassKey, t.cymbal.highPassOn);
+    if (! onlyChanged || t.cymbal.hitVariation != b.tuning.cymbal.hitVariation)
+        o->setProperty (kHitVariationKey, t.cymbal.hitVariation);
     // The per-band values: all 22 when any differs.
     for (const auto& f : cymbalBandFields())
         if (! onlyChanged || t.cymbal.*(f.member) != b.tuning.cymbal.*(f.member))
@@ -352,6 +358,11 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
                 t.cymbal.highPassOn = (bool) p.value;
                 continue;
             }
+            if (key == kHitVariationKey)
+            {
+                t.cymbal.hitVariation = (bool) p.value;
+                continue;
+            }
             if (key == kRehitWeightsKey)
             {
                 auto* w = p.value.getDynamicObject();
@@ -452,6 +463,9 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
         return "The tuning file's right_highpass_hz must lie in 20 to 300 Hz.";
     if (! (t.cymbal.edgeVoiceFromBow >= 0.0 && t.cymbal.edgeVoiceFromBow <= kEdgeVoiceMax))
         return "The tuning file's edge_voice_from_bow must lie in 0 to 100 %.";
+    if (! (t.cymbal.hitPositionSpread >= 0.0 && t.cymbal.hitPositionSpread <= kHitPositionSpreadMax)
+        || ! (t.cymbal.hitVelocitySpreadPct >= 0.0 && t.cymbal.hitVelocitySpreadPct <= kHitVelocitySpreadMax))
+        return "The tuning file's hit_position_spread must lie in 0 to 0.15 and hit_velocity_spread_pct in 0 to 15 %.";
     for (size_t s = 0; s < b.slots.size(); ++s)
         for (double w : { t.articulations[s].stickBowWeight, t.articulations[s].stickBellWeight, t.articulations[s].stickEdgeWeight })
             if (! (w >= 0.0 && w <= kStickWeightMax))
@@ -466,7 +480,7 @@ bool isModified (const BakeData& b, const Tuning& t)
         if (! juce::exactlyEqual (t.cymbal.*(f.member), b.tuning.cymbal.*(f.member)))
             return true;
     if (t.cymbal.frameDecayRestart != b.tuning.cymbal.frameDecayRestart || t.cymbal.edgeEnvelope != b.tuning.cymbal.edgeEnvelope
-        || t.cymbal.highPassOn != b.tuning.cymbal.highPassOn)
+        || t.cymbal.highPassOn != b.tuning.cymbal.highPassOn || t.cymbal.hitVariation != b.tuning.cymbal.hitVariation)
         return true;
     if (! sameRehitWeights (b, t.cymbal, b.tuning.cymbal))
         return true;

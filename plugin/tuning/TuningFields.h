@@ -22,6 +22,7 @@ enum class Group
     mf,
     lf,
     edgeEnvelope,
+    hitVariation,
     cascade,
     loudDamping,
     rehitDamping

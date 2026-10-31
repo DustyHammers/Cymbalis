@@ -120,6 +120,12 @@ struct CymbalTuning
     // the edge's long-ringing modes take the bow's mode pattern (edgeVoiceVelw). 0: the bake's
     // velw.
     double edgeVoiceFromBow = 0.0;
+    // HIT VARIATION (docs/TUNING.md): on, each strike's position moves by U(-spread, spread)
+    // (mirrored at 0 and 1, never across 0.45) and its velocity is multiplied by
+    // 1 + U(-spread, spread), from the engine's own random stream for it. Off: as without it.
+    bool hitVariation = false;
+    double hitPositionSpread = 0.04;   // position units (0 edge, 0.5 bow, 1 bell), 0 .. 0.15
+    double hitVelocitySpreadPct = 3.0; // %, 0 .. 15
     // Energy cascade (FastEngine): while a band rings above the threshold, energy moves from
     // it into the bands above it. Amount 0: off. Bands are indices 0 .. 21 (as the band gains).
     double cascadeAmount = 0.0;        // 0 .. 1
@@ -179,6 +185,10 @@ constexpr double kPanMax = 100.0, kWidthMax = 200.0;
 constexpr double kHighPassMinHz = 20.0, kHighPassMaxHz = 300.0;
 constexpr const char* kEdgeVoiceKey = "edge_voice_from_bow"; // EDGE VOICE FROM BOW, %
 constexpr double kEdgeVoiceMax = 100.0;
+constexpr const char* kHitVariationKey = "hit_variation"; // on / off; its spreads below
+constexpr const char* kHitPositionSpreadKey = "hit_position_spread";
+constexpr const char* kHitVelocitySpreadKey = "hit_velocity_spread_pct";
+constexpr double kHitPositionSpreadMax = 0.15, kHitVelocitySpreadMax = 15.0;
 // The bake's per-mode stereo gains, written by tools/apply_tuning.py (BakeData::gainL/gainR).
 constexpr const char* kStereoKey = "stereo";
 constexpr const char* kRehitWeightsKey = "rehit_damp_weights"; // {articulation id: weight}
