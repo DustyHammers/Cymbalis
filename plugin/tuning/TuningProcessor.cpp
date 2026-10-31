@@ -48,6 +48,7 @@ void CymbalisProcessor::publishTuning (int preset, const cymbalis::Tuning& t)
     m.tuning = t;
     m.decayValid = false;
     m.gainsValid = false;
+    m.velwValid = false;
     if (const auto& bake = presets[(size_t) preset].bake)
     {
         const size_t n = (size_t) bake->numModes;
@@ -64,6 +65,13 @@ void CymbalisProcessor::publishTuning (int preset, const cymbalis::Tuning& t)
         else
             stereoGainsFor (*bake, t, m.gainL, m.gainR);
         m.gainsValid = true;
+        // EDGE VOICE FROM BOW: the velw table for its value, here (at 0 % the bake's).
+        if (bake->edgeNpz.present)
+        {
+            m.velw.resize (bake->edgeNpz.velw.size());
+            cymbalis::edgeVoiceVelw (*bake, t.cymbal.edgeVoiceFromBow, m.velw.data());
+            m.velwValid = true;
+        }
         // Per-band ring lengths: every decay coefficient at the prepared rate, here, for the
         // cymbal to take at its next control point (computed when they change, then sent
         // with every message).
@@ -115,7 +123,8 @@ void CymbalisProcessor::takeTuning (bool newCymbal) noexcept
     const auto& m = tuningBuffers[(size_t) tuningFront];
     if ((fresh || newCymbal) && current != nullptr && current->engine != nullptr && m.preset == current->preset)
         current->engine->setTuning (m.tuning, m.modeGains.data(), m.decayValid ? &m.decay : nullptr,
-                                    m.gainsValid ? m.gainL.data() : nullptr, m.gainsValid ? m.gainR.data() : nullptr);
+                                    m.gainsValid ? m.gainL.data() : nullptr, m.gainsValid ? m.gainR.data() : nullptr,
+                                    m.velwValid ? m.velw.data() : nullptr);
 }
 
 // Loader thread or prepareToPlay: a new cymbal starts with the current values of its preset.
@@ -140,7 +149,15 @@ void CymbalisProcessor::applyTuningToNewCymbal (Cymbal& c)
     std::vector<double> left, right;
     if (! sameStereo (t.cymbal, c.engine->bake().tuning.cymbal))
         stereoGainsFor (c.engine->bake(), t, left, right);
-    c.engine->setTuning (t, nullptr, nullptr, left.empty() ? nullptr : left.data(), right.empty() ? nullptr : right.data());
+    // EDGE VOICE FROM BOW other than the bake's: its velw table (the engine has the bake's value's).
+    std::vector<double> velw;
+    if (bake->edgeNpz.present && ! juce::exactlyEqual (t.cymbal.edgeVoiceFromBow, bake->tuning.cymbal.edgeVoiceFromBow))
+    {
+        velw.resize (bake->edgeNpz.velw.size());
+        cymbalis::edgeVoiceVelw (*bake, t.cymbal.edgeVoiceFromBow, velw.data());
+    }
+    c.engine->setTuning (t, nullptr, nullptr, left.empty() ? nullptr : left.data(), right.empty() ? nullptr : right.data(),
+                         velw.empty() ? nullptr : velw.data());
 }
 
 // Audio thread. Before the Volume knob: the last hit's 500 ms. After it: the output meters.

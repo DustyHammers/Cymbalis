@@ -974,6 +974,13 @@
         "peak_hits": 1024,
         "peak_percentile": 99.0,
         "peak_window_s": 1.0
+      },
+      "attack_band_gains": {
+        "band_edges_hz": [89.094,112.251,141.428,178.188,224.502,282.855,356.375,449.004,565.71,712.75,898.009,1131.42,1425.5,1796.017,2262.84,2851.0,3592.035,4525.68,5702.0,7184.07,9051.361,11404.0,14368.14],
+        "gains_db": [0.0,0.0,0.0,0.0,0.0,0.0,0.0,4.0,4.0,4.0,4.0,8.0,8.0,8.0,8.0,10.0,10.0,10.0,10.0,10.0,10.0,10.0],
+        "gains_db_soft": [0.0,0.0,0.0,0.0,0.0,0.0,0.0,4.0,4.0,4.0,4.0,8.0,8.0,8.0,8.0,10.0,10.0,10.0,10.0,10.0,10.0,10.0],
+        "time_ms": 25.0,
+        "set_by": "tools/apply_tuning.py from swish.tuning.json (2026-10-30T00:04:28Z)"
       }
     },
     {
@@ -1279,12 +1286,21 @@
     "format": "cymbalis-tuning",
     "version": 1,
     "applied_by": "tools/apply_tuning.py",
-    "applied_utc": "2026-10-25T16:58:26Z",
+    "applied_utc": "2026-10-30T00:04:28Z",
     "source": "swish.tuning.json",
-    "source_date": "2026-10-25T00:00:00.000+00:00",
+    "source_date": "2026-10-29T00:00:00.000+00:00",
     "cymbal": {
       "output_gain_db": -11.0
     },
-    "articulations": {}
+    "articulations": {
+      "edge": {
+        "stick_edge_weight": 1.0,
+        "stick_gain": 6.0,
+        "stick_bp_lo": 1000.0,
+        "stick_bp_hi": 10000.0,
+        "stick_len_ms": 12.0,
+        "stick_decay_ms": 5.0
+      }
+    }
   }
 }

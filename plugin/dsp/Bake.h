@@ -98,6 +98,9 @@ struct EdgeNpz
     // decay; the level follows the band envelope alone).
     double remapExponent = 0.5;
     bool frameDecayRestart = true;
+    // EDGE VOICE FROM BOW (docs/TUNING.md): each mode's weight alpha, from the baked T60 and
+    // exc_norm (edgeVoiceAlpha), computed at load. velw stays the bake's.
+    std::vector<double> voiceAlpha;
 };
 
 struct SlotData
@@ -134,11 +137,6 @@ struct SlotData
     bool attackTuned = false;
     std::vector<double> onsetGains; // per band (9 bands)
     double onsetTauS = 0.08;
-
-    // Stick click (_add_transient lines 1194-1211): the weight of its bow, bell and edge
-    // fractions (stick_bow_weight, stick_bell_weight, stick_edge_weight). Its gain, band,
-    // length and decay are tuning values (articulation).
-    double stickBowWeight = 1.0, stickBellWeight = 1.0, stickEdgeWeight = 1.0;
 
     // Stage 3: contact force matrix for this slot's position, numModes x contactLen,
     // row-major. Each row is DC-normalised. Empty when contact is off.
