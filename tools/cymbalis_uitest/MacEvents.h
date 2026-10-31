@@ -5,8 +5,11 @@
 namespace cymbalis::uitest
 {
 // Posts a left click (mouse down, then up) at `p`, a point in `target`'s coordinates, to
-// the native window that holds `target`.
+// the native window that holds `target`. A window of this process in front of that window at
+// `p` (the Tuning window, on a small screen) is first moved aside, to the right of the point,
+// and a line says so; putBack() returns it to where it was, once the click has been handled.
 void click (juce::Component& target, juce::Point<float> p);
+void putBack();
 
 // Presses at `from`, moves to `to` in steps and releases there.
 void drag (juce::Component& target, juce::Point<float> from, juce::Point<float> to);

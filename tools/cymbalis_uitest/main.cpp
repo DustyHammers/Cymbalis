@@ -248,7 +248,10 @@ private:
         window->setTopLeftPosition (80, 80);
         window->setVisible (true);
         window->toFront (true);
-        std::printf ("editor %d x %d\n", editor->getWidth(), editor->getHeight());
+        const auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+        const auto screen = display != nullptr ? display->totalArea : juce::Rectangle<int>();
+        std::printf ("editor %d x %d, screen %d x %d\n", editor->getWidth(), editor->getHeight(), screen.getWidth(),
+                     screen.getHeight());
         std::fflush (stdout);
         return true;
     }
@@ -568,6 +571,9 @@ private:
             quit();
             return;
         }
+        // A window that click() moved aside for the previous tick's click goes back to where
+        // it was (on a small screen, the Tuning window: MacEvents.h).
+        cymbalis::uitest::putBack();
         auto& step = steps[(size_t) stepIndex];
         if (actionIndex == 0)
             actionError = {};
