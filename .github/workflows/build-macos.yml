@@ -25,28 +25,46 @@ env:
 
 jobs:
   build:
-    runs-on: macos-14
+    # macos-14 is retired on 2026-11-02 (brownouts before that); macos-15 replaces it.
+    runs-on: macos-15
     timeout-minutes: 60
+    env:
+      # The Xcode the plugin is built with, pinned so that a new image default (26.x) doesn't
+      # change the build: Xcode 16.4, macOS 15.5 SDK.
+      XCODE_VERSION: '16.4'
+      # JUCE 7.0.12 builds its helper juceaide during configure, in a CMake build of its own that
+      # doesn't get CMAKE_OSX_DEPLOYMENT_TARGET from CMakeLists.txt. That build (CMake, and clang
+      # without -mmacosx-version-min) takes the deployment target from this variable instead;
+      # without it juceaide targets the SDK's macOS 15.5, where JUCE's CGWindowListCreateImage is
+      # obsoleted (an error) rather than deprecated. The plugin's own targets keep CMakeLists.txt's
+      # 11.0, the same value.
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # JUCE 7.0.12 predates the macOS 15 SDK; build against Xcode 15.x (macOS 14 SDK).
-      - name: Select Xcode 15
+      - name: Select Xcode ${{ env.XCODE_VERSION }}
         run: |
-          XCODE=$(ls -d /Applications/Xcode_15*.app 2>/dev/null | sort -V | tail -1)
-          if [ -n "$XCODE" ]; then sudo xcode-select -s "$XCODE"; fi
+          XCODE="/Applications/Xcode_${XCODE_VERSION}.app"
+          if [ ! -d "$XCODE" ]; then
+            echo "::error::$XCODE is not on this runner image; it has $(ls -d /Applications/Xcode*.app | xargs -n1 basename | tr '\n' ' ')"
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE"
           xcodebuild -version
+          echo "SDK $(xcrun --show-sdk-version)"
 
       - name: Install Ninja
         run: brew list ninja >/dev/null 2>&1 || brew install ninja
 
+      # .deps also holds JUCE's build directory, juceaide's build included, so the key names the
+      # Xcode: a cache made with another one (macos-14's Xcode 15.4) isn't reused.
       - name: Cache JUCE source
         uses: actions/cache@v4
         with:
           path: .deps
-          key: deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          key: deps-${{ runner.os }}-xcode${{ env.XCODE_VERSION }}-${{ hashFiles('CMakeLists.txt') }}
 
       - name: Compiler cache
         uses: hendrikmuhs/ccache-action@v1.2
@@ -54,17 +72,29 @@ jobs:
           key: ${{ runner.os }}-${{ env.BUILD_TYPE }}
 
       # Cymbalis with the Tuning window (CYMBALIS_WITH_TUNING, ON by default, docs/TUNING.md).
+      # The toolchain goes into a notice, and on failure the error lines into annotations
+      # (.github/scripts/annotate_errors.sh), which can be read without the job's log.
       - name: Configure (universal arm64 + x86_64)
-        run: >
-          cmake -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=${BUILD_TYPE}
-          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
-          -DFETCHCONTENT_BASE_DIR="${GITHUB_WORKSPACE}/.deps"
-          -DCMAKE_C_COMPILER_LAUNCHER=ccache
-          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+        run: |
+          echo "::notice::$(cmake --version | head -1); $(xcodebuild -version | tr '\n' ' '); SDK $(xcrun --show-sdk-version); MACOSX_DEPLOYMENT_TARGET ${MACOSX_DEPLOYMENT_TARGET}"
+          set -o pipefail
+          if ! cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DFETCHCONTENT_BASE_DIR="${GITHUB_WORKSPACE}/.deps" \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache 2>&1 | tee configure.log; then
+            .github/scripts/annotate_errors.sh configure.log Configure
+            exit 1
+          fi
 
       - name: Build
-        run: cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU CymbalisUiTest cymbalis_bench cymbalis_bench_profile cymbalis_trims --parallel
+        run: |
+          set -o pipefail
+          if ! cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU CymbalisUiTest cymbalis_bench cymbalis_bench_profile cymbalis_trims --parallel 2>&1 | tee build.log; then
+            .github/scripts/annotate_errors.sh build.log Build
+            exit 1
+          fi
 
       # CPU cost of the real-time engine on this runner (Apple Silicon), every slot playing.
       # Printed to the log and the job summary only; nothing is uploaded.
@@ -125,6 +155,18 @@ jobs:
           }
           check "$VST3" "$PRODUCT"; check "$AU" "$PRODUCT"
 
+      # The plugin runs on macOS 11 and later: each slice's LC_BUILD_VERSION minos must be 11.0.
+      - name: Check minimum macOS is 11.0 (both architectures)
+        run: |
+          for B in "$VST3" "$AU"; do
+            BIN="$B/Contents/MacOS/${PRODUCT}"
+            for A in arm64 x86_64; do
+              read -r MINOS SDK < <(otool -arch "$A" -l "$BIN" | awk '/cmd LC_BUILD_VERSION/ { f = 1 } f && $1 == "minos" { m = $2 } f && $1 == "sdk" { print m, $2; exit }') || true
+              echo "$BIN ($A): minos ${MINOS:-none}, sdk ${SDK:-none}"
+              [ "$MINOS" = "11.0" ] || { echo "::error::$BIN ($A) has minimum macOS ${MINOS:-none}, not 11.0"; exit 1; }
+            done
+          done
+
       - name: Check x86_64 slice has no AVX instructions
         run: |
           BIN="$VST3/Contents/MacOS/${PRODUCT}"
@@ -158,12 +200,12 @@ jobs:
           sleep 2
           auval -a | grep -i "$AU_MANUFACTURER" || true
           auval -strict -v $AU_TYPE $AU_SUBTYPE $AU_MANUFACTURER
-          if arch -x86_64 /usr/bin/true 2>/dev/null; then
-            echo "--- x86_64 slice under Rosetta ---"
-            arch -x86_64 auval -strict -v $AU_TYPE $AU_SUBTYPE $AU_MANUFACTURER
-          else
-            echo "Rosetta not installed on this runner; skipping x86_64 auval"
+          if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+            echo "Rosetta is not installed on this runner; installing it"
+            sudo softwareupdate --install-rosetta --agree-to-license
           fi
+          echo "--- x86_64 slice under Rosetta ---"
+          arch -x86_64 auval -strict -v $AU_TYPE $AU_SUBTYPE $AU_MANUFACTURER
 
       # Real mouse events through the AU and VST3 wrappers: EDGE's default note (64), then change
       # the MIDI channel, the slot notes (drag, menu, RESET DEFAULT, note list), a stick, the
