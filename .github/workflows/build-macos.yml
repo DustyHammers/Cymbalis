@@ -58,14 +58,21 @@ jobs:
           key: ${{ runner.os }}-${{ env.BUILD_TYPE }}
 
       # Cymbalis with the Tuning window (CYMBALIS_WITH_TUNING, ON by default, docs/TUNING.md).
+      # On failure the last lines of the output also go into the job's annotations, which can be
+      # read without the full log.
       - name: Configure (universal arm64 + x86_64)
-        run: >
-          cmake -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=${BUILD_TYPE}
-          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
-          -DFETCHCONTENT_BASE_DIR="${GITHUB_WORKSPACE}/.deps"
-          -DCMAKE_C_COMPILER_LAUNCHER=ccache
-          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+        run: |
+          echo "::notice::$(cmake --version | head -1); $(xcodebuild -version | tr '\n' ' '); SDK $(xcrun --show-sdk-version); installed: $(ls -d /Applications/Xcode*.app | xargs -n1 basename | tr '\n' ' ')"
+          set -o pipefail
+          if ! cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DFETCHCONTENT_BASE_DIR="${GITHUB_WORKSPACE}/.deps" \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache 2>&1 | tee configure.log; then
+            grep -n -i -A3 "error" configure.log | head -40 | while IFS= read -r l; do echo "::error::$l"; done
+            exit 1
+          fi
 
       - name: Build
         run: cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU CymbalisUiTest cymbalis_bench cymbalis_bench_profile cymbalis_trims --parallel
