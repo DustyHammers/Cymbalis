@@ -107,7 +107,7 @@ Hover, open and selected states use only colours from this table.
 - **Knobs:** vertical drag; double-click resets to the default.
 - **No mouse wheel:** the mouse wheel and trackpad scrolling change no value anywhere in the editor: not the knobs, the note boxes or the dropdowns. A value changes only by a deliberate click and drag, a menu choice or MIDI learn (and the host's automation of the five parameters). The wheel still scrolls the note list.
 - **MIDI note box:** vertical drag changes the note. A click opens a menu: MIDI LEARN, RESET DEFAULT, NONE (unassign) and a scrollable list of every note, C-2 (0) to G8 (127), each with its number; the current note is outlined and in view. No separate Learn button is added.
-- **Stick box:** where the preset has both stick versions, a click opens a TIP / SHOULDER popup. In every preset the bell and bow rows (BELL, BOW, BELL2, BOW2) have both; section 8 lists what each plays. EDGE is SHOULDER only in every preset: its box shows SHOULDER and opens nothing. Which rows offer the choice comes from the slot table (`StickDisplay::choice` in `plugin/SlotTable.h`). Each preset keeps its own choices: picking SHOULDER on a row in one preset leaves the other presets' rows as they are. The choices are saved with the session (section 9); they are not automatable parameters.
+- **Stick box:** where the preset has both stick versions, a click opens a TIP / SHOULDER popup. In every preset the bell and bow rows (BELL, BOW, BELL2, BOW2) have both; section 8 lists what each plays. EDGE is SHOULDER only in every preset: its box shows SHOULDER and opens nothing. In every preset BELL and BOW start on TIP and BELL2 and BOW2 on SHOULDER (section 8, "Default sticks"). Which rows offer the choice comes from the slot table (`StickDisplay::choice` in `plugin/SlotTable.h`). Each preset keeps its own choices: picking SHOULDER on a row in one preset leaves the other presets' rows as they are. The choices are saved with the session (section 9); they are not automatable parameters.
 - **Dropdowns:** the preset dropdown is a list of NOVA RIDE, SMOKE FLAT RIDE, HAMMERED THIN RIDE, SWISH, RAVEN and KONSTAN CRASH 18", below its box; the channel dropdown is a 4×4 grid below its box, right-aligned with it. A choice sets the preset or the channel.
 - **TUNING button** (tuning code only): a click opens the Tuning window, a second click closes it; while it is open the button has the open outline `#A5A299`, and the bronze `#76624C` on hover otherwise. Cmd-click on the CYMBALIS logo opens it too (`docs/TUNING.md`).
 - **Preset switch:** the chosen preset's data is loaded into the one cymbal engine and plays from the next audio block (PORT_MAP, "602 and Bettis", decision 6). If the old cymbal is still ringing it fades out over 30 ms; it does not carry over. Notes, the MIDI channel and the knobs stay as they are; the rows play the stick choices of the chosen preset.
@@ -119,10 +119,10 @@ Hover, open and selected states use only colours from this table.
 | Setting | Default |
 |---|---|
 | MIDI channel | 16 |
-| BELL | SHOULDER, C3 (60) |
+| BELL | TIP, C3 (60) |
 | BOW | TIP, D3 (62) |
 | EDGE | SHOULDER (fixed), E3 (64) |
-| BELL2 | TIP, C#3 (61) |
+| BELL2 | SHOULDER, C#3 (61) |
 | BOW2 | SHOULDER, D#3 (63) |
 | Blend Position 1 | Full BELL |
 | Blend Position 2 | Full BOW |
@@ -151,21 +151,33 @@ A preset can name a row: SMOKE FLAT RIDE labels its bell rows CENTER and CENTER2
 | BELL2 | 1.0 | Blend 1: 1.0 → 0.5 | C#3 (61) |
 | BOW2 | 0.5 | Blend 2: 0.5 → 0.0 | D#3 (63) |
 
+**Default sticks** (approved by Kris, 2026-10-31), the same in every preset:
+
+| Row | Starts on |
+|---|---|
+| BELL (CENTER on SMOKE FLAT RIDE) | TIP |
+| BOW | TIP |
+| EDGE | SHOULDER (fixed) |
+| BELL2 (CENTER2 on SMOKE FLAT RIDE) | SHOULDER |
+| BOW2 | SHOULDER |
+
+These are a new instance's sticks (`defaultStick` in `plugin/SlotTable.h`); a saved session keeps the sticks it stored (section 9). Until 2026-10-31 every row with a choice started on TIP, except on NOVA RIDE, whose BELL started on SHOULDER and BELL2 on TIP.
+
 **NOVA RIDE** (`resources/presets/nova_ride.bake.json`)
 
 | Slot | Default (stick) | Other stick choice | Stick box |
 |---|---|---|---|
-| BELL | `bell_shoulder` (SHOULDER) | `bell_tip` (TIP) | TIP / SHOULDER popup |
+| BELL | `bell_tip` (TIP) | `bell_shoulder` (SHOULDER) | TIP / SHOULDER popup |
 | BOW | `bow_tip` (TIP) | `bow_shoulder` (SHOULDER) | TIP / SHOULDER popup |
 | EDGE | `edge` (SHOULDER) | — | SHOULDER (fixed) |
-| BELL2 | `bell_tip` (TIP) | `bell_shoulder` (SHOULDER) | TIP / SHOULDER popup |
+| BELL2 | `bell_shoulder` (SHOULDER) | `bell_tip` (TIP) | TIP / SHOULDER popup |
 | BOW2 | `bow_shoulder` (SHOULDER) | `bow_tip` (TIP) | TIP / SHOULDER popup |
 
 The bell and bow articulations are the four overlays (`bell_shoulder.json` and so on), so any bell or bow row can play either stick. **edge** is a copy of `bow_shoulder` played at the edge position, 0.0 (bake entry `EDGE`, `"copy_of": "BOW2"`). It is tuned on its own (`docs/TUNING.md`) and starts with bow_shoulder's level trim. Nova has no edge captures; until 2026-10-17 its EDGE row played the base preset at the edge position, which is gone from the bake.
 
 **SMOKE FLAT RIDE** (602, `resources/presets/smoke_flat_ride.bake.json`): no bell. Its bell rows play **center**, a copy of the 602 bow that is tuned on its own (`docs/TUNING.md`). The existing bow and center are TIP. Their SHOULDER versions, **bow_shoulder** and **center_shoulder**, are copies of them, tuned on their own; untuned they play exactly as their TIP versions.
 
-| Slot | Label | TIP (default) | SHOULDER | Stick box |
+| Slot | Label | TIP | SHOULDER | Stick box |
 |---|---|---|---|---|
 | BELL | CENTER | center (`CENTER`: a copy of `BOW`) | center_shoulder (`CENTER_SHOULDER`: a copy of `CENTER`) | TIP / SHOULDER popup |
 | BOW | BOW | bow (`BOW`: `bow.json`, empty overlay) | bow_shoulder (`BOW_SHOULDER`: a copy of `BOW`) | TIP / SHOULDER popup |
@@ -179,7 +191,7 @@ CENTER and CENTER2 strike where the bell rows do, at 1.0 − 0.5·blend_1. The 6
 
 **HAMMERED THIN RIDE** (Bettis, `resources/presets/hammered_thin_ride.bake.json`): no overlays. The existing bell and bow are TIP. Their SHOULDER versions, **bell_shoulder** and **bow_shoulder**, are copies of them, tuned on their own; untuned they play exactly as their TIP versions.
 
-| Slot | TIP (default) | SHOULDER | Stick box |
+| Slot | TIP | SHOULDER | Stick box |
 |---|---|---|---|
 | BELL | bell (`BELL`) | bell_shoulder (`BELL_SHOULDER`: a copy of `BELL`) | TIP / SHOULDER popup |
 | BOW | bow (`BOW`) | bow_shoulder (`BOW_SHOULDER`: a copy of `BOW`) | TIP / SHOULDER popup |
@@ -187,11 +199,11 @@ CENTER and CENTER2 strike where the bell rows do, at 1.0 − 0.5·blend_1. The 6
 | BELL2 | bell | bell_shoulder | TIP / SHOULDER popup |
 | BOW2 | bow | bow_shoulder | TIP / SHOULDER popup |
 
-Each copy has its own level trim, initialised to its source's. In both presets every row with a choice starts on TIP, the stick it played before the shoulder versions existed. The blend knobs move whichever rows play, with either stick. In SMOKE FLAT RIDE, Blend 1 moves CENTER and CENTER2, and its end labels read CENTER · BOW.
+Each copy has its own level trim, initialised to its source's. In both presets BELL and BOW (CENTER and BOW on SMOKE FLAT RIDE) start on TIP, BELL2 and BOW2 (CENTER2 and BOW2) on SHOULDER ("Default sticks" above). The blend knobs move whichever rows play, with either stick. In SMOKE FLAT RIDE, Blend 1 moves CENTER and CENTER2, and its end labels read CENTER · BOW.
 
 **SWISH** (22" China, `resources/presets/swish.bake.json`): the bell is the base preset at the bell position with the v11 bell ratios (TIP); its SHOULDER version, **bell_shoulder**, is a copy of it, tuned on its own. The bow has both captures as overlays: **bow_tip** (with the stick click) and **bow_shoulder**. The edge is the base preset at the edge position (SHOULDER).
 
-| Slot | TIP (default) | SHOULDER | Stick box |
+| Slot | TIP | SHOULDER | Stick box |
 |---|---|---|---|
 | BELL | bell (`BELL`: no overlay, position 1.0) | bell_shoulder (`BELL_SHOULDER`: a copy of `BELL`) | TIP / SHOULDER popup |
 | BOW | bow_tip (`BOW`: `bow_tip.json`) | bow_shoulder (`BOW_SHOULDER`: `bow_shoulder.json`) | TIP / SHOULDER popup |
@@ -199,11 +211,11 @@ Each copy has its own level trim, initialised to its source's. In both presets e
 | BELL2 | bell | bell_shoulder | TIP / SHOULDER popup |
 | BOW2 | bow_tip | bow_shoulder | TIP / SHOULDER popup |
 
-Every row with a choice starts on TIP. bell_shoulder has its own level trim, measured with BELL's target (`docs/PORT_MAP.md`, "Swish").
+BELL and BOW start on TIP, BELL2 and BOW2 on SHOULDER ("Default sticks" above). bell_shoulder has its own level trim, measured with BELL's target (`docs/PORT_MAP.md`, "Swish").
 
 **RAVEN** (20" dry ride, `resources/presets/raven.bake.json`): as HAMMERED THIN RIDE, no overlays. The existing bell and bow are TIP. Their SHOULDER versions, **bell_shoulder** and **bow_shoulder**, are copies of them, tuned on their own; untuned they play exactly as their TIP versions.
 
-| Slot | TIP (default) | SHOULDER | Stick box |
+| Slot | TIP | SHOULDER | Stick box |
 |---|---|---|---|
 | BELL | bell (`BELL`) | bell_shoulder (`BELL_SHOULDER`: a copy of `BELL`) | TIP / SHOULDER popup |
 | BOW | bow (`BOW`) | bow_shoulder (`BOW_SHOULDER`: a copy of `BOW`) | TIP / SHOULDER popup |
@@ -211,11 +223,11 @@ Every row with a choice starts on TIP. bell_shoulder has its own level trim, mea
 | BELL2 | bell | bell_shoulder | TIP / SHOULDER popup |
 | BOW2 | bow | bow_shoulder | TIP / SHOULDER popup |
 
-Every row with a choice starts on TIP. Each copy starts with its source's level trim (`docs/PORT_MAP.md`, "Raven").
+BELL and BOW start on TIP, BELL2 and BOW2 on SHOULDER ("Default sticks" above). Each copy starts with its source's level trim (`docs/PORT_MAP.md`, "Raven").
 
 **KONSTAN CRASH 18"** (`resources/presets/konstan.bake.json`, added 2026-10-28): as RAVEN, no overlays. Its bell is inferred from the bow, not captured (`docs/PORT_MAP.md`, "Konstan Crash 18""); the plugin plays it as any bell. The existing bell and bow are TIP. Their SHOULDER versions, **bell_shoulder** and **bow_shoulder**, are copies of them, tuned on their own; untuned they play exactly as their TIP versions.
 
-| Slot | TIP (default) | SHOULDER | Stick box |
+| Slot | TIP | SHOULDER | Stick box |
 |---|---|---|---|
 | BELL | bell (`BELL`) | bell_shoulder (`BELL_SHOULDER`: a copy of `BELL`) | TIP / SHOULDER popup |
 | BOW | bow (`BOW`) | bow_shoulder (`BOW_SHOULDER`: a copy of `BOW`) | TIP / SHOULDER popup |
@@ -223,7 +235,7 @@ Every row with a choice starts on TIP. Each copy starts with its source's level 
 | BELL2 | bell | bell_shoulder | TIP / SHOULDER popup |
 | BOW2 | bow | bow_shoulder | TIP / SHOULDER popup |
 
-Every row with a choice starts on TIP. Each copy starts with its source's level trim (`docs/PORT_MAP.md`, "Konstan Crash 18"").
+BELL and BOW start on TIP, BELL2 and BOW2 on SHOULDER ("Default sticks" above). Each copy starts with its source's level trim (`docs/PORT_MAP.md`, "Konstan Crash 18"").
 
 ## 9. Parameters — exactly these five, no others
 Placeholder ranges until Kris revises them. At the defaults the plugin sounds the same as the Python engine.
@@ -247,7 +259,7 @@ EDGE always strikes at position 0.0. All five are automatable. No other paramete
 
 Pan is saved with the session like the other four; a session saved before it existed loads with pan at centre.
 
-Non-automatable state saved with the session: MIDI channel, note per slot, stick per slot and preset (rows with a choice), current preset, editor size. A session without a row's note key gives the row its default note. NOVA RIDE's sticks keep the session keys they had before the other presets offered a choice (`stick_BELL`, …); the other presets' keys name the preset (`stick_smoke_flat_ride_BELL`, `stick_hammered_thin_ride_BOW2`, `stick_swish_BOW`, …). A session without a key gives the row its default stick.
+Non-automatable state saved with the session: MIDI channel, note per slot, stick per slot and preset (rows with a choice), current preset, editor size. A session without a row's note key gives the row its default note. NOVA RIDE's sticks keep the session keys they had before the other presets offered a choice (`stick_BELL`, …); the other presets' keys name the preset (`stick_smoke_flat_ride_BELL`, `stick_hammered_thin_ride_BOW2`, `stick_swish_BOW`, …). A session without a key gives the row its default stick (section 8): a session saved before 2026-10-14 has no stick keys, and one saved from 2026-10-14 to 2026-10-17 only NOVA RIDE's, so their other rows start as a new instance's do.
 
 ## 10. Hit display
 
