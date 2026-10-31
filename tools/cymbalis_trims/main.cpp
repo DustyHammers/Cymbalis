@@ -20,6 +20,9 @@
 // both channels) of N hits (default 1024), each with the next phase draw of the preset's
 // sequence, as the plugin plays them. --peak-hits 1 uses the first hit after loading.
 //
+// A trim is the level at the slot's own position, so HIT VARIATION (docs/TUNING.md) is
+// switched off while measuring: every strike plays at the slot's position and velocity V.
+//
 // The trims are printed and, with --json, written for tools/set_level_trims.py, which stores
 // them in the bake. The audio is only measured in memory; nothing is written but the JSON.
 #include "Bake.h"
@@ -131,11 +134,12 @@ int main(int argc, char** argv)
     }
     try
     {
-        // Measure without the trims the bakes may already hold.
+        // Measure without the trims the bakes may already hold, and without HIT VARIATION.
         auto untrimmed = [](const std::string& path) {
             auto b = std::make_shared<cymbalis::BakeData>(*cymbalis::loadBake(path));
             for (auto& s : b->slots)
                 s.levelTrim = 1.0;
+            b->tuning.cymbal.hitVariation = false;
             return b;
         };
         auto bake = untrimmed(bakePath);
