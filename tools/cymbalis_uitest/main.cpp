@@ -26,6 +26,10 @@
 //   konstan   click the CYMBAL box, then KONSTAN CRASH 18" (the sixth) -> preset konstan
 //   wheel     the scroll wheel over the five knobs, a note box, a stick box, the CYMBAL and
 //             MIDI CHANNEL boxes                                     -> state and parameters unchanged
+//   arcs      (Tuning window closed) for each of the five knobs: drag it 40 design units, double-
+//             click it, automate its parameter through the host, and back to its default
+//                                                                    -> each moves the parameter and
+//             the value the knob shows (its accessibility value), which its arc is drawn from
 //
 // The Tuning window (docs/TUNING.md); these read the windows, not the saved state:
 //
@@ -80,6 +84,9 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <iterator>
+#include <memory>
+#include <vector>
 
 #include "HitTiming.h"
 #include "MacEvents.h"
@@ -161,6 +168,26 @@ public:
         setUsingNativeTitleBar (true);
     }
     void closeButtonPressed() override { juce::JUCEApplication::quit(); }
+};
+
+// arcs: a knob (UI_SPEC section 3), its host parameter, and what each action did to both.
+struct ArcKnob
+{
+    const char* name; // the parameter's name
+    juce::Point<float> centre;
+};
+const ArcKnob kArcKnobs[] = { { "Velocity Sensitivity", { 487.0f, 881.0f } },
+                              { "Volume", { 787.0f, 881.0f } },
+                              { "Blend Position 1", { 1349.0f, 642.0f } },
+                              { "Blend Position 2", { 1350.0f, 881.0f } },
+                              { "Pan", { 1087.0f, 881.0f } } };
+
+struct ArcCheck
+{
+    juce::AudioProcessorParameter* param = nullptr;
+    bool down = false; // dragged down (from above the middle) or up
+    float def = 0.0f, start = 0.0f, dragged = 0.0f, reset = 0.0f, target = 0.0f, automated = 0.0f, restored = 0.0f;
+    juce::String textStart, textDragged, textReset, textAutomated, textRestored;
 };
 
 struct Step
@@ -426,7 +453,7 @@ private:
             s.actions = { [this] {
                              before = snapshot();
                              wheelError = {};
-                             const juce::Point<float> points[] = { { 226.0f, 881.0f }, { 600.0f, 881.0f }, { 974.0f, 881.0f }, { 1349.0f, 642.0f },
+                             const juce::Point<float> points[] = { { 487.0f, 881.0f }, { 787.0f, 881.0f }, { 1087.0f, 881.0f }, { 1349.0f, 642.0f },
                                                                    { 1350.0f, 881.0f }, { 1457.0f, 232.0f }, { 1314.0f, 152.0f },
                                                                    { 199.0f, 402.0f },  { 1459.0f, 48.0f } };
                              for (auto p : points)
@@ -436,6 +463,99 @@ private:
             s.key = "after the wheel";
             s.expected = "unchanged";
             s.probe = [this] { return unchanged(); };
+        }
+        else if (name == "arcs")
+        {
+            // Each knob's arc is drawn from the knob's position (PluginEditor.cpp Knob::paint):
+            // dragging it, double-clicking it (back to its default) and automating its parameter
+            // through the host must each move both the parameter and the value the knob shows,
+            // read through its accessibility element. The Tuning window must be closed (it can
+            // cover the knobs). Each action is read back at the next tick.
+            auto checks = std::make_shared<std::vector<ArcCheck>> (std::size (kArcKnobs));
+            for (size_t k = 0; k < std::size (kArcKnobs); ++k)
+            {
+                const auto c = kArcKnobs[k];
+                s.actions.push_back ([this, checks, k, c] {
+                    auto& a = (*checks)[k];
+                    for (auto* p : plugin->getParameters())
+                        if (p->getName (64) == c.name)
+                            a.param = p;
+                    if (a.param == nullptr)
+                        return;
+                    a.def = a.param->getDefaultValue();
+                    a.start = a.param->getValue();
+                    a.textStart = cymbalis::uitest::sliderText (*editor, at (c.centre.x, c.centre.y));
+                    a.down = a.start > 0.5f;
+                    const float dy = a.down ? 40.0f : -40.0f; // design units: 40 / 300 of the knob's range
+                    cymbalis::uitest::drag (*editor, at (c.centre.x, c.centre.y), at (c.centre.x, c.centre.y + dy));
+                });
+                s.actions.push_back ([this, checks, k, c] {
+                    auto& a = (*checks)[k];
+                    if (a.param == nullptr)
+                        return;
+                    a.dragged = a.param->getValue();
+                    a.textDragged = cymbalis::uitest::sliderText (*editor, at (c.centre.x, c.centre.y));
+                    cymbalis::uitest::doubleClick (*editor, at (c.centre.x, c.centre.y));
+                });
+                s.actions.push_back ([this, checks, k, c] {
+                    auto& a = (*checks)[k];
+                    if (a.param == nullptr)
+                        return;
+                    a.reset = a.param->getValue();
+                    a.textReset = cymbalis::uitest::sliderText (*editor, at (c.centre.x, c.centre.y));
+                    a.target = a.def > 0.5f ? 0.25f : 0.75f;
+                    a.param->setValueNotifyingHost (a.target);
+                });
+                s.actions.push_back ([this, checks, k, c] {
+                    auto& a = (*checks)[k];
+                    if (a.param == nullptr)
+                        return;
+                    a.automated = a.param->getValue();
+                    a.textAutomated = cymbalis::uitest::sliderText (*editor, at (c.centre.x, c.centre.y));
+                    a.param->setValueNotifyingHost (a.def);
+                });
+                s.actions.push_back ([this, checks, k, c] {
+                    auto& a = (*checks)[k];
+                    if (a.param == nullptr)
+                        return;
+                    a.restored = a.param->getValue();
+                    a.textRestored = cymbalis::uitest::sliderText (*editor, at (c.centre.x, c.centre.y));
+                });
+            }
+            s.key = "the five knobs";
+            s.expected = "followed";
+            s.probe = [checks] {
+                juce::String wrong;
+                for (size_t k = 0; k < checks->size(); ++k)
+                {
+                    const auto& a = (*checks)[k];
+                    const juce::String knob = kArcKnobs[k].name;
+                    if (a.param == nullptr)
+                    {
+                        wrong << " no parameter \"" << knob << "\";";
+                        continue;
+                    }
+                    auto shown = [] (float v, const juce::String& t) { return juce::String (v, 3) + " \"" + t + "\""; };
+                    std::printf ("      %s: %s | drag %s %s | double-click %s | automation %s | back %s\n", knob.toRawUTF8(),
+                                 shown (a.start, a.textStart).toRawUTF8(), a.down ? "down" : "up",
+                                 shown (a.dragged, a.textDragged).toRawUTF8(), shown (a.reset, a.textReset).toRawUTF8(),
+                                 shown (a.automated, a.textAutomated).toRawUTF8(), shown (a.restored, a.textRestored).toRawUTF8());
+                    auto near = [] (float x, float y) { return std::abs (x - y) < 0.002f; };
+                    auto readable = [] (const juce::String& t) { return t.isNotEmpty() && ! t.startsWith ("no "); };
+                    if (! readable (a.textStart))
+                        wrong << " " << knob << ": its value not readable (" << a.textStart << ");";
+                    const float moved = a.dragged - a.start;
+                    if ((a.down ? -moved : moved) < 0.05f || a.textDragged == a.textStart)
+                        wrong << " " << knob << ": the drag did not move it;";
+                    if (! near (a.reset, a.def) || a.textReset == a.textDragged || (near (a.start, a.def) && a.textReset != a.textStart))
+                        wrong << " " << knob << ": the double-click did not return it to its default;";
+                    if (! near (a.automated, a.target) || a.textAutomated == a.textReset)
+                        wrong << " " << knob << ": the automation did not move it;";
+                    if (! near (a.restored, a.def) || a.textRestored != a.textReset)
+                        wrong << " " << knob << ": the automation back to its default did not move it back;";
+                }
+                return wrong.isEmpty() ? juce::String ("followed") : "not followed:" + wrong;
+            };
         }
         else if (name == "wheeltuning")
         {

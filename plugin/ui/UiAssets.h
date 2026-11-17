@@ -29,6 +29,14 @@ const juce::Colour arrow { 0xff999489 };       // dropdown arrow
 const juce::Colour divider { 0xff353231 };
 const juce::Colour popup { 0xff141313 };       // popup background
 const juce::Colour openOutline { 0xffa5a299 }; // outline of a box whose popup is open; a lit row's label
+// The knobs' position arcs (UI_SPEC section 6): the track, and the lit part from dark bronze
+// to bright gold.
+const juce::Colour arcTrack { 0xff1c1a18 };
+const juce::Colour arcDark { 0xff5a4a36 };
+const juce::Colour arcBright { 0xffecc88c };
+// The DHammers logo (UI_SPEC section 4): a vertical gradient over its ink.
+const juce::Colour logoTop { 0xff8e7550 };
+const juce::Colour logoBottom { 0xff4a3d2d };
 // A lit row (UI_SPEC section 10): its label is openOutline, its boxes bronze. The wireframe
 // cymbal's colours are in CymbalModel.h (UI_SPEC section 11).
 } // namespace palette
@@ -51,6 +59,15 @@ public:
 
     // The UI font at `sizePx` (em size, design units) with `spacingPx` of letter spacing.
     juce::Font font (float sizePx, float spacingPx = 0.0f) const;
+
+    // Pinyon Script, for the DHammers logo (PinyonScript-Regular.ttf), and its em size per
+    // unit of JUCE font height: unitsPerEm / (hhea ascender - descender), the height JUCE
+    // gives a typeface with CoreText and FreeType alike.
+    juce::Typeface::Ptr logoTypeface;
+    float logoEmPerHeight = 2048.0f / 2555.0f;
+
+    // The logo font at `sizePx` (em size, design units).
+    juce::Font logoFont (float sizePx) const;
 
     static constexpr int knobFrames = 91;
     static constexpr int knobFrameSize = 128;
