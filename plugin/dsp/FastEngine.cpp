@@ -1686,20 +1686,34 @@ void FastEngine::sumComponents(double t0, double t1) noexcept
                     te1 = ringTime(c, band, te1);
                 }
                 double v0 = hiHatEnvelopeAt(c, band, te0), v1 = hiHatEnvelopeAt(c, band, te1);
-                // The gain at the block's end: the choke's extra decay; or, opened up, the log
-                // step blended from the envelope's own, s, to the pedal's rate at its openness
-                // now, never above s where s rises (a captured bloom) nor 0 where it falls; the
-                // band never above its peak.
+                // The gain at the block's end. Not opened up: the choke's extra decay on the
+                // envelope. Opened up, the band's level is a state of its own: it takes the log
+                // step `slope` (v1 g1 = v0 g0 exp(slope)) from the envelope's own, s, clamped to
+                // +-kHiHatStepMax dt (s_c; -kHiHatStepMax dt with a zero end), so the envelope's
+                // dropouts cannot move it: opening, s_c blended to the pedal's rate at its
+                // openness now, never above s_c where it rises (a captured bloom) nor 0 where it
+                // falls; closing, s_c less the choke's extra decay; otherwise s_c. The band never
+                // above its peak.
                 const double g0 = c.hhGain[bs];
                 double g1 = g0;
-                if (step == PedalStep::closing)
-                    g1 = c.hhExtra[bs] > 0.0 ? g0 * std::exp(-c.hhExtra[bs] * dt) : g0;
-                else if (step == PedalStep::opening && v0 > 0.0 && v1 > 0.0)
+                if (c.hhOpened)
                 {
-                    const double s = std::log(v1 / v0);
-                    const double slope = std::min((1.0 - blend) * s - blend * hhRateNow_[bs] * dt, std::max(s, 0.0));
-                    g1 = g0 * std::exp(slope - s);
+                    const double m = kHiHatStepMax * dt;
+                    const bool ends = v0 > 0.0 && v1 > 0.0;
+                    const double s = ends ? std::log(v1 / v0) : 0.0;
+                    const double sc = ends ? std::min(std::max(s, -m), m) : -m;
+                    double slope = sc;
+                    if (step == PedalStep::opening)
+                        slope = std::min((1.0 - blend) * sc - blend * hhRateNow_[bs] * dt, std::max(sc, 0.0));
+                    else if (step == PedalStep::closing)
+                        slope = sc - c.hhExtra[bs] * dt;
+                    if (ends)
+                        g1 = g0 * std::exp(slope - s);
+                    else if (v1 > 0.0)
+                        g1 = v0 * g0 * std::exp(slope) / v1;
                 }
+                else if (step == PedalStep::closing)
+                    g1 = c.hhExtra[bs] > 0.0 ? g0 * std::exp(-c.hhExtra[bs] * dt) : g0;
                 if (c.hhOpens && v1 * g1 > c.hhPeak[bs])
                     g1 = c.hhPeak[bs] / v1;
                 c.hhGain1[bs] = g1;
@@ -4366,10 +4380,12 @@ void FastEngine::hiHatRate(double o, double* out) const noexcept
 // first its gain at t0, from the rate its log last changed at; then
 // - closing (o < o_s), the choke (HiHat.choke_rate): per band the extra rate
 //   max(rate(o), CHOKE_RATE (o_s - o) / o_s) - rate(o_s), never negative;
-// - opening (o > o_s, TIP and EDGE, from kHiHatOpenAfterS after the strike): the blend weight
-//   w = min(1, (o - o_s) / kHiHatOpenBlend), and the band rates at o (hhRateNow_); the control
-//   loop takes each band's log step from its envelope's own towards -rate(o) dt;
-// - otherwise its gain stays.
+// - opening (o > o_s + kHiHatOpenEps, TIP and EDGE, from kHiHatOpenAfterS after the strike): the
+//   blend weight w = min(1, (o - o_s) / kHiHatOpenBlend), and the band rates at o (hhRateNow_);
+//   the control loop takes each band's log step from its envelope's own towards -rate(o) dt.
+//   From its first opening block on the strike has opened up (hhOpened): on every block after,
+//   whatever the step, the control loop follows its band levels with a step of their own;
+// - otherwise none.
 // The band rates at o are computed once per block (rateDone).
 FastEngine::PedalStep FastEngine::hiHatPedalStep(Component& c, double t0, double t1, double& openNow, bool& rateDone,
                                                  double& blend) noexcept
@@ -4409,10 +4425,11 @@ FastEngine::PedalStep FastEngine::hiHatPedalStep(Component& c, double t0, double
         return any ? PedalStep::closing : PedalStep::none;
     }
     c.hhExtra.fill(0.0);
-    if (c.hhOpens && openNow > c.hhOpen && t0 - c.tStrike >= kHiHatOpenAfterS)
+    if (c.hhOpens && openNow > c.hhOpen + kHiHatOpenEps && t0 - c.tStrike >= kHiHatOpenAfterS)
     {
         rates();
         blend = std::min(1.0, (openNow - c.hhOpen) / kHiHatOpenBlend);
+        c.hhOpened = true;
         return PedalStep::opening;
     }
     return PedalStep::none;
@@ -4646,6 +4663,7 @@ void FastEngine::strikeHiHat(int slotIndex, double velocity, double position) no
     // The pedal: a strike more open than the pedal later is damped further (the choke); a TIP or
     // EDGE strike less open than the pedal later opens up (HiHat.level_step).
     comp.hhOpen = open;
+    comp.hhOpened = false;
     comp.hhChoke = open > 0.0;
     comp.hhChokeT = strikeTime;
     comp.hhT1 = -1.0;
