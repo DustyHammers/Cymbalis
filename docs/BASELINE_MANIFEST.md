@@ -156,3 +156,21 @@ Built 2026-10-28 in the project session from Kris's SPEAR captures (Bow V1-V6, E
 - SPEAR level targets in `data/konstan_build_info.json`: EDGE +13.5 dB above BOW (Edge V7 against Bow V6); BELL +4.72 dB, RAVEN's measured value (the bell is inferred).
 - Build-up (LF and MF) as Bettis and Swish; wander, stick click and NL off. No velocity tables: bell and bow use the hertz law (v^2).
 - No photo: the plugin draws the wireframe (`docs/ui/wireframe_reference.py`, `konstan`).
+
+# HI-HAT (GF A60, 14")
+
+Built 2026-11-20 in the project session from Kris's SPEAR captures of a pair of 14" hats: HH Tip V1-V3 (stick tip on the bow, closed) and HH Shoulder Edge V1-V7 (stick shoulder on the edge; V1-V3 closed at three velocities, V4-V7 opened in steps, Kris 2026-11-20). SPEAR files excluded. Not a V19 preset: its own format (`cymbalis-hihat-1`), read by the hi-hat bake, with the strike model in `docs/hihat_reference.py`. No baseline render check: the plugin is the reference (see `CLAUDE.md`).
+
+| File | MD5 |
+|---|---|
+| `presets/hihat/HiHat_A60.json` | `c491060b013d35997116a2ab99eeacea` |
+| `presets/hihat/data/hihat_envelopes.json` | `d78586a3de2d06f65bae5764e0d52269` |
+| `presets/hihat/data/hihat_weights.json` | `6f9f0a6e61d34fb535ce84647dcaa89d` |
+
+## Notes
+
+- Mode bank: 683 modes, the SPEAR partial frequencies of all ten captures merged within 0.3 %, the strongest per band (12 in each band below 449 Hz, up to 45 above).
+- Ten knots (`HiHat_A60.json`): closed TIP and EDGE at velocities 0.3 / 0.6 / 1.0 (V1-V3), and EDGE at openness 0.25 / 0.5 / 0.75 / 1.0 (V4-V7). The open captures' velocities are matched by attack level (first 20 ms) to the closed edge: V4 and V5 about V2 (0.6), V6 and V7 about V3 (1.0). V4 and V5 measure almost the same (level and decay).
+- Per knot: the band envelope (22 plugin bands, 10 ms frames, the SPEAR band amplitude from the first frame with a partial) and each mode's weight within its band (unit norm per band; SPEAR energy within 0.4 % of the mode in the first 300 ms, floored at 8 % of the band's strongest).
+- What the captures show: closed hits fade 20 dB in about 0.1 s in the upper bands, with a low body around 150-300 Hz; open hits ring 2-2.5 s (V4, V5) to 4-6 s (V6, V7) and lose the low body. SPEAR shows every strike rising over 20-40 ms (its analysis window), which sounds like the pedal closing the cymbals rather than a stick: the stick articulations replace that rise (`docs/hihat_reference.py`); the FOOT articulation keeps it.
+- No photo: the plugin draws the wireframe (`docs/ui/wireframe_reference.py`, HI-HAT section).
