@@ -29,6 +29,19 @@
 //             pedal CC: notes 42 and 46 (its rows' defaults, BOW and EDGE), each must sound;
 //             the pedal open, 46 must ring on long after a closed one has gone; the pedal
 //             closed again, FOOT must sound without a note       -> played
+//   hihatpedal (on HI-HAT, after hihatplay) the pedal CC through the host into the plugin at 0,
+//             64, 127 and 0 again, each held 1 s: the hats and the pedal drawing must show that
+//             opening (their accessibility descriptions, "open 0.504")
+//                                                                    -> followed
+//   pedalchannel (on HI-HAT, after hihatplay) MIDI CHANNEL set to 16 in its grid, then the pedal
+//             CC sent on channel 1 (as a keyboard's mod wheel), sweeping 0 -> 127 -> 0 in steps:
+//             after each, the hats and the pedal drawing must show its opening, and over the
+//             sweep the output must start one sound, FOOT, on the close    -> followed, 1 FOOT
+//   pedalcc   (on HI-HAT) click the PEDAL box, then CC 4 in its grid; then CC 1; then the state
+//             saved with CC 4 set again through the host            -> pedalCc 4 saved, 1 picked,
+//             4 restored, and the box shows each (its accessibility description)
+//   blendhidden (on HI-HAT) no slider at either Blend Position knob   -> hidden
+//   blendshown  (on another preset) both Blend Position knobs give their values -> shown
 //   wheel     the scroll wheel over the five knobs, a note box, a stick box, the CYMBAL and
 //             MIDI CHANNEL boxes                                     -> state and parameters unchanged
 //   arcs      (Tuning window closed) for each of the five knobs: drag it 40 design units, double-
@@ -38,8 +51,9 @@
 //
 // The Tuning window (docs/TUNING.md); these read the windows, not the saved state:
 //
-//   tuning       click TUNING        -> the Tuning window is visible and in front of the editor
-//   tuningclose  click TUNING again  -> the Tuning window is hidden
+//   tuning       click the CYMBALIS title (top left)  -> the Tuning window is visible and in
+//                                                        front of the editor
+//   tuningclose  click it again                       -> the Tuning window is hidden
 //
 // and, with the Tuning window open, this one reads the saved state again:
 //
@@ -406,6 +420,65 @@ private:
         return "played";
     }
 
+    // hihatpedal: the pedal CC at `value` through the hosted plugin's processBlock, on the
+    // session's MIDI channel and pedal CC, then 1 s rendered (the engine smooths it over 10 ms).
+    juce::String sendPedal (int value)
+    {
+        std::unique_ptr<juce::XmlElement> xml (juce::parseXML (sessionNow()));
+        if (xml == nullptr)
+            return "no session";
+        const int ch = xml->getIntAttribute ("midiChannel", 16), cc = xml->getIntAttribute ("pedalCc", 1);
+        constexpr int block = 512;
+        juce::AudioBuffer<float> buffer (juce::jmax (2, plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels()), block);
+        for (int b = 0; b < juce::roundToInt (48000.0 / block); ++b)
+        {
+            juce::MidiBuffer midi;
+            if (b == 0)
+                midi.addEvent (juce::MidiMessage::controllerEvent (ch, cc, value), 0);
+            buffer.clear();
+            plugin->processBlock (buffer, midi);
+        }
+        return {};
+    }
+
+    // pedalchannel: the plugin's output followed block by block, counting the sounds it starts
+    // (a block above -90 dB after at least 5 blocks below -110 dB) and in which step of the sweep.
+    struct Onsets
+    {
+        int quietBlocks = 0;
+        std::vector<int> steps;
+        void add (const juce::AudioBuffer<float>& b, int numSamples, int step)
+        {
+            double sum = 0.0;
+            for (int c = 0; c < 2; ++c)
+                for (int i = 0; i < numSamples; ++i)
+                    sum += double (b.getSample (c, i)) * b.getSample (c, i);
+            const double dB = 10.0 * std::log10 (juce::jmax (sum / (2.0 * numSamples), 1e-30));
+            if (dB > -90.0 && quietBlocks >= 5)
+                steps.push_back (step);
+            quietBlocks = dB < -110.0 ? quietBlocks + 1 : 0;
+        }
+    };
+
+    // pedalchannel: the pedal CC `cc` on MIDI channel `midiChannel`, ramped from `from` to `to`
+    // over 0.25 s (one value a block) and held 0.25 s (from < 0: 2 s with no CC), through the
+    // hosted plugin's processBlock, its output followed by `onsets` as sweep step `step`.
+    void rampPedal (int midiChannel, int cc, int from, int to, Onsets& onsets, int step)
+    {
+        constexpr int block = 512, ramp = 23; // 0.25 s at 48 kHz
+        juce::AudioBuffer<float> buffer (juce::jmax (2, plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels()), block);
+        const int blocks = from < 0 ? 4 * 2 * ramp : 2 * ramp;
+        for (int b = 0; b < blocks; ++b)
+        {
+            juce::MidiBuffer midi;
+            if (from >= 0 && b < ramp)
+                midi.addEvent (juce::MidiMessage::controllerEvent (midiChannel, cc, (int) std::lround (from + (to - from) * (b + 1) / (double) ramp)), 0);
+            buffer.clear();
+            plugin->processBlock (buffer, midi);
+            onsets.add (buffer, block, step);
+        }
+    }
+
     // The saved session settings, through the host API.
     juce::String sessionNow()
     {
@@ -516,9 +589,9 @@ private:
         }
         else if (name == "tuning" || name == "tuningclose")
         {
-            // The TUNING button (PluginEditor.cpp kTuningButton: 61, 501, 277 x 62), under the
-            // CYMBAL box.
-            s.actions = { click (199.0f, 532.0f), wait, wait };
+            // The CYMBALIS title in the background (PluginEditor.cpp kTitleInk: 66, 97, 339 x 36),
+            // at its middle.
+            s.actions = { click (235.5f, 115.0f), wait, wait };
             s.key = "Tuning window";
             s.expected = name == "tuning" ? "visible-front" : "hidden";
             s.probe = [this] { return cymbalis::uitest::tuningWindowState (*editor); };
@@ -882,6 +955,148 @@ private:
             s.key = "hi-hat";
             s.expected = "played";
             s.probe = [this] { return playHiHat(); };
+        }
+        else if (name == "hihatpedal")
+        {
+            // Each value held, then read a tick later: the editor follows the pedal on its timer.
+            auto seen = std::make_shared<std::vector<std::pair<int, juce::String>>>();
+            for (int value : { 0, 64, 127, 0 })
+            {
+                s.actions.push_back ([this, value] {
+                    if (actionError.isEmpty())
+                        actionError = sendPedal (value);
+                });
+                s.actions.push_back ([this, seen, value] {
+                    seen->push_back ({ value, cymbalis::uitest::elementText (*editor, "HI-HAT") + " | "
+                                                  + cymbalis::uitest::elementText (*editor, "HI-HAT PEDAL") });
+                });
+            }
+            s.key = "hats and pedal";
+            s.expected = "followed";
+            s.probe = [this, seen] {
+                if (actionError.isNotEmpty())
+                    return actionError;
+                juce::String wrong;
+                for (const auto& [value, text] : *seen)
+                {
+                    std::printf ("      pedal CC %d: hats | pedal: %s\n", value, text.toRawUTF8());
+                    const auto parts = juce::StringArray::fromTokens (text, "|", "");
+                    bool ok = parts.size() == 2;
+                    for (const auto& part : parts)
+                    {
+                        const auto t = part.trim();
+                        ok = ok && t.startsWith ("open ") && std::abs (t.fromFirstOccurrenceOf ("open ", false, false).getDoubleValue() - value / 127.0) <= 0.01;
+                    }
+                    if (! ok)
+                        wrong << " CC " << value << ": " << text << ";";
+                }
+                return wrong.isEmpty() ? juce::String ("followed") : "not followed:" + wrong;
+            };
+        }
+        else if (name == "pedalchannel")
+        {
+            // MIDI CHANNEL 16: the grid's last item (4 rows of 4, items 61 x 40, inset 8, its left
+            // 1514 - 260 = 1254, its top 69). Then the pedal CC (the session's: CC 1 before
+            // pedalcc) on channel 1, 2 s of quiet first, then each step ramped and held; a tick
+            // later the hats and the pedal are read (the editor follows on its timer).
+            auto onsets = std::make_shared<Onsets>();
+            auto seen = std::make_shared<std::vector<std::pair<int, juce::String>>>();
+            auto setup = std::make_shared<juce::String>();
+            auto cc = std::make_shared<int> (1);
+            s.actions = { click (1459.0f, 48.0f), wait, click (1254.0f + 8.0f + 3.0f * 61.0f + 30.5f, 69.0f + 8.0f + 3.0f * 40.0f + 20.0f), wait,
+                          [this, onsets, setup, cc] {
+                              std::unique_ptr<juce::XmlElement> xml (juce::parseXML (sessionNow()));
+                              const int ch = xml != nullptr ? xml->getIntAttribute ("midiChannel", -1) : -1;
+                              *cc = xml != nullptr ? xml->getIntAttribute ("pedalCc", -1) : -1;
+                              *setup = "MIDI CHANNEL " + juce::String (ch) + ", pedal CC " + juce::String (*cc) + " on channel 1";
+                              rampPedal (1, *cc, -1, 0, *onsets, 0);
+                          } };
+            const int sweep[] = { 32, 64, 96, 127, 96, 64, 32, 0 };
+            for (size_t k = 0; k < std::size (sweep); ++k)
+            {
+                const int from = k == 0 ? 0 : sweep[k - 1], to = sweep[k];
+                s.actions.push_back ([this, onsets, cc, from, to, k] { rampPedal (1, *cc, from, to, *onsets, (int) k + 1); });
+                s.actions.push_back ([this, seen, to] {
+                    seen->push_back ({ to, cymbalis::uitest::elementText (*editor, "HI-HAT") + " | "
+                                               + cymbalis::uitest::elementText (*editor, "HI-HAT PEDAL") });
+                });
+            }
+            s.actions.push_back ([this, onsets, cc] { rampPedal (1, *cc, -1, 0, *onsets, 9); });
+            s.key = "pedal CC on channel 1";
+            s.expected = "followed, 1 FOOT";
+            s.probe = [seen, onsets, setup] {
+                std::printf ("      %s\n", setup->toRawUTF8());
+                juce::String wrong;
+                if (*setup != "MIDI CHANNEL 16, pedal CC 1 on channel 1")
+                    wrong << " " << *setup << ";";
+                for (const auto& [value, text] : *seen)
+                {
+                    std::printf ("      CC %d: hats | pedal: %s\n", value, text.toRawUTF8());
+                    const auto parts = juce::StringArray::fromTokens (text, "|", "");
+                    bool ok = parts.size() == 2;
+                    for (const auto& part : parts)
+                    {
+                        const auto t = part.trim();
+                        ok = ok && t.startsWith ("open ") && std::abs (t.fromFirstOccurrenceOf ("open ", false, false).getDoubleValue() - value / 127.0) <= 0.01;
+                    }
+                    if (! ok)
+                        wrong << " CC " << value << ": " << text << ";";
+                }
+                juce::String at;
+                for (int step : onsets->steps)
+                    at << " " << step;
+                std::printf ("      sounds started in sweep step(s):%s (8: the close to 0)\n", at.isEmpty() ? " none" : at.toRawUTF8());
+                if (onsets->steps.size() != 1 || onsets->steps[0] != 8)
+                    wrong << " FOOT: " << (int) onsets->steps.size() << " sound(s), in step(s)" << (at.isEmpty() ? juce::String (" none") : at) << ";";
+                return wrong.isEmpty() ? juce::String ("followed, 1 FOOT") : "not as expected:" + wrong;
+            };
+        }
+        else if (name == "pedalcc")
+        {
+            // The PEDAL box (PluginEditor.cpp kPedalBox: 1265, 380, 99 x 25). Its grid: 8 a row,
+            // items 40 x 24, inset 8, 3 below the box (top 408), its left at x 1196 (clear of the
+            // cymbal area). CC n is item n - 1.
+            const auto item = [this] (int cc) {
+                const int i = cc - 1;
+                return click (1196.0f + 8.0f + 40.0f * (float) (i % 8) + 20.0f, 408.0f + 8.0f + 24.0f * (float) (i / 8) + 12.0f);
+            };
+            auto saved = std::make_shared<juce::MemoryBlock>();
+            auto seen = std::make_shared<juce::StringArray>();
+            const auto look = [this, seen] {
+                seen->add (attribute (sessionNow(), "pedalCc") + " (" + cymbalis::uitest::elementText (*editor, "PEDAL CC") + ")");
+            };
+            s.actions = { click (1314.0f, 392.0f), wait, item (4), wait,
+                          [this, saved, look] {
+                              look();
+                              plugin->getStateInformation (*saved);
+                          },
+                          click (1314.0f, 392.0f), wait, item (1), wait,
+                          [this, saved, look] {
+                              look();
+                              plugin->setStateInformation (saved->getData(), (int) saved->getSize());
+                          },
+                          wait, look, wait };
+            s.key = "pedal CC";
+            s.expected = "4 (CC 4), 1 (CC 1), 4 (CC 4)";
+            s.probe = [seen] { return seen->joinIntoString (", "); };
+        }
+        else if (name == "blendhidden" || name == "blendshown")
+        {
+            // The Blend Position knobs (UI_SPEC section 3): hidden on HI-HAT, so no slider at
+            // their points; on the other presets each gives its value.
+            s.actions = { wait };
+            s.key = "Blend Position knobs";
+            s.expected = name == "blendhidden" ? "hidden" : "shown";
+            s.probe = [this] {
+                const auto one = cymbalis::uitest::sliderText (*editor, at (1349.0f, 642.0f));
+                const auto two = cymbalis::uitest::sliderText (*editor, at (1350.0f, 881.0f));
+                const auto none = [] (const juce::String& t) { return t == "no slider at the point"; };
+                if (none (one) && none (two))
+                    return juce::String ("hidden");
+                if (! none (one) && ! none (two) && ! one.startsWith ("no ") && ! two.startsWith ("no "))
+                    return juce::String ("shown");
+                return "Blend Position 1: " + one + ", 2: " + two;
+            };
         }
         else if (name == "hihattuning")
         {

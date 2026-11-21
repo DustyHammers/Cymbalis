@@ -134,6 +134,7 @@ set(CYMBALIS_PLUGIN_SOURCES
     plugin/PackedBake.cpp
     plugin/ui/CymbalModel.cpp
     plugin/ui/CymbalView.cpp
+    plugin/ui/HiHatPedal.cpp
     plugin/ui/HitDisplay.cpp
     plugin/ui/UiAssets.cpp
 )

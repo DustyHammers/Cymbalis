@@ -4,13 +4,13 @@ Kris tunes each cymbal by ear in Cymbalis's Tuning window, saves the settings as
 
 ## One plugin, with the tuning code
 
-Cymbalis (plugin code `Cymb`, bundle ID `com.dhammers.cymbalis`) has the TUNING button, the Tuning window, live tuning values, tuning files and tuning in its session state. The CMake option `CYMBALIS_WITH_TUNING` (ON by default) builds this tuning code in; the code tests the macro `CYMBALIS_TUNING`. `-DCYMBALIS_WITH_TUNING=OFF` builds a lean Cymbalis under the same identity, with no button, no window, no live values, no tuning files and no tuning in its session state. Both read a bake's `tuning` block when they load the bake (below), so both play what was tuned. CI builds only the full plugin (`docs/BUILDS.md`).
+Cymbalis (plugin code `Cymb`, bundle ID `com.dhammers.cymbalis`) has the Tuning window (opened by a click on the CYMBALIS title), live tuning values, tuning files and tuning in its session state. The CMake option `CYMBALIS_WITH_TUNING` (ON by default) builds this tuning code in; the code tests the macro `CYMBALIS_TUNING`. `-DCYMBALIS_WITH_TUNING=OFF` builds a lean Cymbalis under the same identity, with no window (the title does nothing), no live values, no tuning files and no tuning in its session state. Both read a bake's `tuning` block when they load the bake (below), so both play what was tuned. CI builds only the full plugin (`docs/BUILDS.md`).
 
 Cymbalis Tuning (plugin code `CymT`), the separate tuning build of earlier versions, is no longer built. Its tuning files load in Cymbalis (**LOAD...**).
 
 ## Opening the window
 
-In Cymbalis, click **TUNING**, the box under the CYMBAL box (left column; `docs/UI_SPEC.md` section 3, layout v3). It opens the Tuning window; a second click closes it. While the window is open the box has the light outline of an open box. **Cmd-click on the CYMBALIS logo** (Ctrl-click on Linux) opens it too. The rest of the editor is unchanged; a lean build (above) has neither the button nor the window.
+In Cymbalis, click the **CYMBALIS** title, at the editor's top left (within 6 units of its letters; the pointer becomes a pointing hand over it; `docs/UI_SPEC.md` sections 3 and 6). It opens the Tuning window; a second click closes it. This works on every preset. Nothing is drawn for it: the title is part of the background. Until 2026-11-20 the **TUNING** box under the CYMBAL box did this (and Cmd-click on the logo opened the window too); it is gone. The rest of the editor is unchanged; a lean build (above) has no window, and its title does nothing.
 
 The Tuning window is attached to the editor's window. On macOS it is a child window of it:
 
@@ -20,7 +20,7 @@ The Tuning window is attached to the editor's window. On macOS it is a child win
 
 On other systems it is kept on top.
 
-It opens at the editor's top right, where it opened before layout v3: below the MIDI CHANNEL box (1404,30, 110×36, the TUNING button's place in layout v2), right-aligned with it, so that box stays clickable; where the screen has no room below, it opens to the left of it. If you move it, it stays where you put it, unless that would cover that box when it next opens. The window is 860 pixels wide when it opens, so on an editor narrower than about 1120 pixels it reaches over the right part of the TUNING button. Its close button hides it, like the second click on TUNING. It closes when the editor closes.
+It opens at the editor's top right, where it opened before layout v3: below the MIDI CHANNEL box (1404,30, 110×36, the TUNING button's place in layout v2), right-aligned with it, so that box stays clickable; where the screen has no room below, it opens to the left of it. If you move it, it stays where you put it, unless that would cover that box when it next opens. The window is 860 pixels wide when it opens, so on a narrow editor it reaches over the cymbal and the left column. Its close button hides it, like the second click on the title. It closes when the editor closes.
 
 The window has two parts, one below the other, each under a filled title band with a bronze rule:
 

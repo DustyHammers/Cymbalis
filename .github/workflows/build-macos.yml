@@ -212,11 +212,14 @@ jobs:
       # default sticks of every preset (BELL and BOW TIP, BELL2 and BOW2 SHOULDER), then change
       # the MIDI channel, the slot notes (drag, menu, RESET DEFAULT, note list), a stick, the
       # preset and a stick of that preset, then SWISH, RAVEN and KONSTAN CRASH 18", in the
-      # editor, and check the plugin's saved state; HI-HAT: its two rows and the pedal played
-      # through the host (MIDI notes and CC), then KONSTAN again; the scroll wheel over the knobs and boxes
+      # editor, and check the plugin's saved state; HI-HAT: its Blend Position knobs hidden, its two
+      # rows and the pedal played through the host (MIDI notes and CC), the hats and the pedal drawing
+      # following the pedal CC, also on channel 1 with MIDI CHANNEL 16 (a keyboard's mod wheel), with
+      # one FOOT on the close, a pedal CC picked in the PEDAL box saved and restored; then KONSTAN
+      # again, its Blend Position knobs shown; the scroll wheel over the knobs and boxes
       # must change nothing; dragging, double-clicking and automating each of the five knobs
       # must move its parameter and the value the knob shows, which its position arc is drawn
-      # from (docs/UI_SPEC.md section 6). Then click TUNING: the Tuning window must be
+      # from (docs/UI_SPEC.md section 6). Then click the CYMBALIS title: the Tuning window must be
       # visible, in front of the editor and attached to it;
       # the wheel over its sliders and numeric boxes must change nothing; EDGE VOICE FROM BOW
       # must move on KONSTAN, RAVEN, SWISH, HAMMERED and SMOKE; SWISH's bow_shoulder must take
@@ -225,12 +228,12 @@ jobs:
       # move (NOVA); a tuning file saved and loaded back (through
       # stand-ins for the file panels) must hold and restore the tuning; on HI-HAT the window
       # shows the values that act on it and hides the others; a second click on
-      # TUNING hides the window (tools/cymbalis_uitest).
+      # the title hides the window, and on HI-HAT it opens and closes it again (tools/cymbalis_uitest).
       - name: Editor mouse test (AU and VST3)
         timeout-minutes: 5
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
-          STEPS="edge sticks channel drag reset none edgereset list stick preset shoulder swish raven konstan hihat hihatplay konstan wheel arcs tuning wheeltuning voice raven voice swish voice profile preset voice smoke voice nova noprofile clickweights hitvariation savetuning loadtuning hihat hihattuning tuningclose"
+          STEPS="edge sticks channel drag reset none edgereset list stick preset shoulder swish raven konstan hihat blendhidden hihatplay hihatpedal pedalchannel pedalcc konstan blendshown wheel arcs tuning wheeltuning voice raven voice swish voice profile preset voice smoke voice nova noprofile clickweights hitvariation savetuning loadtuning hihat hihattuning tuningclose tuning tuningclose"
           echo "--- VST3 ---"
           "$UITEST" "$PWD/$VST3" $STEPS
           echo "--- AU ---"
@@ -240,7 +243,8 @@ jobs:
       # cymbal at 1536 x 1024: processBlock at 44.1 kHz (256 and 128 samples, normal and
       # real-time audio thread) with the editor closed, open and idle, and open with the hits,
       # each three times, then once more with HAMMERED THIN RIDE selected, and once each with
-      # SWISH, RAVEN and KONSTAN CRASH 18" (their dented meshes);
+      # SWISH, RAVEN and KONSTAN CRASH 18" (their dented meshes) and HI-HAT (two dented cymbals,
+      # the clutch and rod, the pedal CC moving the hats and the pedal drawing);
       # the CPU used besides; the editor's paint calls and the cymbal's OpenGL frames; and
       # once, that nothing is drawn after every hit is older than 6 s.
       # Printed to the log and the job summary only.

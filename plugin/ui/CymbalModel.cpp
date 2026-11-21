@@ -200,6 +200,13 @@ Camera::Camera()
 {
 }
 
+Camera::Camera (const CymbalShape& shape) : Camera()
+{
+    cx = shape.cx;
+    cy = shape.cy;
+    scale = shape.scale;
+}
+
 void Camera::project (double X, double Y, double Z, double& sx, double& sy) const noexcept
 {
     const double yv = Y * sinE - Z * cosE;
@@ -244,7 +251,7 @@ Rgb lineDent (Rgb c, double f) noexcept
 }
 
 //==============================================================================
-Geometry::Geometry (const CymbalShape& s) : shape (s), bell (s.bell)
+Geometry::Geometry (const CymbalShape& s) : shape (s), bell (s.bell), camera (s), zSign (s.inverted ? -1.0 : 1.0)
 {
     const auto started = std::chrono::steady_clock::now();
     // The profile in fractions of R, and scipy's PCHIP slopes (Fritsch-Carlson, with its
@@ -396,7 +403,7 @@ void Geometry::buildMesh()
     for (int i = 0; i < numRings; ++i)
     {
         const double r = rings[(size_t) i];
-        ringHeight.push_back (height (r));
+        ringHeight.push_back (restHeight (r));
         ringStiff.push_back (std::clamp ((r - (bell - 0.1)) / 0.15, 0.12, 1.0));
         for (int j = 0; j < kSamples; ++j)
         {
@@ -429,6 +436,8 @@ void Geometry::buildMesh()
     if (thickBell)
         ring (bellRing);
     ring (numRings - 1);
+    for (int j = 0; j < kSamples; ++j)
+        rimVertices.push_back (at (numRings - 1, j));
 
     for (size_t k = 0; k < lineIndices.size(); k += 2)
     {
@@ -575,8 +584,14 @@ void Geometry::buildDentedMesh()
     }
 
     // The rest heights, and the dent light factor f = clip (1 + contrast x (shade with the dents -
-    // shade of the smooth surface), 0.25, 1.9), from the slopes on the grid.
+    // shade of the smooth surface), 0.25, 1.9), from the slopes on the grid. Bell down
+    // (shape.inverted, the reference's _hh_make): the lines are simplified on the cymbal as built
+    // (bell up, f), as the reference simplifies them before it mirrors the heights, and the mesh
+    // is coloured with the mirrored surface's f (fDrawn), as its draw() computes it.
     std::vector<double> z ((size_t) (nr * nt)), smooth ((size_t) nr), f ((size_t) (nr * nt));
+    std::vector<double> fDrawn;
+    if (shape.inverted)
+        fDrawn.assign ((size_t) (nr * nt), 1.0);
     for (int i = 0; i < nr; ++i)
     {
         smooth[(size_t) i] = height (fineR[(size_t) i]);
@@ -594,6 +609,9 @@ void Geometry::buildDentedMesh()
             const double theta = j * dTheta;
             const double dshade = shadeOf (dzr, dzt, theta) - shadeOf (profileSlope, 0.0, theta);
             f[(size_t) (i * nt + j)] = std::clamp (1.0 + D.contrast * dshade, 0.25, 1.9);
+            if (shape.inverted)
+                fDrawn[(size_t) (i * nt + j)] =
+                    std::clamp (1.0 + D.contrast * (shadeOf (-dzr, -dzt, theta) - shadeOf (-profileSlope, 0.0, theta)), 0.25, 1.9);
         }
     }
 
@@ -616,7 +634,7 @@ void Geometry::buildDentedMesh()
         spokeColumns.push_back (j);
     segmentsBeforeSimplifying = (int) ringRows.size() * nt + (int) spokeColumns.size() * (nr - 1);
 
-    const double U = Camera::scale;
+    const double U = camera.scale;
     const auto point = [&] (int i, int j) {
         const double r = fineR[(size_t) i];
         return std::array<double, 4> { r * cosT[(size_t) j] * U, r * sinT[(size_t) j] * U, z[(size_t) (i * nt + j)] * U,
@@ -630,8 +648,8 @@ void Geometry::buildDentedMesh()
             v = (int) vertexR.size();
             vertexR.push_back (fineR[(size_t) i]);
             vertexTheta.push_back (j * dTheta);
-            vertexZ.push_back (z[(size_t) (i * nt + j)]);
-            vertexDent.push_back ((float) f[(size_t) (i * nt + j)]);
+            vertexZ.push_back (zSign * z[(size_t) (i * nt + j)]);
+            vertexDent.push_back ((float) (shape.inverted ? fDrawn : f)[(size_t) (i * nt + j)]);
             vertexRadial.push_back ((std::uint16_t) i);
             vertexAngle.push_back ((std::uint16_t) j);
         }
@@ -651,6 +669,9 @@ void Geometry::buildDentedMesh()
             into.push_back (vertex (i, kept[q]));
             into.push_back (vertex (i, kept[(q + 1) % kept.size()]));
         }
+        if (i == nr - 1)
+            for (int j : kept)
+                rimVertices.push_back (vertex (i, j));
     }
     for (int j : spokeColumns)
     {
@@ -684,7 +705,7 @@ void Geometry::buildDentedMesh()
         const double raw = (fineR[(size_t) i] - (bell - 0.1)) / 0.15;
         fineStiff.push_back (std::clamp (raw, 0.12, 1.0));
         fineStiffSlope.push_back (raw > 0.12 && raw < 1.0 ? 1.0 / 0.15 : 0.0);
-        fineSlope.push_back (slope (fineR[(size_t) i]));
+        fineSlope.push_back (zSign * slope (fineR[(size_t) i]));
     }
 }
 
@@ -700,8 +721,8 @@ void Geometry::buildSurface()
         double factor = 1.0;
         const auto metal = metalAt (metalR, factor);
         const float width = kind == SurfaceKind::groove || kind == SurfaceKind::edge ? 2.0f : 1.0f;
-        return SurfaceVertex { (float) r, (float) t, (float) (height (r) + 0.0015), (float) kind, (float) param, (float) metal, (float) factor,
-                               width };
+        return SurfaceVertex { (float) r, (float) t, (float) (restHeight (r) + 0.0015), (float) kind, (float) param, (float) metal,
+                               (float) factor, width };
     };
     // A polyline, its metal that at its mean radius.
     const auto polyline = [&] (const double* r, const double* t, int count, SurfaceKind kind, double param) {
@@ -859,7 +880,7 @@ void Geometry::buildSurface()
 void Geometry::followDents (const SurfaceVertex& v)
 {
     const int nr = (int) fineR.size(), nt = around;
-    const double r = v.r, dTheta = twoPi / nt, U = Camera::scale;
+    const double r = v.r, dTheta = twoPi / nt, U = camera.scale;
     int ir = 0;
     for (int i = 1; i < nr; ++i)
         if (std::abs (fineR[(size_t) i] - r) < std::abs (fineR[(size_t) ir] - r))
@@ -886,7 +907,7 @@ void Geometry::followDents (const SurfaceVertex& v)
         {
             auto e = v;
             e.theta = (float) theta;
-            e.z = (float) (height (r) + 0.0015 + dz[j]);
+            e.z = (float) (zSign * (height (r) + dz[j]) + 0.0015); // bell down: mirrored, as _hh_make's tex_fit
             e.dent = whole ? 1.0f : (float) f[j];
             surface.push_back (e);
         }
@@ -988,7 +1009,7 @@ void evaluate (const Geometry& g, const Hit* hits, int numHits, double nowMs, Fr
     double tx = 0.0, ty = 0.0, spin = 0.0;
     out.numFlashes = 0;
     out.moving = false;
-    const Camera cam;
+    const Camera& cam = g.camera;
     for (int h = 0; h < numHits; ++h)
     {
         const auto& hit = hits[h];
@@ -1048,7 +1069,7 @@ void evaluate (const Geometry& g, const Hit* hits, int numHits, double nowMs, Fr
         if (age < T)
         {
             double sx = 0.0, sy = 0.0;
-            cam.project (hit.radius * std::cos (ang), hit.radius * std::sin (ang), g.height (hit.radius), sx, sy);
+            cam.project (hit.radius * std::cos (ang), hit.radius * std::sin (ang), g.restHeight (hit.radius) + out.lift, sx, sy);
             const double k = (1.0 - age / T) * (1.0 - age / T);
             auto& f = out.flashes[(size_t) out.numFlashes++];
             f.x = (float) sx;
@@ -1161,7 +1182,7 @@ void projectVertex (const Geometry& g, const Frame& f, const Camera& cam, int x,
     const double r = g.vertexR[(size_t) x];
     const double phi = g.vertexTheta[(size_t) x] + f.spinDeg * pi / 180.0;
     const double X = r * std::cos (phi), Y = r * std::sin (phi);
-    cam.project (X, Y, f.height[(size_t) x] - 2.2 * (X * f.tiltX + Y * f.tiltY), sx, sy);
+    cam.project (X, Y, f.height[(size_t) x] + f.lift - 2.2 * (X * f.tiltX + Y * f.tiltY), sx, sy);
 }
 
 Rgb segmentColour (const Geometry& g, const Frame& f, int k, double shadeA, double ytlA, double shadeB, double ytlB) noexcept
@@ -1182,7 +1203,7 @@ void projectSurface (const SurfaceVertex& v, const Frame& f, const Camera& cam, 
 {
     const double phi = v.theta + f.spinDeg * pi / 180.0;
     const double X = v.r * std::cos (phi), Y = v.r * std::sin (phi);
-    cam.project (X, Y, v.z - 2.2 * (X * f.tiltX + Y * f.tiltY), sx, sy);
+    cam.project (X, Y, v.z + f.lift - 2.2 * (X * f.tiltX + Y * f.tiltY), sx, sy);
 }
 
 Rgb surfaceColour (const SurfaceVertex& v, double ytl) noexcept
@@ -1199,6 +1220,86 @@ Rgb surfaceColour (const SurfaceVertex& v, double ytl) noexcept
         case SurfaceKind::goldLine: return scaled (colour::gold, (0.50 + 0.35 * ytl) * v.param);
     }
     return {};
+}
+
+//==============================================================================
+const HiHatHardware& hiHatHardware()
+{
+    // The reference's colours (BGR there): STEEL (168, 170, 174) and STEEL_D (128, 130, 136).
+    static const HiHatHardware hardware = [] {
+        constexpr Rgb steel { 174 / 255.0f, 170 / 255.0f, 168 / 255.0f }, steelDark { 136 / 255.0f, 130 / 255.0f, 128 / 255.0f };
+        const auto times = [] (Rgb c, float k) { return Rgb { c.r * k, c.g * k, c.b * k }; };
+        HiHatHardware h;
+        // hh_draw_cyl: a vertical cylinder on the axis from z0 to z1, radius r: its lower circle
+        // at 0.8 x its colour, its upper circle, any rings at 0.6 x (1 unit wide), each a closed
+        // polyline of 49 points; and its two side lines (at x -r and +r).
+        const auto cylinder = [&] (double z0, double z1, double r, Rgb c, float width, std::initializer_list<double> rings = {}) {
+            const auto circle = [&] (double z, Rgb colour, float w) {
+                for (int k = 0; k < 48; ++k)
+                {
+                    const double t0 = twoPi * k / 48.0, t1 = twoPi * (k + 1) / 48.0;
+                    h.lines.push_back ({ r * std::cos (t0), r * std::sin (t0), z, r * std::cos (t1), r * std::sin (t1), z, colour, w });
+                }
+            };
+            circle (z0, times (c, 0.8f), width);
+            circle (z1, c, width);
+            for (double z : rings)
+                circle (z, times (c, 0.6f), 1.0f);
+            for (double sx : { -1.0, 1.0 })
+                h.lines.push_back ({ sx * r, 0.0, z0, sx * r, 0.0, z1, c, width });
+        };
+        cylinder (0.36, 0.66, 0.014, times (steelDark, 0.55f), 1.0f);       // the rod, above the clutch
+        cylinder (0.005, 0.065, 0.075, times (steelDark, 0.9f), 2.0f);      // the upper felt
+        cylinder (0.07, 0.30, 0.058, steel, 2.0f, { 0.12, 0.25 });          // the clutch body, its two rings
+        cylinder (0.30, 0.36, 0.045, steel, 2.0f);                           // the top nut
+        // The locking screw: two circles of radius 0.018 across the axis at x 0.058 and 0.13
+        // (25 points each), at height 0.2, and the lines joining their tops and bottoms.
+        for (double x : { 0.058, 0.13 })
+            for (int k = 0; k < 24; ++k)
+            {
+                const double t0 = twoPi * k / 24.0, t1 = twoPi * (k + 1) / 24.0;
+                h.lines.push_back ({ x, 0.018 * std::cos (t0), 0.2 + 0.018 * std::sin (t0), x, 0.018 * std::cos (t1), 0.2 + 0.018 * std::sin (t1),
+                                     steel, 1.0f });
+            }
+        for (double sz : { -1.0, 1.0 })
+            h.lines.push_back ({ 0.058, 0.0, 0.2 + sz * 0.018, 0.13, 0.0, 0.2 + sz * 0.018, steel, 1.0f });
+        h.solids = { { { 0.005, 0.065, 0.075 }, { 0.07, 0.30, 0.058 }, { 0.30, 0.36, 0.045 }, { 0.36, 0.66, 0.014 } } };
+        return h;
+    }();
+    return hardware;
+}
+
+void silhouette (const Camera& cam, const HardwareSolid& s, double zb, std::vector<std::array<float, 2>>& hull)
+{
+    std::array<std::array<double, 2>, 98> p {};
+    for (int k = 0; k < 49; ++k)
+    {
+        const double t = twoPi * k / 48.0;
+        cam.project (s.r * std::cos (t), s.r * std::sin (t), zb + s.z0, p[(size_t) k][0], p[(size_t) k][1]);
+        cam.project (s.r * std::cos (t), s.r * std::sin (t), zb + s.z1, p[(size_t) (49 + k)][0], p[(size_t) (49 + k)][1]);
+    }
+    // Andrew's monotone chain.
+    std::sort (p.begin(), p.end());
+    const auto cross = [] (const std::array<double, 2>& o, const std::array<double, 2>& a, const std::array<double, 2>& b) {
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    };
+    std::array<std::array<double, 2>, 2 * 98> h {};
+    size_t n = 0;
+    for (size_t i = 0; i < p.size(); ++i)
+    {
+        while (n >= 2 && cross (h[n - 2], h[n - 1], p[i]) <= 0.0)
+            --n;
+        h[n++] = p[i];
+    }
+    for (size_t i = p.size() - 1, lower = n + 1; i-- > 0;)
+    {
+        while (n >= lower && cross (h[n - 2], h[n - 1], p[i]) <= 0.0)
+            --n;
+        h[n++] = p[i];
+    }
+    hull.clear();
+    for (size_t i = 0; i + 1 < n; ++i) // the last is the first again
+        hull.push_back ({ (float) h[i][0], (float) h[i][1] });
 }
 
 } // namespace cymbalis::ui::wire

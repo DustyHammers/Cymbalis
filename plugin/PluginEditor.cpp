@@ -15,7 +15,7 @@ namespace
 // labels; values use the same font (section 4, last line).
 constexpr float kHeaderSize = 17.1f;
 constexpr float kRowSize = 15.6f;
-constexpr float kBoxValueSpacing = 3.2f;   // CYMBAL and MIDI CHANNEL boxes, TUNING
+constexpr float kBoxValueSpacing = 3.2f;   // CYMBAL and MIDI CHANNEL boxes
 constexpr float kBoxValueLeft = 12.0f;     // a box value's ink inset when it does not sit centred
 constexpr float kStickValueSpacing = 2.0f; // stick boxes
 constexpr float kNoteValueSpacing = 1.0f;  // note boxes
@@ -27,17 +27,25 @@ constexpr std::array<float, kNumSlots> kRowLabelY { 148.0f, 228.0f, 307.0f, 387.
 constexpr std::array<float, kNumSlots> kRowLabelSpacing { 3.33f, 2.88f, 2.83f, 3.50f, 3.25f };
 const juce::Rectangle<int> kStickBox (1265, 0, 99, 25);
 const juce::Rectangle<int> kNoteBox (1424, 0, 66, 25);
+// The hi-hat's PEDAL row (UI_SPEC section 3), below its BOW and EDGE rows (y 220 and 300): its
+// label and its box, drawn like a row's label and stick box.
+const juce::Rectangle<int> kPedalBox (1265, 380, 99, 25);
+constexpr float kPedalLabelY = 387.0f;
+constexpr float kPedalLabelSpacing = 3.0f;
+constexpr int kPedalMenuLeft = 1196; // its grid's left: the right column's, clear of the cymbal area
 const juce::Rectangle<int> kPresetBox (61, 371, 277, 62);
 const juce::Rectangle<int> kChannelBox (1404, 30, 110, 36); // top right, above the column headers (y 98)
 constexpr float kChannelLabelRight = 1384.0f; // MIDI CHANNEL ends here, on the box's line, to its left
 constexpr float kKnobLabelTop = 784.0f;       // Velocity Sensitivity, Volume and Pan, centred on their knobs
 // The DHammers logo (UI_SPEC section 4): Pinyon Script at em size 48, its ink centred under
-// the CYMBAL and TUNING boxes, level with the bottom row's -/+ and L/R marks.
+// the CYMBAL box, level with the bottom row's -/+ and L/R marks.
 constexpr float kLogoSize = 48.0f;
 const juce::Point<float> kLogoCentre (199.5f, 950.0f);
 #if CYMBALIS_TUNING
-const juce::Rectangle<int> kLogo (40, 80, 390, 130); // the CYMBALIS logo and its tagline in the background
-const juce::Rectangle<int> kTuningButton (61, 501, 277, 62); // under the CYMBAL box, its size
+// The CYMBALIS title in the background image: its ink box, measured from
+// CYMBALIS_Background_logo.png. A click within 6 units of it opens and closes the Tuning window.
+const juce::Rectangle<int> kTitleInk (66, 97, 339, 36);
+constexpr int kTitleMargin = 6;
 // The Tuning window opens below this area, right-aligned with it, and keeps it clear: the
 // TUNING button's place before layout v3, where the MIDI CHANNEL box is now.
 const juce::Rectangle<int> kTuningWindowAnchor (1404, 30, 110, 36);
@@ -84,37 +92,23 @@ void drawBoxOutline (juce::Graphics& g, juce::Rectangle<int> r, juce::Colour c)
 
 #if CYMBALIS_TUNING
 // =====================================================================================
-// Tuning code (CYMBALIS_WITH_TUNING): the TUNING button, drawn like the CYMBAL box without
-// its arrow.
-class Content::TuningButton final : public juce::Component
+// Tuning code (CYMBALIS_WITH_TUNING): the CYMBALIS title's click area. It draws nothing (the
+// title is the background's); over it the pointer is a pointing hand.
+class Content::TitleButton final : public juce::Component
 {
 public:
-    explicit TuningButton (const Assets& a) : assets (a) { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
-    void setOpen (bool o)
+    TitleButton()
     {
-        if (o != open)
-        {
-            open = o;
-            repaint();
-        }
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+        setTitle ("CYMBALIS");
+        setDescription ("opens and closes the Tuning window");
     }
     std::function<void()> onClick;
-    void paint (juce::Graphics& g) override
-    {
-        drawBoxOutline (g, getLocalBounds(), open ? palette::openOutline : (isMouseOver() ? palette::bronze : palette::boxOutline));
-        drawValue (g, assets.font (kHeaderSize, kBoxValueSpacing), "TUNING", getLocalBounds().toFloat(), palette::label);
-    }
-    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
-    void mouseExit (const juce::MouseEvent&) override { repaint(); }
     void mouseUp (const juce::MouseEvent& e) override
     {
-        if (onClick && getLocalBounds().contains (e.getPosition()))
+        if (onClick && e.mouseWasClicked() && getLocalBounds().contains (e.getPosition()))
             onClick();
     }
-
-private:
-    const Assets& assets;
-    bool open = false;
 };
 #endif
 
@@ -389,6 +383,39 @@ void StickBox::mouseUp (const juce::MouseEvent& e)
 }
 
 // =====================================================================================
+PedalBox::PedalBox (const Assets& a) : assets (a)
+{
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    setTitle ("PEDAL CC"); // with its value, for screen readers (and tools/cymbalis_uitest)
+    setDescription ("CC " + juce::String (cc));
+}
+
+void PedalBox::setCc (int c)
+{
+    cc = c;
+    setDescription ("CC " + juce::String (cc));
+    repaint();
+}
+
+void PedalBox::setOpen (bool shouldBeOpen)
+{
+    open = shouldBeOpen;
+    repaint();
+}
+
+void PedalBox::paint (juce::Graphics& g)
+{
+    drawBoxOutline (g, getLocalBounds(), open ? palette::openOutline : (isMouseOver() ? palette::bronze : palette::rowOutline));
+    drawValue (g, assets.font (kRowSize, kStickValueSpacing), "CC " + juce::String (cc), getLocalBounds().toFloat(), palette::label);
+}
+
+void PedalBox::mouseUp (const juce::MouseEvent& e)
+{
+    if (onClick && e.mouseWasClicked())
+        onClick();
+}
+
+// =====================================================================================
 // The scrolling part of the note menu: one row per MIDI note.
 class NoteMenu::List final : public juce::Component
 {
@@ -636,7 +663,8 @@ Content::Content (CymbalisProcessor& p)
           { CymbalisProcessor::paramPan, { 1087.0f, 881.0f }, "PAN", { 0.0f, kKnobLabelTop }, 3.40f, palette::knobLabel },
       } },
       presetBox (assets, { 306.0f - (float) kPresetBox.getX(), 398.0f - (float) kPresetBox.getY() }),
-      channelBox (assets, { 1484.0f - (float) kChannelBox.getX(), 44.0f - (float) kChannelBox.getY() }, DropdownBox::Align::left)
+      channelBox (assets, { 1484.0f - (float) kChannelBox.getX(), 44.0f - (float) kChannelBox.getY() }, DropdownBox::Align::left),
+      pedalBox (assets)
 {
     setSize (kDesignWidth, kDesignHeight);
     setOpaque (true);
@@ -697,11 +725,18 @@ Content::Content (CymbalisProcessor& p)
     addAndMakeVisible (channelBox);
 
 #if CYMBALIS_TUNING
-    tuningButton = std::make_unique<TuningButton> (assets);
-    tuningButton->setBounds (kTuningButton);
-    tuningButton->onClick = [this] { toggleTuningWindow (tuningWindow == nullptr || ! tuningWindow->isShowing()); };
-    addAndMakeVisible (*tuningButton);
+    titleButton = std::make_unique<TitleButton>();
+    titleButton->setBounds (kTitleInk.expanded (kTitleMargin));
+    titleButton->onClick = [this] { toggleTuningWindow (tuningWindow == nullptr || ! tuningWindow->isShowing()); };
+    addAndMakeVisible (*titleButton);
 #endif
+
+    // The hi-hat's pedal and PEDAL row: shown on a preset with a pedal (refresh).
+    pedal.setBounds (HiHatPedal::area());
+    addChildComponent (pedal);
+    pedalBox.setBounds (kPedalBox);
+    pedalBox.onClick = [this] { openPedalMenu(); };
+    addChildComponent (pedalBox);
 
     for (int s = 0; s < kNumSlots; ++s)
     {
@@ -767,7 +802,33 @@ void Content::refresh()
             noteBoxes[(size_t) s]->setVisible (rowPlays (preset, s));
             stickBoxes[(size_t) s]->setVisible (rowPlays (preset, s));
         }
+        // The Blend Position knobs only where they move the rows (not on the hi-hat): hidden,
+        // their parameters keep their values. The pedal and its row where the preset has one.
+        const auto& info = kPresets[(size_t) preset];
+        for (size_t k : { size_t (2), size_t (3) })
+            knobs[k]->setVisible (info.blendKnobs);
+        pedal.setVisible (info.pedal);
+        pedalBox.setVisible (info.pedal);
+        shownOpening = -1.0f;
         repaint();
+    }
+    // The hi-hat's hats and pedal follow the pedal's smoothed opening, redrawn when it has moved
+    // by 0.002 or more.
+    if (kPresets[(size_t) preset].pedal)
+    {
+        const float o = juce::jlimit (0.0f, 1.0f, processor.pedalOpenness());
+        if (shownOpening < 0.0f || std::abs (o - shownOpening) >= 0.002f)
+        {
+            shownOpening = o;
+            cymbalView->setOpening (o);
+            pedal.setOpening (o);
+        }
+    }
+    const int cc = processor.pedalCc();
+    if (cc != shownPedalCc)
+    {
+        shownPedalCc = cc;
+        pedalBox.setCc (cc);
     }
     hitTracker->poll();
     for (int s = 0; s < kNumSlots; ++s)
@@ -797,9 +858,6 @@ void Content::refresh()
     const float pulse = 0.6f + 0.4f * (float) std::cos (juce::MathConstants<double>::twoPi * 1.25 * t);
     for (int s = 0; s < kNumSlots; ++s)
         noteBoxes[(size_t) s]->setLearning (s == learn, pulse);
-#if CYMBALIS_TUNING
-    tuningButton->setOpen (tuningWindow != nullptr && tuningWindow->isShowing());
-#endif
 }
 
 #if CYMBALIS_TUNING
@@ -813,20 +871,11 @@ void Content::toggleTuningWindow (bool open)
     }
     else if (tuningWindow != nullptr)
         tuningWindow->hide();
-    tuningButton->setOpen (open);
 }
 #endif
 
 void Content::mouseDown (const juce::MouseEvent& e)
 {
-#if CYMBALIS_TUNING
-    // Cmd-click on the logo opens the Tuning window too (docs/TUNING.md).
-    if (e.eventComponent == this && e.mods.isCommandDown() && kLogo.contains (e.getPosition()))
-    {
-        toggleTuningWindow (true);
-        return;
-    }
-#endif
     const int learn = processor.midiLearnSlot();
     if (learn < 0 || popup != nullptr)
         return;
@@ -871,6 +920,9 @@ void Content::sliderDragEnded (juce::Slider*)
 
 void Content::showPopup (std::unique_ptr<juce::Component> panel, juce::Rectangle<int> bounds, std::function<void()> onClose)
 {
+    // A popup never overlaps the cymbal area: it is drawn with OpenGL, on top of the other
+    // components (UI_SPEC section 6). And it stays inside the window.
+    jassert (! bounds.intersects (CymbalView::area()) && getLocalBounds().contains (bounds));
     closePopup();
     popupClosed = std::move (onClose);
     popupLayer = std::make_unique<PopupLayer> ([this] { closePopup(); });
@@ -979,6 +1031,27 @@ void Content::openStickMenu (int slot)
     showPopup (std::move (panel), b, [box] { box->setOpen (false); });
 }
 
+// The pedal's CC, 1-127: a grid drawn like the MIDI CHANNEL box's, 8 a row (16 rows, the last
+// short) of items 40 x 24, so that it fits the right column: from x 1196 (the rows' labels), just
+// below the PEDAL box (336 x 400: to x 1532 and y 808, over the hidden blend knobs' area), clear
+// of the cymbal area.
+void Content::openPedalMenu()
+{
+    juce::StringArray items;
+    for (int c = 1; c <= 127; ++c)
+        items.add (juce::String (c));
+    auto panel = std::make_unique<PopupPanel> (assets, items, processor.pedalCc() - 1, 8, juce::Point<int> { 40, 24 });
+    panel->onChoose = [this] (int i) {
+        processor.setPedalCc (i + 1);
+        closePopup();
+        refresh();
+    };
+    const int w = panel->getWidth(), h = panel->getHeight();
+    const juce::Rectangle<int> b (kPedalMenuLeft, kPedalBox.getBottom() + 3, w, h);
+    pedalBox.setOpen (true);
+    showPopup (std::move (panel), b, [this] { pedalBox.setOpen (false); });
+}
+
 void Content::paint (juce::Graphics& g)
 {
     // The cymbal area is its own (opaque) component, CymbalView.
@@ -1029,9 +1102,13 @@ void Content::paintLabels (juce::Graphics& g)
     header ("STICK ARTICULATION", 1201.0f, 98.0f, 3.29f, palette::label);
     header ("MIDI NOTE", 1424.0f, 98.0f, 3.00f, palette::label);
 
-    // Knob headers; while a knob is dragged its readout replaces its header.
+    // Knob headers; while a knob is dragged its readout replaces its header. The Blend Position
+    // knobs' with them (hidden on the hi-hat).
+    const auto& preset = kPresets[(size_t) processor.presetIndex()];
     for (size_t i = 0; i < knobSpecs.size(); ++i)
     {
+        if (! knobs[i]->isVisible())
+            continue;
         const auto& spec = knobSpecs[i];
         const auto f = assets.font (kHeaderSize, spec.spacing);
         if ((int) i == draggingKnob)
@@ -1048,10 +1125,13 @@ void Content::paintLabels (juce::Graphics& g)
     }
 
     // BLEND POSITION 1 runs from the preset's bell rows (BELL; CENTER on SMOKE FLAT RIDE) to BOW.
-    small (kPresets[(size_t) processor.presetIndex()].blend1Left, 1249.0f, 720.0f, 3.33f);
-    small ("BOW", 1409.0f, 720.0f, 2.88f);
-    small ("BOW", 1249.0f, 958.0f, 2.88f);
-    small ("EDGE", 1409.0f, 958.0f, 2.83f);
+    if (preset.blendKnobs)
+    {
+        small (preset.blend1Left, 1249.0f, 720.0f, 3.33f);
+        small ("BOW", 1409.0f, 720.0f, 2.88f);
+        small ("BOW", 1249.0f, 958.0f, 2.88f);
+        small ("EDGE", 1409.0f, 958.0f, 2.83f);
+    }
 
     // L and R under Pan, each centred 73 units either side of its knob.
     const auto rowFont = assets.font (kRowSize);
@@ -1081,6 +1161,9 @@ void Content::paintRows (juce::Graphics& g)
         drawInkText (g, assets.font (kRowSize, spacing), rowLabel (processor.presetIndex(), (int) s),
                      { 1201.0f, kRowLabelY[s] }, hitTracker->rowLit ((int) s) ? palette::openOutline : palette::secondary);
     }
+    // The hi-hat's PEDAL row, below its rows: its label, drawn like theirs (it plays no hit).
+    if (preset.pedal)
+        drawInkText (g, assets.font (kRowSize, kPedalLabelSpacing), "PEDAL", { 1201.0f, kPedalLabelY }, palette::secondary);
 }
 
 // A row's label, which the hit display lights.

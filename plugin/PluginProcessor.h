@@ -13,7 +13,7 @@
 
 // Cymbalis: one cymbal engine (FastEngine) playing one of the baked presets (compiled in,
 // parsed at load). MIDI note-ons on the selected channel strike the slots whose notes they
-// match, at their exact sample; on the hi-hat the pedal CC (on the same channel) sets the
+// match, at their exact sample; on the hi-hat the pedal CC (on any channel) sets the
 // openness at its sample. Choosing a preset loads its bake into the engine: the new engine
 // state is built off the audio thread and handed over without locks. Parameters: exactly the
 // five of docs/UI_SPEC.md section 9; the preset is session state, like the MIDI channel and the
@@ -73,11 +73,14 @@ public:
     void setSlotNote (int slot, int note) noexcept { setSlotNote (presetIndex(), slot, note); }
     void setSlotNote (int preset, int slot, int note) noexcept;
 
-    // The hi-hat pedal's MIDI CC (1-127, default 1, the mod wheel), read on the MIDI channel:
-    // its value / 127 is the hi-hat's openness, 0 closed. Per instance, saved with the session;
-    // not a parameter.
+    // The hi-hat pedal's MIDI CC (1-127, default 1, the mod wheel), read on every MIDI channel
+    // (the notes only on the selected one): its value / 127 is the hi-hat's openness, 0 closed.
+    // Per instance, saved with the session; not a parameter.
     int pedalCc() const noexcept { return pedalController.load(); }
     void setPedalCc (int cc) noexcept;
+    // The hi-hat's smoothed pedal openness (0 closed to 1 open, as the engine plays it) at the end
+    // of the last block, for the editor's hats and pedal; unchanged while another preset plays.
+    float pedalOpenness() const noexcept { return pedalShown.load(); }
 
     // The stick chosen for a slot (TIP or SHOULDER) in the current preset, where the preset
     // offers a choice on it (StickDisplay::choice). Each preset keeps its own choices. Not a
@@ -210,6 +213,7 @@ private:
     std::array<std::array<std::atomic<int>, cymbalis::kNumSlots>, cymbalis::kNumNoteSets> notes;
     std::atomic<int> pedalController { cymbalis::kDefaultPedalCc };
     int pedalValue = 0; // audio thread: the pedal CC's last value (0 closed), for a new cymbal
+    std::atomic<float> pedalShown { 0.0f }; // written by the audio thread (pedalOpenness)
     std::array<std::array<std::atomic<int>, cymbalis::kNumSlots>, cymbalis::kNumPresets> sticks; // cymbalis::Stick
     std::atomic<int> learnSlot { -1 };
     std::atomic<int> editorWidth { 0 }, editorHeight { 0 };

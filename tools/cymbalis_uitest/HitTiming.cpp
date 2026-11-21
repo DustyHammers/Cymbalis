@@ -35,8 +35,8 @@ constexpr double kLeadSeconds = 1.0;  // the hits build up to 16 before the timi
 constexpr double kTimedSeconds = 3.0;
 constexpr int kRounds = 3; // each case runs this many times, the cases in turn
 constexpr double kHitEverySeconds = 0.024; // the 16 newest hits are kept
-constexpr int kNotes[] = { 60, 62, 64, 61, 63 }; // the default notes: BELL, BOW, EDGE, BELL2, BOW2
 constexpr int kVelocity = 114;                    // 0.9
+constexpr double kPedalPeriodSeconds = 2.0;       // HI-HAT: the pedal CC sweeps 0 .. 127 .. 0 in this time
 constexpr double kGlStartMs = 4000.0;            // OpenGL has 3 s to start (CymbalView), then the still drawing
 constexpr double kQuietAfterMs = 6500.0;         // every hit is older than 6 s by then
 
@@ -239,6 +239,9 @@ struct HitTiming::Result
     juce::String renderer;                        // its renderer
     int meshSegments = 0, segmentsBefore = 0, surfaceSegments = 0, dents = 0; // its geometry
     double buildMs = 0.0;                         // and how long that took to build
+    int lowerSegments = 0, lowerBefore = 0, lowerSurface = 0, lowerDents = 0; // HI-HAT: its bottom cymbal
+    double lowerBuildMs = 0.0;
+    int hardwareLines = 0;                        // HI-HAT: the clutch and rod
     cymbalis::ui::CymbalView::Stats gl;           // its frames over the timed part
     double glWallMs = 0.0;                        // the time they were counted over
     long hitsSum = 0;                             // the hits it showed, sampled every 50 ms
@@ -254,6 +257,13 @@ struct HitTiming::Run
         processor.prepareToPlay (kRate, block);
         if (preset >= 0)
             processor.setPreset (preset);
+        // The notes of the rows the preset has, in row order (the default notes: BELL, BOW, EDGE,
+        // BELL2 and BOW2 60, 62, 64, 61, 63; HI-HAT's BOW and EDGE 42, 46), and its pedal.
+        const int shownPreset = preset >= 0 ? preset : 0;
+        for (int s = 0; s < cymbalis::kNumSlots; ++s)
+            if (cymbalis::rowPlays (shownPreset, s))
+                notes.push_back (processor.slotNote (shownPreset, s));
+        pedal = cymbalis::kPresets[(size_t) shownPreset].pedal;
         if (kind == Editor::none)
             return;
         CymbalisProcessor* shown = &processor;
@@ -321,8 +331,14 @@ struct HitTiming::Run
                 }
                 midi.clear();
                 const double from = (double) b * block;
+                if (pedal) // HI-HAT: the pedal moves, a triangle from closed to open and back
+                {
+                    const double phase = std::fmod (from / kRate / kPedalPeriodSeconds, 1.0);
+                    const int value = (int) std::lround (127.0 * (phase < 0.5 ? 2.0 * phase : 2.0 - 2.0 * phase));
+                    midi.addEvent (juce::MidiMessage::controllerEvent (processor.midiChannel(), processor.pedalCc(), value), 0);
+                }
                 for (; nextHit < from + block; nextHit += hitEvery)
-                    midi.addEvent (juce::MidiMessage::noteOn (processor.midiChannel(), kNotes[hit++ % 5], (juce::uint8) kVelocity),
+                    midi.addEvent (juce::MidiMessage::noteOn (processor.midiChannel(), notes[(size_t) hit++ % notes.size()], (juce::uint8) kVelocity),
                                    (int) (nextHit - from));
                 buffer.clear();
                 const double c0 = threadCpuMs();
@@ -348,6 +364,8 @@ struct HitTiming::Run
     Editor editorKind;
     int block;
     bool realtime;
+    std::vector<int> notes; // played in turn
+    bool pedal = false;     // the pedal CC moves too
     CymbalisProcessor processor;
     std::unique_ptr<CymbalisProcessor> other;
     PaintClock clock;
@@ -379,10 +397,10 @@ HitTiming::HitTiming (std::function<void (int)> f) : finished (std::move (f))
                     steps.push_back ({ e, block, realtime, e == Editor::hits && round == 0 && ! realtime && block == kBlocks[0] });
             steps.push_back ({ Editor::none, block, realtime, false });
         }
-    // Once more with HAMMERED THIN RIDE selected, and once each with SWISH, RAVEN and KONSTAN
-    // CRASH 18" (the dented meshes).
+    // Once more with HAMMERED THIN RIDE selected, and once each with SWISH, RAVEN, KONSTAN CRASH
+    // 18" (the dented meshes) and HI-HAT (two dented cymbals, its clutch and rod, the pedal moving).
     for (const auto* shape : { &cymbalis::ui::kHammeredShape, &cymbalis::ui::kSwishShape, &cymbalis::ui::kRavenShape,
-                               &cymbalis::ui::kKonstanShape })
+                               &cymbalis::ui::kKonstanShape, &cymbalis::ui::kHiHatTopShape })
         for (int p = 0; p < cymbalis::kNumPresets; ++p)
             if (cymbalis::kPresets[(size_t) p].shape == shape)
                 for (const auto e : { Editor::none, Editor::idle, Editor::hits })
@@ -471,6 +489,15 @@ void HitTiming::timerCallback()
                     r.dents = geo->numDents;
                     r.buildMs = geo->buildMs;
                 }
+                if (const auto lower = c.view->lowerGeometry())
+                {
+                    r.lowerSegments = (int) lower->lineIndices.size() / 2;
+                    r.lowerBefore = lower->segmentsBeforeSimplifying;
+                    r.lowerSurface = (int) lower->surface.size() / 2;
+                    r.lowerDents = lower->numDents;
+                    r.lowerBuildMs = lower->buildMs;
+                    r.hardwareLines = (int) cymbalis::ui::wire::hiHatHardware().lines.size();
+                }
                 r.gl = c.view->stats();
                 r.glWallMs = now - run->glStartMs;
                 r.hitsSum = run->hitsSum;
@@ -529,8 +556,9 @@ void HitTiming::finishRun()
 
 void HitTiming::report()
 {
-    std::printf ("hits: a strike every %.0f ms at velocity 0.9 (notes 60-64), %.1f kHz, editor 1536 x 1024, %d runs of %.0f s per case\n",
-                 1000.0 * kHitEverySeconds, kRate / 1000.0, kRounds, kTimedSeconds);
+    std::printf ("hits: a strike every %.0f ms at velocity 0.9 (notes 60-64; HI-HAT 42 and 46, its pedal CC sweeping 0-127-0 every %.0f s), "
+                 "%.1f kHz, editor 1536 x 1024, %d runs of %.0f s per case\n",
+                 1000.0 * kHitEverySeconds, kPedalPeriodSeconds, kRate / 1000.0, kRounds, kTimedSeconds);
     std::printf ("  CPU: %s\n", cpuSummary().toRawUTF8());
     bool ran = true;
     const auto percent = [] (double a, double b) { return b > 0.0 ? 100.0 * (a - b) / b : 0.0; };
@@ -554,6 +582,11 @@ void HitTiming::report()
                 if (r.segmentsBefore > 0)
                     std::printf (" (%d before simplifying, %d dents)", r.segmentsBefore, r.dents);
                 std::printf (", %d surface line segments; built in %.0f ms\n", r.surfaceSegments, r.buildMs);
+                if (r.lowerSegments > 0)
+                    std::printf ("    its bottom cymbal: %d mesh segments (%d before simplifying, %d dents), %d surface line segments; "
+                                 "built in %.0f ms; the clutch and rod: %d line segments; in all %d segments\n",
+                                 r.lowerSegments, r.lowerBefore, r.lowerDents, r.lowerSurface, r.lowerBuildMs, r.hardwareLines,
+                                 r.meshSegments + r.surfaceSegments + r.lowerSegments + r.lowerSurface + r.hardwareLines);
                 break;
             }
         std::printf ("    %-22s %s\n", "", "processBlock over all runs (ms)     worst of each run (ms)       its CPU (ms)    rest of the   WindowServer");

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "ui/HiHatPedal.h"
 #include "ui/HitDisplay.h"
 #include "ui/UiAssets.h"
 
@@ -123,6 +124,28 @@ private:
     bool lit = false;
 };
 
+// The PEDAL row's box (the hi-hat; UI_SPEC section 3), drawn like a stick box: the pedal's MIDI
+// CC, "CC 1" to "CC 127". A click opens a grid of CC 1-127.
+class PedalBox final : public juce::Component
+{
+public:
+    explicit PedalBox (const Assets& assets);
+
+    void setCc (int cc);
+    void setOpen (bool shouldBeOpen);
+    std::function<void()> onClick;
+
+    void paint (juce::Graphics& g) override;
+    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { repaint(); }
+    void mouseUp (const juce::MouseEvent& e) override;
+
+private:
+    const Assets& assets;
+    int cc = 1;
+    bool open = false;
+};
+
 // The note box's menu: MIDI LEARN, RESET DEFAULT and NONE, then a scrollable list of every
 // note, C-2 (0) to G8 (127), with its number. The current note is selected and in view.
 class NoteMenu final : public juce::Component
@@ -224,6 +247,7 @@ private:
     void openChannelMenu();
     void openNoteMenu (int slot);
     void openStickMenu (int slot);
+    void openPedalMenu();
 
     void paintLabels (juce::Graphics& g);
     void paintRows (juce::Graphics& g);
@@ -245,13 +269,17 @@ private:
 
     DropdownBox presetBox, channelBox;
 #if CYMBALIS_TUNING
-    // The TUNING button (under the CYMBAL box) opens and closes the Tuning window.
-    class TuningButton;
-    std::unique_ptr<TuningButton> tuningButton;
+    // A click on the CYMBALIS title (the background's logo, top left) opens and closes the
+    // Tuning window.
+    class TitleButton;
+    std::unique_ptr<TitleButton> titleButton;
     void toggleTuningWindow (bool open);
 #endif
     std::array<std::unique_ptr<NoteBox>, kNumSlots> noteBoxes;
     std::array<std::unique_ptr<StickBox>, kNumSlots> stickBoxes;
+    // The hi-hat's pedal (left column) and its PEDAL row, shown on a preset with a pedal.
+    HiHatPedal pedal;
+    PedalBox pedalBox;
 
     // Popup: a transparent layer that closes it on any click outside, and the panel.
     std::unique_ptr<juce::Component> popupLayer;
@@ -262,11 +290,13 @@ private:
     std::array<int, kNumSlots> shownSticks {};
     int shownChannel = -1;
     int shownPreset = -1;
+    int shownPedalCc = -1;
+    float shownOpening = -1.0f; // the pedal's opening the hats and the pedal show
     juce::String shownError;
     int shownLearn = -1;
     double learnStartMs = 0.0;
 #if CYMBALIS_TUNING
-    std::unique_ptr<tuning::TuningWindow> tuningWindow; // TUNING button, or Cmd-click on the logo
+    std::unique_ptr<tuning::TuningWindow> tuningWindow; // a click on the CYMBALIS title
 #endif
 };
 

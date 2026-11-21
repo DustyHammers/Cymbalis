@@ -19,6 +19,11 @@ void doubleClick (juce::Component& target, juce::Point<float> p);
 // shows. Otherwise what failed.
 juce::String sliderText (juce::Component& target, juce::Point<float> p);
 
+// The description (accessibility label) of the element titled `title` in the native window that
+// holds `target`, as the window's accessibility elements give it (JUCE: a component's title and
+// description). "no element titled ..." when none has that title.
+juce::String elementText (juce::Component& target, const juce::String& title);
+
 // Presses at `from`, moves to `to` in steps and releases there.
 void drag (juce::Component& target, juce::Point<float> from, juce::Point<float> to);
 

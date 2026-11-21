@@ -37,8 +37,12 @@ const juce::Colour arcBright { 0xffecc88c };
 // The DHammers logo (UI_SPEC section 4): a vertical gradient over its ink.
 const juce::Colour logoTop { 0xff8e7550 };
 const juce::Colour logoBottom { 0xff4a3d2d };
+// The hi-hat's pedal (UI_SPEC section 11, "The pedal"): its lines and highlights, its far side
+// 0.55 x the lines (the reference's BGR (118, 121, 127) and (170, 173, 178)).
+const juce::Colour pedalLine { 0xff7f7976 };
+const juce::Colour pedalHighlight { 0xffb2adaa };
 // A lit row (UI_SPEC section 10): its label is openOutline, its boxes bronze. The wireframe
-// cymbal's colours are in CymbalModel.h (UI_SPEC section 11).
+// cymbal's colours are in CymbalModel.h (UI_SPEC section 11), the hi-hat's clutch and rod's too.
 } // namespace palette
 
 // The images and the typeface, loaded once from BinaryData.
