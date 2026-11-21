@@ -219,9 +219,20 @@ void readHiHat(const json::Value& h, const BakeData& b, HiHatData& out, std::vec
         knot.weights = readArray(k.at("weights"), name + ".weights", {n}, rep);
         const auto lvl = readArray(k.at("level_db"), name + ".level_db", {nb}, rep);
         std::copy(lvl.begin(), lvl.end(), knot.levelDb.begin());
-        for (double x : knot.stick)
-            if (!(x >= 0.0) || !std::isfinite(x))
-                throw BakeError(name + ".stick: envelopes must be finite and >= 0");
+        // FREE RING's version of the knot (optional: the fully open knot).
+        const json::Value* sf = k.find("stick_free");
+        const json::Value* wf = k.find("weights_free");
+        if ((sf != nullptr && !sf->isNull()) != (wf != nullptr && !wf->isNull()))
+            throw BakeError(name + ": stick_free and weights_free go together");
+        if (sf != nullptr && !sf->isNull())
+        {
+            knot.stickFree = readArray(*sf, name + ".stick_free", {nb, size_t(knot.frames)}, rep);
+            knot.weightsFree = readArray(*wf, name + ".weights_free", {n}, rep);
+        }
+        for (const auto* env : { &knot.stick, &knot.stickFree })
+            for (double x : *env)
+                if (!(x >= 0.0) || !std::isfinite(x))
+                    throw BakeError(name + ".stick: envelopes must be finite and >= 0");
         out.maxFrames = std::max(out.maxFrames, knot.frames);
         out.knots.push_back(std::move(knot));
     }

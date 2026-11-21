@@ -118,6 +118,9 @@ struct HiHatKnot
     std::vector<double> raw;      // bands x frames: SPEAR's own envelope (the closed EDGE knots: FOOT)
     std::vector<double> weights;  // per mode, unit norm per band
     std::array<double, kExcitationBands> levelDb {}; // its level per band, first 100 ms after its peak
+    // FREE RING (the fully open knot only; else empty): the knot as a single free cymbal, its
+    // smoothed stick envelope (bands x frames) and its mode weights (unit norm per band).
+    std::vector<double> stickFree, weightsFree;
 };
 
 struct HiHatData

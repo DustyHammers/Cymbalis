@@ -47,6 +47,8 @@ const std::vector<CymbalKey>& cymbalKeys()
         { kHhTipOpenLevelKey, &CymbalTuning::hhTipOpenLevel },
         { kHhTipOpenTickKey, &CymbalTuning::hhTipOpenTickDb },
         { kHhRingFloorKey, &CymbalTuning::hhRingFloor },
+        { kHhTipModesKey, &CymbalTuning::hhTipModesDb },
+        { kHhMaxOpenKey, &CymbalTuning::hhMaxOpen },
         { "cascade_amount", &CymbalTuning::cascadeAmount },
         { "cascade_threshold_db", &CymbalTuning::cascadeThresholdDb },
         { "cascade_speed_ms", &CymbalTuning::cascadeSpeedMs },
@@ -439,6 +441,11 @@ Tuning parseTuningBlock(const json::Value& block, const BakeData& b, const Tunin
                 t.cymbal.hitVariation = kv.second.boolean();
                 continue;
             }
+            if (kv.first == kHhFreeRingKey)
+            {
+                t.cymbal.hhFreeRing = kv.second.boolean();
+                continue;
+            }
             if (kv.first == kPanBandsKey || kv.first == kWidthBandsKey)
             {
                 const bool pan = kv.first == kPanBandsKey;
@@ -546,6 +553,9 @@ Tuning parseTuningBlock(const json::Value& block, const BakeData& b, const Tunin
         || ! (t.cymbal.hhRingFloor >= 0.0 && t.cymbal.hhRingFloor <= kHhRingFloorMax))
         throw std::runtime_error("tuning: hh_tip_open_level must lie in 0 to 100, hh_tip_open_tick_db in 0 to 12 and "
                                  "hh_ring_floor in 0 to 200");
+    if (! (t.cymbal.hhTipModesDb >= 0.0 && t.cymbal.hhTipModesDb <= kHhTipModesMax)
+        || ! (t.cymbal.hhMaxOpen >= kHhMaxOpenMin && t.cymbal.hhMaxOpen <= kHhMaxOpenMax))
+        throw std::runtime_error("tuning: hh_tip_modes_db must lie in 0 to 20 and hh_max_open in 75 to 100");
     for (int s = 0; s < t.numArticulations && s < kMaxArticulations; ++s)
     {
         const ArticulationTuning& a = t.articulations[size_t(s)];

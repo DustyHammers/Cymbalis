@@ -603,6 +603,7 @@ void TuningPanel::rebuild()
     envelopeRow.reset();
     highPassRow.reset();
     hitVariationRow.reset();
+    freeRingRow.reset();
     bandEq.reset();
     cymbalBandRows.clear();
     list.removeAllChildren();
@@ -792,6 +793,13 @@ void TuningPanel::rebuild()
             {
                 if (f.group != group || ! applies (f.needs, *bake))
                     continue;
+                // HI-HAT: FREE RING's switch above TIP MODES.
+                if (f.member == &CymbalTuning::hhTipModesDb)
+                {
+                    freeRingRow = std::make_unique<ToggleRow> ("FREE RING (the fully open hats as a single free cymbal)");
+                    freeRingRow->onChange = [this] (bool v) { change ([&] (Tuning& t) { t.cymbal.hhFreeRing = v; }); };
+                    place (*freeRingRow);
+                }
                 if (f.member == &CymbalTuning::highPassHz)
                 {
                     highPassRow = std::make_unique<ToggleRow> ("Right-channel high-pass (2nd-order Butterworth)");
@@ -852,6 +860,8 @@ void TuningPanel::showValues()
         highPassRow->setValues (processor.tuning (preset).cymbal.highPassOn, bake->tuning.cymbal.highPassOn);
     if (hitVariationRow != nullptr && bake != nullptr)
         hitVariationRow->setValues (processor.tuning (preset).cymbal.hitVariation, bake->tuning.cymbal.hitVariation);
+    if (freeRingRow != nullptr && bake != nullptr)
+        freeRingRow->setValues (processor.tuning (preset).cymbal.hhFreeRing, bake->tuning.cymbal.hhFreeRing);
     modified = bake != nullptr && isModified (*bake, processor.tuning (preset));
     repaint (0, 0, getWidth(), kTopHeight);
 }

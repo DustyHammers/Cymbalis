@@ -75,7 +75,7 @@ CYMBAL_KEYS = [
     'lf_sens_depth', 'lf_sens_tau', 'lf_min_scale', 'lf_max_scale', 'lf_cutoff_hz',
     'lf_bow_weight', 'lf_edge_weight', 'lf_bell_weight', 'lf_wander_rate_boost',
     'edge_band_env_onset_s', 'edge_voice_from_bow', 'hit_position_spread', 'hit_velocity_spread_pct',
-    'hh_tip_open_level', 'hh_tip_open_tick_db', 'hh_ring_floor',
+    'hh_tip_open_level', 'hh_tip_open_tick_db', 'hh_ring_floor', 'hh_tip_modes_db', 'hh_max_open',
     'cascade_amount', 'cascade_threshold_db', 'cascade_speed_ms', 'cascade_release_ms',
     'cascade_spread', 'cascade_low_band', 'cascade_high_band',
     'loud_damp_amount', 'loud_damp_threshold_db', 'loud_damp_tilt',
@@ -92,6 +92,8 @@ PLUGIN_KEYS = {
     'hh_tip_open_level': (0.0, (0.0, 100.0, False)),
     'hh_tip_open_tick_db': (0.0, (0.0, 12.0, False)),
     'hh_ring_floor': (100.0, (0.0, 200.0, False)),
+    'hh_tip_modes_db': (0.0, (0.0, 20.0, False)),
+    'hh_max_open': (100.0, (75.0, 100.0, False)),
     'cascade_amount': (0.0, (0.0, 1.0, False)),
     'cascade_threshold_db': (-12.0, (-120.0, 40.0, False)),
     'cascade_speed_ms': (100.0, (0.1, 60000.0, False)),
@@ -115,8 +117,10 @@ ENVELOPE_KEY = 'edge_band_envelope'   # EDGE ONSET ENVELOPE: the bake's edge_npz
 VOICE_KEY = 'edge_voice_from_bow'     # EDGE VOICE FROM BOW, %: 0 if a file has none
 HIGHPASS_KEY = 'right_highpass'       # the right channel's 120 Hz high-pass on (the bake's own) or off
 HITVAR_KEY = 'hit_variation'          # HIT VARIATION on or off (the bake's own: off)
-# The hi-hat's own values (bakes with a hihat block only): TIP OPEN LEVEL, TIP OPEN TICK, RING FLOOR.
-HIHAT_KEYS = ('hh_tip_open_level', 'hh_tip_open_tick_db', 'hh_ring_floor')
+# The hi-hat's own values (bakes with a hihat block only): TIP OPEN LEVEL, TIP OPEN TICK, RING FLOOR,
+# FREE RING (on / off; the bake's own: off), TIP MODES, MAX OPEN.
+FREE_RING_KEY = 'hh_free_ring'
+HIHAT_KEYS = ('hh_tip_open_level', 'hh_tip_open_tick_db', 'hh_ring_floor', FREE_RING_KEY, 'hh_tip_modes_db', 'hh_max_open')
 # Per-band cymbal values (22 values, lowest band first): name -> (range, unit, neutral value).
 CYMBAL_BAND_KEYS = {
     'ring_length_bands': ((0.25, 4.0), 'x', 1.0),
@@ -182,6 +186,7 @@ def own_values(bake):
     own[ENVELOPE_KEY] = bool(npz['envelope_active']) if npz else False
     own[HIGHPASS_KEY] = True
     own[HITVAR_KEY] = False
+    own[FREE_RING_KEY] = False
     for key, (neutral, _) in PLUGIN_KEYS.items():
         own[key] = neutral
     for key, (_, _, neutral) in CYMBAL_BAND_KEYS.items():
@@ -361,7 +366,7 @@ def main():
             fail(f'{VOICE_KEY}: the bake has no NPZ edge data')
         if key in HIHAT_KEYS and not bake.get('hihat'):
             fail(f'{key}: the bake is not the hi-hat')
-        if key in (RESTART_KEY, ENVELOPE_KEY, HIGHPASS_KEY, HITVAR_KEY):
+        if key in (RESTART_KEY, ENVELOPE_KEY, HIGHPASS_KEY, HITVAR_KEY, FREE_RING_KEY):
             if not isinstance(v, bool):
                 fail(f'{key} must be true or false')
             if key == ENVELOPE_KEY and not bake.get('edge_npz'):
@@ -430,7 +435,8 @@ def main():
                 fail(f'unknown articulation value {aid}.{key}')
 
     # The new tuning block: what differs from the bake's own values.
-    new_cymbal = {k: current[k] for k in CYMBAL_KEYS + [RESTART_KEY, ENVELOPE_KEY, HIGHPASS_KEY, HITVAR_KEY] + list(CYMBAL_BAND_KEYS)
+    new_cymbal = {k: current[k] for k in CYMBAL_KEYS + [RESTART_KEY, ENVELOPE_KEY, HIGHPASS_KEY, HITVAR_KEY, FREE_RING_KEY]
+                  + list(CYMBAL_BAND_KEYS)
                   + [WEIGHTS_KEY]
                   if k in current and current[k] != own.get(k)}
     new_arts = {}

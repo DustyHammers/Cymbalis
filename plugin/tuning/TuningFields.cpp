@@ -75,6 +75,8 @@ const std::vector<Field>& cymbalFields()
         { kHhTipOpenLevelKey, "TIP OPEN LEVEL (share of the closed tip/edge gap an open tip drops at full opening)", "%", Group::cymbal, Needs::hihat, 0.0, kHhTipOpenLevelMax, 0, &C::hhTipOpenLevel, false },
         { kHhTipOpenTickKey, "TIP OPEN TICK (the tip's stick click raised at full opening)", "dB", Group::cymbal, Needs::hihat, 0.0, kHhTipOpenTickMax, 1, &C::hhTipOpenTickDb, false },
         { kHhRingFloorKey, "RING FLOOR (each band's decay rate at least this share of the median; 0 = off)", "%", Group::cymbal, Needs::hihat, 0.0, kHhRingFloorMax, 0, &C::hhRingFloor, false },
+        { kHhTipModesKey, "TIP MODES (an open tip favours the modes a tip strike favours; 0 = off)", "dB", Group::cymbal, Needs::hihat, 0.0, kHhTipModesMax, 1, &C::hhTipModesDb, false },
+        { kHhMaxOpenKey, "MAX OPEN (the openness the pedal reaches at CC 127)", "%", Group::cymbal, Needs::hihat, kHhMaxOpenMin, kHhMaxOpenMax, 0, &C::hhMaxOpen, false },
 
         { kHitPositionSpreadKey, "POSITION SPREAD (0 edge, 0.5 bow, 1 bell)", "", Group::hitVariation, Needs::positions, 0.0, kHitPositionSpreadMax, 3, &C::hitPositionSpread, false },
         { kHitVelocitySpreadKey, "VELOCITY SPREAD", "%", Group::hitVariation, Needs::always, 0.0, kHitVelocitySpreadMax, 1, &C::hitVelocitySpreadPct, false },
@@ -238,6 +240,8 @@ juce::var cymbalObject (const BakeData& b, const Tuning& t, bool onlyChanged)
         o->setProperty (kHighPassKey, t.cymbal.highPassOn);
     if (! onlyChanged || t.cymbal.hitVariation != b.tuning.cymbal.hitVariation)
         o->setProperty (kHitVariationKey, t.cymbal.hitVariation);
+    if (applies (Needs::hihat, b) && (! onlyChanged || t.cymbal.hhFreeRing != b.tuning.cymbal.hhFreeRing))
+        o->setProperty (kHhFreeRingKey, t.cymbal.hhFreeRing);
     // The per-band values: all 22 when any differs.
     for (const auto& f : cymbalBandFields())
         if (! onlyChanged || t.cymbal.*(f.member) != b.tuning.cymbal.*(f.member))
@@ -372,6 +376,11 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
                 t.cymbal.hitVariation = (bool) p.value;
                 continue;
             }
+            if (key == kHhFreeRingKey)
+            {
+                t.cymbal.hhFreeRing = (bool) p.value;
+                continue;
+            }
             if (key == kRehitWeightsKey)
             {
                 auto* w = p.value.getDynamicObject();
@@ -479,6 +488,9 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
         || ! (t.cymbal.hhTipOpenTickDb >= 0.0 && t.cymbal.hhTipOpenTickDb <= kHhTipOpenTickMax)
         || ! (t.cymbal.hhRingFloor >= 0.0 && t.cymbal.hhRingFloor <= kHhRingFloorMax))
         return "The tuning file's hh_tip_open_level must lie in 0 to 100 %, hh_tip_open_tick_db in 0 to 12 dB and hh_ring_floor in 0 to 200 %.";
+    if (! (t.cymbal.hhTipModesDb >= 0.0 && t.cymbal.hhTipModesDb <= kHhTipModesMax)
+        || ! (t.cymbal.hhMaxOpen >= kHhMaxOpenMin && t.cymbal.hhMaxOpen <= kHhMaxOpenMax))
+        return "The tuning file's hh_tip_modes_db must lie in 0 to 20 dB and hh_max_open in 75 to 100 %.";
     for (size_t s = 0; s < b.slots.size(); ++s)
         for (double w : { t.articulations[s].stickBowWeight, t.articulations[s].stickBellWeight, t.articulations[s].stickEdgeWeight })
             if (! (w >= 0.0 && w <= kStickWeightMax))
@@ -493,7 +505,8 @@ bool isModified (const BakeData& b, const Tuning& t)
         if (! juce::exactlyEqual (t.cymbal.*(f.member), b.tuning.cymbal.*(f.member)))
             return true;
     if (t.cymbal.frameDecayRestart != b.tuning.cymbal.frameDecayRestart || t.cymbal.edgeEnvelope != b.tuning.cymbal.edgeEnvelope
-        || t.cymbal.highPassOn != b.tuning.cymbal.highPassOn || t.cymbal.hitVariation != b.tuning.cymbal.hitVariation)
+        || t.cymbal.highPassOn != b.tuning.cymbal.highPassOn || t.cymbal.hitVariation != b.tuning.cymbal.hitVariation
+        || t.cymbal.hhFreeRing != b.tuning.cymbal.hhFreeRing)
         return true;
     if (! sameRehitWeights (b, t.cymbal, b.tuning.cymbal))
         return true;
