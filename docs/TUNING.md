@@ -53,7 +53,7 @@ The values travel to the audio thread without locks or allocation.
 
 ### Per articulation
 
-One set per bake entry: NOVA RIDE `bell_shoulder`, `bow_tip`, `edge`, `bell_tip`, `bow_shoulder`; SMOKE FLAT RIDE `bow`, `edge`, `center`, `bow_shoulder`, `center_shoulder`; HAMMERED THIN RIDE `bell`, `bow`, `edge`, `bell_shoulder`, `bow_shoulder`; SWISH `bell`, `bow_tip`, `bow_shoulder`, `edge`, `bell_shoulder`; RAVEN `bell`, `bow`, `edge`, `bell_shoulder`, `bow_shoulder`; KONSTAN CRASH 18" `bell`, `bow`, `edge`, `bell_shoulder`, `bow_shoulder`. The articulation id is the entry's `articulation` key if it has one, else its overlay, else its name in lower case. Two entries of a bake may not share an id. Which rows and sticks play each articulation: `docs/UI_SPEC.md` section 8.
+One set per bake entry: NOVA RIDE `bell_shoulder`, `bow_tip`, `edge`, `bell_tip`, `bow_shoulder`; SMOKE FLAT RIDE `bow`, `edge`, `center`, `bow_shoulder`, `center_shoulder`; HAMMERED THIN RIDE `bell`, `bow`, `edge`, `bell_shoulder`, `bow_shoulder`; SWISH `bell`, `bow_tip`, `bow_shoulder`, `edge`, `bell_shoulder`; RAVEN `bell`, `bow`, `edge`, `bell_shoulder`, `bow_shoulder`; KONSTAN CRASH 18" `bell`, `bow`, `edge`, `bell_shoulder`, `bow_shoulder`; HI-HAT `tip`, `edge`, `foot` (see "HI-HAT" below). The articulation id is the entry's `articulation` key if it has one, else its overlay, else its name in lower case. Two entries of a bake may not share an id. Which rows and sticks play each articulation: `docs/UI_SPEC.md` section 8.
 
 **Copies.** Some articulations are copies of another entry's data under their own id (`"articulation"`, `"copy_of"`, made by `tools/bake_preset.py`). Each is a full articulation with every per-articulation value of its own: level, velocity curve, band gains, onset shift and the re-hit damping weight. Each starts as an exact copy of its source, its level trim included, so untuned it plays exactly as its source. Changing a copy leaves its source alone, and the reverse.
 
@@ -70,6 +70,15 @@ One set per bake entry: NOVA RIDE `bell_shoulder`, `bow_tip`, `edge`, `bell_tip`
 | KONSTAN CRASH 18" | `bell_shoulder` | `bell` | BELL and BELL2, SHOULDER |
 | KONSTAN CRASH 18" | `bow_shoulder` | `bow` | BOW and BOW2, SHOULDER |
 | NOVA RIDE | `edge` | `bow_shoulder` (at the edge position, 0.0) | EDGE |
+
+#### HI-HAT
+
+HI-HAT has three articulations (`docs/PORT_MAP.md`, "Hi-hat"): `tip` (the BOW row, its stick fixed on TIP), `edge` (the EDGE row, SHOULDER) and `foot` (no row: the pedal closing plays it). Their strikes follow band envelopes interpolated from the hats' captures at the pedal's openness and the strike's velocity, so not every value acts on them:
+
+- **Act, as on every preset:** level, the velocity curve (a level at velocities 0.6 and 0.3, on top of the captures' own velocity response), brightness vs velocity, the excitation band gains, the attack band gains and time, the onset delay and speed (each band's envelope read at (t − delay) × speed, as on an NPZ edge strike), and the stick click's gain, band, length and decay. FOOT has no click (gain 0); TIP's and EDGE's start at 0.1398 and 0.4189 (3 dB under the hit's first 3 ms).
+- **Hidden:** the stick click's bow, bell and edge weights (the hi-hat's strikes have no position on the cymbal; they stay 1).
+
+All three start with the same level trim, EDGE's, so TIP and FOOT keep their captured levels relative to EDGE. There is no NOVA SHOULDER PROFILE button on the hi-hat.
 
 Nova Ride's `edge` replaced the base preset played at the edge (Nova has no edge captures). It is the one articulation that does not play as it did before: the EDGE row now sounds like the bow shoulder struck at the edge. A tuning file with `edge` values from before applies them to the new `edge`.
 
@@ -211,11 +220,11 @@ In the window, the **BANDS** section below the articulations works like a graphi
 | Cymbal | Output gain | `output_gain_db` | −24 to +12 dB | all | Whole preset, for headroom; before the Volume knob |
 | | Edge capture curve | `edge_velocity_remap_exponent` | 0.25–2.0 | 602, Bettis, Swish, Raven, Konstan | Exponent of the NPZ velocity remap (0.5 = sqrt). Each capture still maps to itself; this shapes how the velocities between captures are reached |
 | | Bow brightness vs velocity | `tau_ref_ms` | 0.05–8 ms | 602, Bettis, Swish, Raven, Konstan (no velocity tables) | `hertz_vel_scale` contact time at velocity 1 |
-| | Ring length | `ring_length` | 0.5–2.0 × | all | Multiplier of the baked T60 of every mode (t60_scale), and of the length of an edge strike's band envelope after the kept onset; see "Ring length" below. Rebuilds the engine |
-| | Kept onset | `edge_ring_keep_ms` | 0–300 ms | 602, Bettis, Swish, Raven, Konstan | How much of an edge strike's band envelope the ring length leaves as recorded; it scales the time after it ("Ring length"). Default 60 ms. Per strike |
+| | Ring length | `ring_length` | 0.5–2.0 × | all | Multiplier of the baked T60 of every mode (t60_scale), and of the length of an edge strike's band envelope after the kept onset (on HI-HAT every strike's); see "Ring length" below. Rebuilds the engine |
+| | Kept onset | `edge_ring_keep_ms` | 0–300 ms | 602, Bettis, Swish, Raven, Konstan, HI-HAT | How much of an edge strike's band envelope (on HI-HAT every strike's) the ring length leaves as recorded; it scales the time after it ("Ring length"). Default 60 ms. Per strike |
 | | Ring length per band | `ring_length_bands` | ×0.25–×4 per band | all | 22 values, see below. Default ×1 |
 | Hit variation | HIT VARIATION | `hit_variation` | on/off | all | Switches both spreads below. Off: every strike plays exactly as without it. Default off; every bake starts on (2026-10-31). See "Hit variation" below |
-| | POSITION SPREAD | `hit_position_spread` | 0–0.15 (position units: 0 edge, 0.5 bow, 1 bell) | all | Each strike's position moves by a uniform random amount in ±spread. Default 0.04 |
+| | POSITION SPREAD | `hit_position_spread` | 0–0.15 (position units: 0 edge, 0.5 bow, 1 bell) | all but HI-HAT | Each strike's position moves by a uniform random amount in ±spread. Default 0.04. The hi-hat's strikes have no position |
 | | VELOCITY SPREAD | `hit_velocity_spread_pct` | 0–15 % | all | Each strike's velocity is multiplied by 1 + a uniform random amount in ±spread. Default 3 % |
 | Stereo | Pan per band | `stereo_pan_bands` | L100 to R100 per band | all | 22 values, −100 (L100) to 100 (R100). Default centre (0). See "Stereo" below |
 | | Width per band | `stereo_width_bands` | 0–200 % per band | all | 22 values. Default 100 % |
@@ -241,7 +250,7 @@ In the window, the **BANDS** section below the articulations works like a graphi
 | | Window | `edge_band_env_onset_s` | 0.1–30 s | 602, Bettis, Swish, Raven, Konstan | How long an edge strike follows the NPZ band envelope; per strike. A ring length above ×1 lengthens it, up to ×2 ("Ring length") |
 | | 20 ms frame-decay restart | `edge_frame_decay_restart` | on/off | 602, Bettis, Swish, Raven, Konstan | On (the bake): the in-frame decay restarts every 20 ms (`docs/PORT_MAP.md`, "The in-frame decay is a 50 Hz sawtooth"). Off: no in-frame decay; the level follows the band envelope alone. Per strike |
 | Energy cascade | Amount | `cascade_amount` | 0–1 | all | 0 (default) switches it off. See "Energy cascade" below |
-| | Threshold | `cascade_threshold_db` | −40 to 0 dB | all | Per band, relative to that band's energy after a velocity-1.0 BOW strike. Default −12 dB |
+| | Threshold | `cascade_threshold_db` | −40 to 0 dB | all | Per band, relative to that band's energy after a velocity-1.0 BOW strike (on HI-HAT a closed velocity-1.0 TIP strike at its peak). Default −12 dB |
 | | Speed (attack) | `cascade_speed_ms` | 5–1000 ms | all | How fast the transfer starts, and its time constant at amount 1. Default 100 ms |
 | | Release | `cascade_release_ms` | 10–3000 ms | all | How fast the transfer stops once the band falls below the threshold. Default 150 ms |
 | | Spread | `cascade_spread` | 1–6 bands | all | How far up the energy goes. Default 2 |
@@ -254,6 +263,8 @@ In the window, the **BANDS** section below the articulations works like a graphi
 | | Weight, per articulation | `rehit_damp_weights` | 0–2 each | all | One row per articulation of the preset, e.g. "Weight: BOW". Default 1 |
 
 A slider's range widens to include a baked or loaded value outside it. Values for other presets are hidden.
+
+On HI-HAT (`docs/PORT_MAP.md`, "Hi-hat") every per-cymbal value in the table acts as on the other presets, except those listed for other presets only and POSITION SPREAD: the ring length and ring length per band scale each band's envelope time after the kept onset (its strikes follow envelopes, not T60s), the MF and LF build-up and the edge wander count TIP as a bow strike and EDGE and FOOT as edge strikes (their positions 0.5 and 0.0), and the cascade and loud-band damping thresholds are relative to a closed TIP strike. The pedal and its choke are not tuning values: the openness comes from the pedal CC (`docs/UI_SPEC.md` section 9).
 
 #### Ring length
 

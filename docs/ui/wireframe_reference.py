@@ -818,3 +818,188 @@ class Cymbal2:
                     spot = np.zeros_like(img); cv2.circle(spot, (int(hx), int(hy)), rad, (230, 245, 255), -1, cv2.LINE_AA)
                     img = img + cv2.GaussianBlur(spot, (0, 0), rad * 0.6) * kk * (0.4 + 0.6 * v)
         return img
+
+
+# =====================================================================================
+# HI-HAT (2026-11-20, approved by Kris from mockups): 14" hats. The top cymbal over the bottom
+# cymbal (bell down), the rod and the clutch on the top cymbal; the top cymbal, clutch and rod rise
+# with the pedal's opening (up to a 0.7" gap). The pedal is a separate side-profile wireframe in the
+# editor's left column (not joined to the cymbals). Clutch, rod and pedal in grey and silver.
+# Top cymbal from Kris's photo (Hi_hat_top): partly lathed, heavily hammered. Bottom (Hi_Hat_bottom):
+# lathed all over with the hammering showing through, an unlathed band at the rim.
+# =====================================================================================
+
+R_IN = 7.0     # 14" hats
+PROFILE = [(0.0, 1.10), (0.5, 1.07), (1.2, 0.95), (1.9, 0.72), (2.4, 0.52), (2.6, 0.47), (3.0, 0.44),
+           (4.5, 0.30), (6.0, 0.12), (7.0, 0.0)]
+CYMBALS['hh_top'] = dict(
+    title='HI-HAT TOP', R=R_IN, bell=0.37, hammer=None, hammer_zone=(0, 0), profile=PROFILE,
+    # measured from Kris's top photo (rim 457 px): a lathed disc around the hole to 0.15 R, a lathed
+    # ring at the bell's edge 0.355-0.385 R, a narrow lathed ring 0.80-0.82 R and a wider one
+    # 0.85-0.93 R, an unlathed dark band to the rim; heavy hammering on the bell and the bow
+    lathe=[], fine_lathe=[], gold=[(0.03, 0.15), (0.355, 0.385), (0.80, 0.82), (0.85, 0.93)],
+    gold_step=0.012, bell_line=False, ring_step=5, dent_depth=2.6, dent_contrast=9.0,
+    lines_follow_dents=True,
+    dent_zones=[(0.16, 0.35, 90, (0.022, 0.030), (0.6, 0.95), 1.0),
+                (0.40, 0.79, 420, (0.028, 0.042), (0.55, 0.95), 1.1)])
+CYMBALS['hh_bottom'] = dict(
+    title='HI-HAT BOTTOM', R=R_IN, bell=0.37, hammer=None, hammer_zone=(0, 0), profile=PROFILE,
+    # lathed all over with the hammering showing through, an unlathed band at the rim (0.93-1.0 R)
+    lathe=[], fine_lathe=[], gold=[(0.03, 0.93)], gold_step=0.03, bell_line=False, zone_edges=False,
+    ring_step=5, dent_depth=1.2, dent_contrast=6.0, lines_follow_dents=True,
+    dent_zones=[(0.10, 0.92, 500, (0.022, 0.034), (0.5, 0.9), 0.8)])
+for k in ('hh_top', 'hh_bottom'):
+    DENTED.add(k)
+
+STEEL = np.array([168, 170, 174], np.float32)      # BGR: the rod and clutch, silver grey
+STEEL_D = np.array([128, 130, 136], np.float32)
+
+
+def _hh_make(key, cx, cy, scale, z_off, invert):
+    c = Cymbal2(key, cx=cx, cy=cy, scale=scale)
+    orig = c.height
+    s = -1.0 if invert else 1.0
+    c.Z0 = s * c.Z0 + z_off
+    c.DZ = s * c.DZ
+    c.height = (lambda r, o=orig, s=s, z=z_off: s * o(r) + z)
+    c.tex_fit = [(k, r, i, ks, s * dz, fr) for (k, r, i, ks, dz, fr) in c.tex_fit]
+    return c
+
+
+_HH_CACHE = {}
+
+
+def hihat_cymbals(cx, cy, scale):
+    key = (cx, cy, scale)
+    if key not in _HH_CACHE:
+        bot = _hh_make('hh_bottom', cx, cy, scale, 0.0, True)
+        top0 = Cymbal2('hh_top', cx=cx, cy=cy, scale=scale)
+        _HH_CACHE[key] = (bot, top0)
+    return _HH_CACHE[key]
+
+
+def hh_draw_cyl(img, proj, x, y, z0, z1, r, col, n=48, rings=(), th=2):
+    """A vertical cylinder (axis at x, y) from z0 to z1 of radius r, as a wireframe: the two end
+    circles, any extra rings, and the side silhouette lines."""
+    t = np.linspace(0, 2 * np.pi, n + 1)
+    def ring(z, c, th=1):
+        px, py, _ = proj(x + r * np.cos(t), y + r * np.sin(t), np.full_like(t, z))
+        pts = np.stack([px * 4, py * 4], 1).astype(np.int32)
+        cv2.polylines(img, [pts], False, tuple(float(v) for v in c), th, cv2.LINE_AA, shift=2)
+    ring(z0, col * 0.8, th); ring(z1, col, th)
+    for z in rings:
+        ring(z, col * 0.6)
+    for sx in (-1, 1):
+        a, b, _ = proj(np.array([x + sx * r]), np.array([y]), np.array([z0]))
+        c2, d, _ = proj(np.array([x + sx * r]), np.array([y]), np.array([z1]))
+        cv2.line(img, (int(a[0] * 4), int(b[0] * 4)), (int(c2[0] * 4), int(d[0] * 4)),
+                 tuple(float(v) for v in col), th, cv2.LINE_AA, shift=2)
+
+
+def hihat_draw(openness=0.0, cx=787, cy=430, scale=270, max_gap_in=0.7):
+    """The hi-hat at an opening (0 closed .. 1 fully open, from the pedal CC), as a BGR float image."""
+    img = np.zeros((1024, 1536, 3), np.float32)
+    bot, _ = hihat_cymbals(cx, cy, scale)
+    gap = openness * max_gap_in / R_IN
+    top = _hh_make('hh_top', cx, cy, scale, gap, False)
+    # the bottom cymbal, hidden wherever the top cymbal is in front of it (the cymbals are opaque):
+    # only the band between the two rims shows, at the front, when the hats open
+    bl = bot.draw(np.zeros_like(img), 0, animate=False)
+    sx, sy, _ = top.project(top.XX, top.YY, top.Z0)
+    hull = cv2.convexHull(np.stack([sx.ravel(), sy.ravel()], 1).astype(np.float32) * 4).astype(np.int32)
+    mask = np.zeros(img.shape[:2], np.uint8); cv2.fillPoly(mask, [hull], 255, cv2.LINE_AA, shift=2)
+    mask = cv2.GaussianBlur(mask.astype(np.float32) / 255, (0, 0), 1.0)[..., None]
+    img = bl * (1 - mask)
+    proj = top.project
+    h0 = top.height(0.0) - gap                     # the top cymbal's bell top, closed
+    zb = h0 + gap
+    lay = np.zeros_like(img)
+    rod_r = 0.014
+    # the rod, above the top cymbal (below it, it is hidden by the cymbals), rising with the top
+    hh_draw_cyl(lay, proj, 0, 0, zb + 0.36, zb + 0.66, rod_r, STEEL_D * 0.55, th=1)
+    # the clutch on the top cymbal: the upper felt, the clutch body with its locking screw, the nut
+    hh_draw_cyl(lay, proj, 0, 0, zb + 0.005, zb + 0.065, 0.075, STEEL_D * 0.9)           # upper felt
+    hh_draw_cyl(lay, proj, 0, 0, zb + 0.07, zb + 0.30, 0.058, STEEL, rings=(zb + 0.12, zb + 0.25))  # body
+    hh_draw_cyl(lay, proj, 0, 0, zb + 0.30, zb + 0.36, 0.045, STEEL)                     # top nut
+    t = np.linspace(0, 2 * np.pi, 25)
+    for xx in (0.058, 0.13):
+        px, py, _ = proj(np.full_like(t, xx), 0.018 * np.cos(t), zb + 0.2 + 0.018 * np.sin(t))
+        cv2.polylines(lay, [np.stack([px * 4, py * 4], 1).astype(np.int32)], False,
+                      tuple(float(v) for v in STEEL), 1, cv2.LINE_AA, shift=2)
+    for s_ in (-1, 1):
+        a, b, _ = proj(np.array([0.058, 0.13]), np.array([0.0, 0.0]), np.array([zb + 0.2 + s_ * 0.018] * 2))
+        cv2.line(lay, (int(a[0] * 4), int(b[0] * 4)), (int(a[1] * 4), int(b[1] * 4)),
+                 tuple(float(v) for v in STEEL), 1, cv2.LINE_AA, shift=2)
+    img = top.draw(img, 0, animate=False)
+    # the clutch and rod hide the cymbal lines behind them: their silhouettes are cleared first
+    sil = np.zeros(img.shape[:2], np.uint8)
+    def sil_cyl(z0, z1, r):
+        t2 = np.linspace(0, 2 * np.pi, 49)
+        pa = np.stack(proj(r * np.cos(t2), r * np.sin(t2), np.full_like(t2, z0))[:2], 1)
+        pb = np.stack(proj(r * np.cos(t2), r * np.sin(t2), np.full_like(t2, z1))[:2], 1)
+        hull = cv2.convexHull(np.vstack([pa, pb]).astype(np.float32) * 4).astype(np.int32)
+        cv2.fillPoly(sil, [hull], 255, cv2.LINE_AA, shift=2)
+    sil_cyl(zb + 0.005, zb + 0.065, 0.075); sil_cyl(zb + 0.07, zb + 0.30, 0.058); sil_cyl(zb + 0.30, zb + 0.36, 0.045); sil_cyl(zb + 0.36, zb + 0.66, 0.014)
+    img = img * (1 - sil[..., None] / 255.0 * 0.92)
+    img = np.maximum(img, lay)
+    return img
+
+
+def hihat_pedal(openness=0.0, x0=58, y0=735, length=230):
+    """The pedal in side profile, a simple wireframe (BGR float image, design units): base plate,
+    heel plate and hinge, the footboard (its toe rising with the opening: 4 deg closed, 20 deg open),
+    the front frame with the spring, and the strap from the toe over the sprocket. Not joined to the
+    cymbals."""
+    img = np.zeros((1024, 1536, 3), np.float32)
+    col = np.array([118, 121, 127], np.float32)    # grey
+    hi = np.array([170, 173, 178], np.float32)     # silver
+    dim = col * 0.55
+    def L(p, q, c=col, th=1):
+        cv2.line(img, (int(p[0] * 4), int(p[1] * 4)), (int(q[0] * 4), int(q[1] * 4)), tuple(float(v) for v in c), th,
+                 cv2.LINE_AA, shift=2)
+    def C(p, r, c=col):
+        cv2.circle(img, (int(p[0] * 4), int(p[1] * 4)), int(r * 4), tuple(float(v) for v in c), 1, cv2.LINE_AA, shift=2)
+    dx, dy = 12, -8                                # depth: the far side, offset up and right
+    def box(p0, p1, p2, p3, c=col, back=True):
+        pts = [p0, p1, p2, p3]
+        for a, b in zip(pts, pts[1:] + pts[:1]):
+            L(a, b, c)
+        if back:
+            q = [(p[0] + dx, p[1] + dy) for p in pts]
+            for a, b in zip(q, q[1:] + q[:1]):
+                L(a, b, dim)
+            for a, b in zip(pts, q):
+                L(a, b, dim)
+    fx = x0 + length + 12                          # the front frame
+    # base plate
+    box((x0 - 6, y0), (fx + 34, y0), (fx + 34, y0 - 5), (x0 - 6, y0 - 5))
+    # heel plate and hinge
+    hx, hy = x0 + 10, y0 - 15
+    box((x0 - 4, y0 - 5), (x0 + 26, y0 - 5), (x0 + 26, y0 - 12), (x0 - 4, y0 - 12), dim)
+    C((hx, hy), 6, hi); C((hx, hy), 2, hi)
+    # footboard, hinged at the heel
+    ang = math.radians(4 + 16 * openness)
+    ca, sa = math.cos(ang), math.sin(ang)
+    th = 8
+    p0 = (hx, hy); p1 = (hx + length * ca, hy - length * sa)
+    n = (-sa * th, -ca * th)
+    p3 = (p0[0] + n[0], p0[1] + n[1]); p2 = (p1[0] + n[0], p1[1] + n[1])
+    box(p0, p1, p2, p3, hi)
+    for k in range(1, 10):                         # grip ridges across the footboard's top
+        f = k / 10
+        a = (p3[0] + (p2[0] - p3[0]) * f, p3[1] + (p2[1] - p3[1]) * f)
+        L(a, (a[0] + dx, a[1] + dy), dim)
+    # front frame: two posts with the spring between, a top bar and the sprocket
+    top = y0 - 165
+    for xx in (fx, fx + 22):
+        L((xx, y0 - 5), (xx, top), col); L((xx + dx, y0 - 5 + dy), (xx + dx, top + dy), dim)
+    L((fx - 4, top), (fx + 26, top), col); L((fx - 4, top), (fx - 4 + dx, top + dy), dim)
+    L((fx + 26, top), (fx + 26 + dx, top + dy), dim); L((fx - 4 + dx, top + dy), (fx + 26 + dx, top + dy), dim)
+    sp = (fx + 11, top - 9)
+    C(sp, 9, hi); C(sp, 3, hi)                      # the sprocket
+    for yy in range(int(top + 20), int(y0 - 30), 10):   # the spring, inside the frame
+        L((fx + 4, yy), (fx + 18, yy + 5), dim)
+    # the strap from the toe up over the sprocket (rising with the toe)
+    toe = (p2[0] - 4, p2[1] + 2)
+    L(toe, (sp[0] - 9, sp[1]), hi)
+    return img

@@ -61,6 +61,14 @@
 //   - Stick click (_add_transient lines 1194-1211; Swish's bow tip), off at gain 0: a strike
 //     starts a band-passed noise burst from the strike-phase random sequence, mixed into
 //     both channels before the right-channel high-pass. It is the engine's only noise source.
+//   - HI-HAT (bakes with a hihat block, tools/bake_hihat.py; docs/PORT_MAP.md, "Hi-hat"): every
+//     strike is an envelope strike whose band envelopes and mode weights are interpolated from
+//     the bake's knots at the strike's openness and velocity (docs/hihat_reference.py), at the
+//     strike; each mode's level is its weight x its band's envelope for the envelope's whole
+//     length, then a 10 ms fade ends the strike. The pedal (setPedal) sets the openness,
+//     smoothed; a strike more open than the pedal now is choked per band; the pedal closing
+//     fires FOOT itself. The shared oscillator carries no decay, and the pool holds kMaxPool
+//     strikes, none merged: when it is full the quietest is replaced.
 //
 // Thread use: the constructor and prepare() allocate and must not run on the audio
 // thread. strike() and process() never allocate, lock or touch files.
@@ -83,6 +91,7 @@ public:
     static constexpr int kMaxControlBlock = 256;
     static constexpr int kMaxContacts = 64;   // overlapping contacts before the oldest is flushed
     static constexpr int kMaxComponents = 24; // strikes kept apart before merging
+    static constexpr int kMaxPool = 48;       // the hi-hat's strikes (never merged)
 
     // Per-mode decay coefficients at one sample rate and control block: the decay rate
     // -ln(1000) / T60, the undamped per-sample step (contact phase), the shared oscillator's
@@ -127,8 +136,21 @@ public:
     // process() renders. Call it between process() calls to place a strike exactly.
     void strike(int slot, double velocity, double position) noexcept;
 
-    // Renders numSamples of stereo output, overwriting left and right.
+    // Renders numSamples of stereo output, overwriting left and right. On the hi-hat a FOOT
+    // the pedal fires inside the span is struck at its sample.
     void process(float* left, float* right, int numSamples) noexcept;
+
+    // HI-HAT only (otherwise nothing): the pedal's openness, 0 closed to 1 open, from the next
+    // sample on, which the engine smooths (one-pole, the bake's pedalSmoothS); immediate: no
+    // smoothing (a new engine taking over the pedal where it is). Does not allocate.
+    void setPedal(double openness, bool immediate = false) noexcept;
+    bool isHiHat() const noexcept { return hihat_; }
+    // The smoothed openness at the next sample, the FOOT strikes fired so far, and the last
+    // one's engine time and velocity.
+    double pedalOpenness() const noexcept { return hihat_ ? pedalAt(timeSeconds()) : 0.0; }
+    uint64_t footStrikes() const noexcept { return footStrikes_; }
+    double lastFootTime() const noexcept { return lastFootTime_; }
+    double lastFootVelocity() const noexcept { return lastFootVelocity_; }
 
     // Takes over another engine's clock when it replaces it (a preset switch): the engine
     // clock continues from that engine's time. The strike-phase sequence is this engine's own,
@@ -233,6 +255,18 @@ private:
         std::vector<float> fd;          // in-frame decay at the next control point
         std::vector<float> em0, em1;    // band envelope of each mode at the block's ends
         std::vector<float> emax;        // largest band envelope of each mode (bound for dropping)
+        // Hi-hat strikes only: this strike's own band envelopes, divided by their peak (bands x
+        // (maxFrames + 1) floats, frameS apart; frame hhFrames - 1 is the zero the end fade
+        // reaches), the openness it was struck at, and the pedal choke: per band the gain at
+        // hhChokeT and the extra decay rate (amplitude, 1/s) from there, the gain at hhT1 (the
+        // current block's end), and the band decay rates at its openness.
+        std::vector<float> hhEnv;
+        int hhFrames = 0;
+        double hhOpen = 0.0;
+        bool hhChoke = false;           // struck open: the pedal can choke it
+        double hhChokeT = 0.0, hhT1 = -1.0;
+        std::array<double, kExcitationBands> hhGain {}, hhGain1 {}, hhExtra {}, hhRate0 {};
+        double hhScale = 0.0, hhLevel = 0.0; // its peak level (with its calibration), its loudest band now
     };
 
     // A component of one mode whose onset ramp reaches 1 inside the current block.
@@ -246,6 +280,7 @@ private:
         double g0, g1;  // cymbal-wide LF/MF gain at the block's ends
     };
 
+    void processSpan(float* left, float* right, int numSamples) noexcept;
     void renderContactSample(float* left, float* right) noexcept;
     void renderContactRotated(float* left, float* right) noexcept;
     void endContactSample() noexcept;
@@ -321,6 +356,18 @@ private:
     void computeEnvRing() noexcept;
     void varyHit(double& position, double& velocity) noexcept;
     void restartFrames(Component& c, double elapsed) noexcept;
+    // HI-HAT (docs/PORT_MAP.md, "Hi-hat").
+    void setupHiHat();
+    void strikeHiHat(int slot, double velocity, double position) noexcept;
+    double hiHatEnvelope(Component& c, int articulation, double openness, double velocity) noexcept;
+    void hiHatClosedLevel(int articulation, double velocity, double* outDb) const noexcept;
+    double hiHatEnvelopeAt(const Component& c, int band, double te) const noexcept;
+    void hiHatRate(double openness, double* out) const noexcept;
+    void hiHatChoke(Component& c, double t0, double t1, double& openNow, bool& rateDone) noexcept;
+    Component& allocateHiHat() noexcept;
+    double pedalAt(double t) const noexcept;
+    void footStrike() noexcept;
+    int envBandOf(int mode) const noexcept { return hihat_ ? modeBand_[size_t(mode)] : bake_->edgeNpz.bandIndex[size_t(mode)]; }
 
     std::shared_ptr<const BakeData> bake_;
     const int n_;
@@ -442,6 +489,7 @@ private:
     bool hitVar_ = false;
     double hitPosSpread_ = 0.04, hitVelSpread_ = 0.03; // position units; a fraction
     Pcg64 hitRng_;
+    int envBands_ = 0;                        // envelope bands: the NPZ data's, or the hi-hat's 22
     std::vector<double> bandVal0_, bandVal1_; // per band, scratch for one block
     std::vector<double> envPeakS_;            // per band: when the latest envelope strike's envelope peaks (s)
     // The ring length on the band envelope (docs/TUNING.md, "Ring length"): per band 1 / its
@@ -547,7 +595,7 @@ private:
     std::vector<float> dropW_, dropE_; // dropQuietModes(): per-mode weight and energy (mode order)
     std::vector<float> rotR_, rotI_, sumR_, sumI_; // per-mode scratch of strikes (mode order)
     // components by how the control loop treats them (rebuilt every block)
-    std::array<Component*, kMaxComponents> settledList_ {}, onsetList_ {}, rampList_ {}, envList_ {};
+    std::array<Component*, kMaxPool> settledList_ {}, onsetList_ {}, rampList_ {}, envList_ {};
 
     std::vector<KinkMode> kinks_;
     int nKinks_ = 0;
@@ -585,6 +633,32 @@ private:
     std::vector<float> stickNoise_;
     int stickMaxLen_ = 0, stickActive_ = 0;
     uint64_t stickOrder_ = 0;
+
+    // HI-HAT (bakes with a hihat block). Each slot's articulation (0 TIP, 1 EDGE, 2 FOOT, -1
+    // none) and the FOOT entry; each knot's envelopes in log (ln max(x, 1e-9), bands x frames;
+    // raw: the closed EDGE knots); the band decay rates' knots in log (rate knots x bands);
+    // scratch for a strike's envelope (bands x maxFrames); a closed TIP strike's peak level per
+    // band at velocity 1 (the cascade's and damping's reference); the band rates at the pedal's
+    // openness now (hiHatChoke).
+    bool hihat_ = false;
+    std::vector<int8_t> hhArt_;
+    int hhFootSlot_ = -1;
+    std::vector<std::vector<double>> hhLnStick_, hhLnRaw_;
+    std::vector<double> hhLnRate_, hhLog_, hhExp_;
+    std::array<double, kExcitationBands> hhRefPeak_ {}, hhRateNow_ {};
+    // The pedal: its smoothed openness as segments, from t0 going from o0 towards target with
+    // the bake's time constant; a ring of the latest (the FOOT's closing speed looks back
+    // footWindowS). footArmed_: the openness was at footRearmAbove or more since the last FOOT.
+    struct PedalSegment
+    {
+        double t0 = 0.0, o0 = 0.0, target = 0.0;
+    };
+    static constexpr int kPedalSegments = 128;
+    std::array<PedalSegment, kPedalSegments> pedal_ {};
+    int pedalHead_ = 0, pedalCount_ = 1;
+    bool footArmed_ = false;
+    uint64_t footStrikes_ = 0;
+    double lastFootTime_ = -1.0, lastFootVelocity_ = 0.0;
 
     // Per-strike scratch (preallocated).
     std::vector<double> scratchPhase_, scratchVel_, scratchBellVel_, scratchPosW_, scratchPkT_;

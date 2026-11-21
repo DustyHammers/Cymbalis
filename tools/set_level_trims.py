@@ -42,7 +42,7 @@ def main():
         lt = {'gain_db': round(float(t['gain_db']), 2)}
         # Next to the trim: the slot's SPEAR target and, where the peak limit capped it, the
         # level it reaches instead and why (cymbalis_trims --spear-target, --peak-limit).
-        for key in ('spear_target_db', 'capped', 'capped_level_db', 'cap_reason', 'uncapped_gain_db'):
+        for key in ('spear_target_db', 'capped', 'capped_level_db', 'cap_reason', 'uncapped_gain_db', 'same_as'):
             if key in t:
                 lt[key] = t[key]
         lt.update({

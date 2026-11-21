@@ -9,7 +9,9 @@
 // waiting) on a real-time thread where the OS allows it (macOS: a time-constraint thread
 // with the block as its period; Linux: SCHED_FIFO, if permitted), denormals flushed to zero
 // as in the plugin (processBlock's juce::ScopedNoDenormals). The blocks are split at each
-// strike as the plugin does. Engine only: no host, no processor, no editor.
+// strike as the plugin does. Engine only: no host, no processor, no editor. On the hi-hat the
+// pedal moves too (Dense.h: a CC every 10 ms, opening and closing every 1.5 s): each CC splits
+// the block as a strike does, the choke runs and FOOT fires at every close.
 //
 // Every case (bake x sample rate x block size, defaults 44.1 and 96 kHz, 128 and 64 samples)
 // runs --runs times, the cases in turn, so that a slow moment of the machine falls on one
@@ -65,7 +67,7 @@ using Clock = std::chrono::steady_clock;
 
 constexpr double kVelocities[] = {0.95, 0.4, 0.8, 0.6, 1.0, 0.3, 0.7};
 constexpr int kNumVelocities = 7;
-constexpr int kMaxComponents = 24; // FastEngine's component pool
+using cymbalis::FastEngine;
 
 // Denormals flushed to zero (FTZ and DAZ on x86, FZ on arm64), as juce::ScopedNoDenormals
 // does, or not.
@@ -180,6 +182,8 @@ struct Run
     std::vector<uint8_t> blockStrikes;
     std::vector<double> strikeUs;
     std::vector<int> activeAll; // after every block, the lead included
+    int pool = FastEngine::kMaxComponents; // the engine's component pool (the hi-hat's is larger)
+    uint64_t foot = 0;          // FOOT strikes the pedal fired (hi-hat)
     bool realtime = false;
     bool finite = true;
     float peak = 0.0f;
@@ -201,7 +205,12 @@ Run runOnce(const std::shared_ptr<const cymbalis::BakeData>& bake, const Case& c
     r.realtime = o.realtime && makeRealtime(1000.0 * c.block / c.rate);
     cymbalis::FastEngine engine(bake);
     engine.prepare(c.rate);
+    r.pool = engine.isHiHat() ? FastEngine::kMaxPool : FastEngine::kMaxComponents;
     const int slots = engine.numSlots();
+    // The hi-hat's pedal: a CC on a 10 ms grid (Dense.h).
+    int64_t m = 0;
+    auto pedalSample = [&](int64_t j) { return static_cast<int64_t>(std::floor(double(j) * kPedalStepS * c.rate)); };
+    int64_t nextPedal = engine.isHiHat() ? pedalSample(0) : INT64_MAX;
     const int lead = static_cast<int>(std::lround(o.lead * c.rate / c.block));
     const int timed = static_cast<int>(std::lround(o.seconds * c.rate / c.block));
     const size_t strikesTimed = size_t(o.seconds / o.every) + 2;
@@ -235,8 +244,20 @@ Run runOnce(const std::shared_ptr<const cymbalis::BakeData>& bake, const Case& c
         const int64_t from = int64_t(b) * c.block;
         int pos = 0, strikes = 0;
         const auto t0 = Clock::now();
-        while (next < from + c.block)
+        while (next < from + c.block || nextPedal < from + c.block)
         {
+            if (nextPedal <= next)
+            {
+                const int atP = static_cast<int>(nextPedal - from);
+                if (atP > pos)
+                {
+                    engine.process(L.data() + pos, R.data() + pos, atP - pos);
+                    pos = atP;
+                }
+                engine.setPedal(pedalOpenness(double(m) * kPedalStepS));
+                nextPedal = pedalSample(++m);
+                continue;
+            }
             const int at = static_cast<int>(next - from);
             if (at > pos)
             {
@@ -289,6 +310,7 @@ Run runOnce(const std::shared_ptr<const cymbalis::BakeData>& bake, const Case& c
         r.totals.events[i] = now.events[i] - atLead.events[i];
 #endif
     setFlushToZero(true);
+    r.foot = engine.footStrikes();
     return r;
 }
 
@@ -521,11 +543,13 @@ void report(const Options& o, const std::vector<Case>& cases, const std::vector<
         {
             sum += r0.activeAll[i];
             most = std::max(most, r0.activeAll[i]);
-            full += r0.activeAll[i] >= kMaxComponents ? 1 : 0;
+            full += r0.activeAll[i] >= r0.pool ? 1 : 0;
         }
         const double blocks = double(r0.activeAll.size() - lead);
-        std::printf("| %s | %zu | %.0f | %.0f | %.0f | %.0f | %.1f | %d | %.0f %% |\n", caseName(o, cases[ci]).c_str(),
-                    r0.strikeUs.size(), a.mean, a.p99, m.worst, a.worst, sum / blocks, most, 100.0 * double(full) / blocks);
+        const std::string strikes =
+            std::to_string(r0.strikeUs.size()) + (r0.foot > 0 ? " + " + std::to_string(r0.foot) + " FOOT" : std::string());
+        std::printf("| %s | %s | %.0f | %.0f | %.0f | %.0f | %.1f | %d of %d | %.0f %% |\n", caseName(o, cases[ci]).c_str(),
+                    strikes.c_str(), a.mean, a.p99, m.worst, a.worst, sum / blocks, most, r0.pool, 100.0 * double(full) / blocks);
     }
 
     // The pool over time: the first case of each bake (first run), from the first strike.

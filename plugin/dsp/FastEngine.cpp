@@ -69,6 +69,7 @@ constexpr int kVecPerGroup = 1;
 #endif
 
 double clamp01(double x) { return std::min(std::max(x, 0.0), 1.0); }
+constexpr double kLn10 = 2.302585092994045684; // ln 10
 
 int roundUp(int x, int m) { return (x + m - 1) / m * m; }
 
@@ -414,6 +415,10 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
         envRingKeepS_ = std::max(b.tuning.cymbal.edgeRingKeepMs, 0.0) * 1e-3;
         computeEnvRing();
     }
+    envBands_ = z.present ? z.numBands : 0;
+    hihat_ = b.hihat.present;
+    if (hihat_)
+        setupHiHat();
     if (p.contactPermode)
     {
         contactPool_.resize(kMaxContacts);
@@ -423,7 +428,7 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
             c.ci.assign(n, 0.0);
         }
     }
-    components_.resize(kMaxComponents);
+    components_.resize(hihat_ ? kMaxPool : kMaxComponents);
     for (auto& c : components_)
     {
         for (auto* v : {&c.Br, &c.Bi, &c.D, &c.dmul, &c.invDmul, &c.gm1, &c.rsl})
@@ -435,8 +440,10 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
         {
             for (auto* v : {&c.Er, &c.Ei, &c.fd, &c.em0, &c.em1, &c.emax})
                 v->assign(np, 0.0f);
-            c.envRingInv.assign(size_t(z.numBands), 1.0);
+            c.envRingInv.assign(size_t(envBands_), 1.0);
         }
+        if (hihat_)
+            c.hhEnv.assign(size_t(kExcitationBands) * size_t(b.hihat.maxFrames + 1), 0.0f);
     }
 
     actIdx_.assign(np, 0);
@@ -509,7 +516,7 @@ int FastEngine::controlBlockFor(const BakeData& b, double sampleRate, int* frame
 // carries its whole decay.
 double FastEngine::oscillatorWash(const BakeData& b, const EngineParams& p) noexcept
 {
-    if (b.edgeNpz.present)
+    if (b.edgeNpz.present || b.hihat.present) // the hi-hat's strikes follow their envelopes too
         return 0.0;
     return std::max(kWashDampFloor, 1.0 + p.velLenTilt * ((p.velLenTilt >= 0.0 ? 0.0 : 1.0) - p.velLenTiltRef));
 }
@@ -704,6 +711,60 @@ int FastEngine::activeComponents() const noexcept
 }
 
 void FastEngine::process(float* left, float* right, int numSamples) noexcept
+{
+    if (!hihat_)
+    {
+        processSpan(left, right, numSamples);
+        return;
+    }
+    // HI-HAT: the span up to the sample where the pedal fires FOOT, FOOT, the rest. The
+    // smoothed openness moves monotonically within a pedal segment, so it falls below
+    // footClosedBelow at most once in it, at a time solved for exactly.
+    const HiHatData& h = bake_->hihat;
+    int done = 0;
+    while (done < numSamples)
+    {
+        int m = numSamples - done;
+        bool fire = false;
+        if (isPrepared() && hhFootSlot_ >= 0)
+        {
+            const double t = timeSeconds();
+            const double o = pedalAt(t);
+            if (o >= h.footRearmAbove)
+                footArmed_ = true;
+            const PedalSegment& s = pedal_[size_t(pedalHead_)];
+            if (footArmed_ && s.target < h.footClosedBelow)
+            {
+                if (o < h.footClosedBelow)
+                {
+                    m = 0;
+                    fire = true;
+                }
+                else
+                {
+                    const double tc = s.t0 + h.pedalSmoothS * std::log((s.o0 - s.target) / (h.footClosedBelow - s.target));
+                    const double k = std::ceil((tc - t) * sr_ - 1e-9); // the first sample at or after it
+                    if (k < static_cast<double>(m))
+                    {
+                        m = std::max(0, static_cast<int>(k));
+                        fire = true;
+                    }
+                }
+            }
+        }
+        if (m > 0)
+        {
+            processSpan(left + done, right + done, m);
+            done += m;
+        }
+        if (fire)
+            footStrike();
+    }
+    if (isPrepared() && pedalAt(timeSeconds()) >= h.footRearmAbove)
+        footArmed_ = true;
+}
+
+void FastEngine::processSpan(float* left, float* right, int numSamples) noexcept
 {
     if (numSamples <= 0) return;
     if (!isPrepared())
@@ -1552,9 +1613,17 @@ void FastEngine::sumComponents(double t0, double t1) noexcept
             }
         }
         // After its onset window an envelope strike rings with its own decaying amplitude
-        // (line 881: past onset, normal T60).
+        // (line 881: past onset, normal T60). A hi-hat strike ends with its envelope (its end
+        // fade has reached 0), or once the pedal has choked it below -120 dB.
         if (c.envOn && t0 - c.tStrike >= c.envWindow)
+        {
+            if (hihat_)
+            {
+                c.used = false;
+                continue;
+            }
             c.envOn = false;
+        }
         if (!c.settled)
         {
             const double te0 = t0 - c.tStrike, te1 = t1 - c.tStrike;
@@ -1574,6 +1643,8 @@ void FastEngine::sumComponents(double t0, double t1) noexcept
     }
     // Envelope strikes: the in-frame decay restarts on a frame boundary; the band
     // envelope at both ends of the block, per mode.
+    double openNow = -1.0;  // hi-hat: the pedal's openness at t0, once a strike needs it
+    bool rateDone = false;  //   and the band rates there
     for (int q = 0; q < nE; ++q)
     {
         Component& c = *envList_[size_t(q)];
@@ -1582,7 +1653,45 @@ void FastEngine::sumComponents(double t0, double t1) noexcept
             std::fill(c.fd.begin(), c.fd.end(), 1.0f);
             c.frameBlocksLeft = frameBlocks_;
         }
-        const int nb = bake_->edgeNpz.numBands;
+        if (hihat_)
+        {
+            // The pedal choke over this block, then each band's envelope times it.
+            if (c.hhChoke)
+                hiHatChoke(c, t0, t1, openNow, rateDone);
+            double level = 0.0, gain = 0.0;
+            for (int band = 0; band < kExcitationBands; ++band)
+            {
+                const size_t bs = size_t(band);
+                if (bandEnd_[bs] <= bandStart_[bs])
+                    continue;
+                double te0 = t0 - c.tStrike, te1 = t1 - c.tStrike;
+                if (c.envShift)
+                {
+                    te0 = (te0 - static_cast<double>(c.envDelay[bs])) * static_cast<double>(c.envSpeed[bs]);
+                    te1 = (te1 - static_cast<double>(c.envDelay[bs])) * static_cast<double>(c.envSpeed[bs]);
+                }
+                if (c.envRing)
+                {
+                    te0 = ringTime(c, band, te0);
+                    te1 = ringTime(c, band, te1);
+                }
+                double v0 = hiHatEnvelopeAt(c, band, te0), v1 = hiHatEnvelopeAt(c, band, te1);
+                if (c.hhChoke)
+                {
+                    v0 *= c.hhGain[bs];
+                    v1 *= c.hhGain1[bs];
+                    gain = std::max(gain, c.hhGain1[bs]);
+                }
+                level = std::max(level, v1);
+                std::fill(c.em0.begin() + bandStart_[bs], c.em0.begin() + bandEnd_[bs], static_cast<float>(v0));
+                std::fill(c.em1.begin() + bandStart_[bs], c.em1.begin() + bandEnd_[bs], static_cast<float>(v1));
+            }
+            c.hhLevel = level * c.hhScale;
+            if (c.hhChoke && gain < 1e-6)
+                c.envWindow = std::min(c.envWindow, t1 - c.tStrike); // choked out: it ends at the next control point
+            continue;
+        }
+        const int nb = envBands_;
         for (int band = 0; band < nb; ++band)
         {
             const size_t bs = size_t(band);
@@ -2002,6 +2111,8 @@ void FastEngine::mergeComponents(Component& into, Component& from, bool dropEnve
 // closest decay are merged; failing that, the two oldest are merged.
 FastEngine::Component& FastEngine::allocateComponent() noexcept
 {
+    if (hihat_)
+        return allocateHiHat();
     for (auto& c : components_)
         if (!c.used)
             return c;
@@ -2189,6 +2300,8 @@ void FastEngine::startEnvelope(Component& c, double velocity) noexcept
 // values interpolated linearly, held after the last frame).
 double FastEngine::envelopeAt(const Component& c, int band, double te) const noexcept
 {
+    if (hihat_)
+        return hiHatEnvelopeAt(c, band, te);
     const EdgeNpz& z = bake_->edgeNpz;
     const int nf = z.numFrames, nb = z.numBands;
     const double kf = std::min(std::max(te / z.frameDurS, 0.0), static_cast<double>(nf - 1));
@@ -2526,6 +2639,30 @@ void FastEngine::computeBandRef() noexcept
     const size_t slot = size_t(cascSlot_);
     const SlotData& s = b.slots[slot];
     const size_t n = size_t(n_);
+    if (hihat_)
+    {
+        // The hi-hat's reference: a closed TIP strike at velocity 1 at its peak, each band's
+        // level x its modes' weights (unit norm per band), with the slot's calibration, level
+        // and band gains as they are now.
+        const HiHatKnot& k = b.hihat.knots[size_t(b.hihat.closed[0][2])];
+        const double calib = s.calibScalar * slotTrim_[slot];
+        const float* exc = excGainOn_[slot] != 0 ? excGain_.data() + slot * n : nullptr;
+        bandRef_.fill(0.0);
+        for (size_t i = 0; i < n; ++i)
+        {
+            double m = k.weights[i] * hhRefPeak_[modeBand_[i]] * calib;
+            if (exc != nullptr)
+                m *= static_cast<double>(exc[i]);
+            bandRef_[modeBand_[i]] += m * m;
+        }
+        const double thr = std::pow(10.0, cascThrDb_ / 10.0), dthr = std::pow(10.0, dampThrDb_ / 10.0);
+        for (int j = 0; j < kExcitationBands; ++j)
+        {
+            cascThr_[size_t(j)] = bandRef_[size_t(j)] * thr;
+            dampThr_[size_t(j)] = bandRef_[size_t(j)] * dthr;
+        }
+        return;
+    }
     if (s.hasBowVp)
         velocityParticipation(s.bowVp, 1.0, scratchVel_.data());
     else
@@ -3163,6 +3300,11 @@ void FastEngine::varyHit(double& position, double& velocity) noexcept
 void FastEngine::strike(int slotIndex, double velocity, double position) noexcept
 {
     if (!isPrepared() || slotIndex < 0 || slotIndex >= numSlots()) return;
+    if (hihat_)
+    {
+        strikeHiHat(slotIndex, velocity, position);
+        return;
+    }
     CYM_PROF_BEGIN(strike);
     if (hitVar_)
         varyHit(position, velocity); // every use of the strike's position and velocity below takes these
@@ -3618,7 +3760,7 @@ void FastEngine::onsetPeaks(const Component& c, int slot) noexcept
         double t = 0.0;
         if (c.envOn)
         {
-            const size_t band = size_t(bake_->edgeNpz.bandIndex[k]);
+            const size_t band = size_t(envBandOf(i));
             t = envPeakS_[band];
             // The ring length's time scale, undone: read at k + (te - k) / x, so it peaks at
             // te = k + (peak - k) x.
@@ -3893,6 +4035,587 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
     freePos_ = 0;
     freeStartSample_ = sampleNow_;
     CYM_PROF_END(freeStartModes);
+}
+
+// ===================================================================================
+// HI-HAT (docs/PORT_MAP.md, "Hi-hat"; docs/hihat_reference.py, the approved reference)
+
+// Constructor only (allocates): the envelope bands are the 22 one-third-octave bands (each
+// mode's own, rising with the mode index, as the loader checks), each slot's articulation, the
+// knots' envelopes and the band rates in log, and the strike scratch.
+void FastEngine::setupHiHat()
+{
+    const BakeData& b = *bake_;
+    const HiHatData& h = b.hihat;
+    const size_t nb = size_t(kExcitationBands);
+    envBake_ = true; // every hi-hat strike is an envelope strike (Er, Ei, em0, em1, emax)
+    envOn_ = false;  // (the NPZ edge strikes' switch)
+    envBands_ = kExcitationBands;
+    bandStart_.assign(nb, 0);
+    bandEnd_.assign(nb, 0);
+    for (int k = 0; k < n_; ++k)
+    {
+        const int band = modeBand_[size_t(k)];
+        if (k == 0 || band != modeBand_[size_t(k - 1)])
+            bandStart_[size_t(band)] = k;
+        bandEnd_[size_t(band)] = k + 1;
+    }
+    bandVal0_.assign(nb, 0.0);
+    bandVal1_.assign(nb, 0.0);
+    envPeakS_.assign(nb, 0.0);
+    npzShiftBand_.resize(nb);
+    for (size_t j = 0; j < nb; ++j)
+        npzShiftBand_[j] = static_cast<uint8_t>(j); // each envelope band is its own onset-shift band
+    envRingInv_.assign(nb, 1.0);
+    envRingKeepS_ = std::max(b.tuning.cymbal.edgeRingKeepMs, 0.0) * 1e-3;
+    computeEnvRing();
+
+    hhArt_.assign(b.slots.size(), -1);
+    for (size_t s = 0; s < b.slots.size(); ++s)
+    {
+        const std::string& id = b.slots[s].id;
+        hhArt_[s] = id == "tip" ? 0 : id == "edge" ? 1 : id == "foot" ? 2 : -1;
+        if (id == "foot")
+            hhFootSlot_ = static_cast<int>(s);
+    }
+    auto lnOf = [](const std::vector<double>& x) {
+        std::vector<double> out(x.size());
+        for (size_t i = 0; i < x.size(); ++i)
+            out[i] = std::log(std::max(x[i], 1e-9)); // _pad: at least 1e-9
+        return out;
+    };
+    hhLnStick_.clear();
+    hhLnRaw_.clear();
+    for (const auto& k : h.knots)
+    {
+        hhLnStick_.push_back(lnOf(k.stick));
+        hhLnRaw_.push_back(k.raw.empty() ? std::vector<double>() : lnOf(k.raw));
+    }
+    hhLnRate_.resize(h.rates.size());
+    for (size_t i = 0; i < h.rates.size(); ++i)
+        hhLnRate_[i] = std::log(h.rates[i]);
+    hhLog_.assign(nb * size_t(h.maxFrames), 0.0);
+    hhExp_.assign(nb * size_t(h.maxFrames), 0.0);
+    const HiHatKnot& tip = h.knots[size_t(h.closed[0][2])];
+    for (size_t j = 0; j < nb; ++j)
+        hhRefPeak_[j] = *std::max_element(tip.stick.begin() + long(j) * tip.frames, tip.stick.begin() + long(j + 1) * tip.frames);
+    // Closed until the pedal moves.
+    pedal_[0] = PedalSegment {};
+    pedalHead_ = 0;
+    pedalCount_ = 1;
+}
+
+// HiHat.closed_level: the closed knots' level per band (dB) at velocity v, linear between
+// 0.3, 0.6 and 1.0 and extrapolated with the nearest two outside.
+void FastEngine::hiHatClosedLevel(int articulation, double v, double* out) const noexcept
+{
+    const HiHatData& h = bake_->hihat;
+    const auto& l0 = h.knots[size_t(h.closed[articulation][0])].levelDb;
+    const auto& l1 = h.knots[size_t(h.closed[articulation][1])].levelDb;
+    const auto& l2 = h.knots[size_t(h.closed[articulation][2])].levelDb;
+    const double v0 = h.closedVelocity[0], v1 = h.closedVelocity[1], v2 = h.closedVelocity[2];
+    for (size_t b = 0; b < size_t(kExcitationBands); ++b)
+    {
+        if (v < v0)
+            out[b] = l0[b] + (v - v0) * (l1[b] - l0[b]) / (v1 - v0);
+        else if (v > v2)
+            out[b] = l2[b] + (v - v2) * (l2[b] - l1[b]) / (v2 - v1);
+        else if (v <= v1)
+            out[b] = l0[b] + (v - v0) * (l1[b] - l0[b]) / (v1 - v0);
+        else
+            out[b] = l1[b] + (v - v1) * (l2[b] - l1[b]) / (v2 - v1);
+    }
+}
+
+// HiHat.envelope: a strike's band envelopes (into c.hhEnv, divided by their peak, the end
+// fade's zero after the last frame) and mode weights (into scratchVel_), for articulation 0
+// TIP, 1 EDGE, 2 FOOT at openness o and velocity v. Every knot's envelope is padded to the
+// longest of those taken with 1e-9, and they are interpolated in log. Returns the peak.
+// Does not allocate.
+double FastEngine::hiHatEnvelope(Component& c, int art, double o, double v) noexcept
+{
+    const HiHatData& h = bake_->hihat;
+    const size_t n = size_t(n_), nb = size_t(kExcitationBands);
+    struct Term
+    {
+        const double* ln = nullptr;
+        int frames = 0;
+        double coef = 0.0;
+    };
+    std::array<Term, 4> terms {};
+    int nTerms = 0, frames = 1;
+    std::array<double, kExcitationBands> constant {}; // per band, added to the log envelope
+    double* w = scratchVel_.data();
+    std::fill(w, w + n, 0.0);
+    auto addTerm = [&](const std::vector<double>& ln, int knotFrames, double coef) {
+        if (coef == 0.0)
+            return;
+        terms[size_t(nTerms++)] = Term { ln.data(), knotFrames, coef };
+        frames = std::max(frames, knotFrames);
+    };
+    auto addWeights = [&](const std::vector<double>& x, double coef) {
+        if (coef != 0.0)
+            for (size_t i = 0; i < n; ++i)
+                w[i] += coef * x[i];
+    };
+    double lv[kExcitationBands], lk[kExcitationBands], lc[kExcitationBands];
+    // HiHat._closed(a, v): between the two closed knots around v in log, or the nearest one
+    // moved by the closed level law outside 0.3 .. 1.0; with weight `share` in the strike.
+    auto closed = [&](int a, double share, bool raw, bool weightsOnly) {
+        const double* vs = h.closedVelocity;
+        int i0 = 0, i1 = 0;
+        double t = 0.0;
+        if (v <= vs[0])
+            i0 = i1 = 0;
+        else if (v >= vs[2])
+            i0 = i1 = 2;
+        else
+        {
+            i0 = v < vs[1] ? 0 : 1;
+            i1 = i0 + 1;
+            t = (v - vs[i0]) / (vs[i1] - vs[i0]);
+        }
+        const int k0 = h.closed[a][i0], k1 = h.closed[a][i1];
+        addWeights(h.knots[size_t(k0)].weights, share * (1.0 - t));
+        addWeights(h.knots[size_t(k1)].weights, share * t);
+        if (weightsOnly)
+            return;
+        const auto& ln0 = raw ? hhLnRaw_[size_t(k0)] : hhLnStick_[size_t(k0)];
+        const auto& ln1 = raw ? hhLnRaw_[size_t(k1)] : hhLnStick_[size_t(k1)];
+        addTerm(ln0, h.knots[size_t(k0)].frames, share * (1.0 - t));
+        addTerm(ln1, h.knots[size_t(k1)].frames, share * t);
+        if (t == 0.0 && v != vs[i0])
+        {
+            hiHatClosedLevel(a, v, lc);
+            const auto& l = h.knots[size_t(k0)].levelDb;
+            for (size_t b = 0; b < nb; ++b)
+                constant[b] += share * (lc[b] - l[b]) * (kLn10 / 20.0);
+        }
+    };
+    if (art == 2)
+        closed(1, 1.0, true, false); // FOOT: the closed EDGE's own rise
+    else if (o <= 0.0)
+        closed(art, 1.0, false, false);
+    else
+    {
+        // The knots: closed (openness 0), then the open EDGE knots; the two around o.
+        const int nOpen = static_cast<int>(h.open.size());
+        auto xAt = [&](int i) { return i == 0 ? 0.0 : h.knots[size_t(h.open[size_t(i - 1)])].openness; };
+        int j = 0;
+        while (j < nOpen && xAt(j + 1) < o) // searchsorted(xs, o) - 1, within 0 .. len - 2
+            ++j;
+        j = std::min(j, nOpen - 1);
+        const double a = (o - xAt(j)) / (xAt(j + 1) - xAt(j));
+        bool haveEdgeLevel = false;
+        auto openKnot = [&](int i, double share) {
+            if (share == 0.0)
+                return;
+            const int k = h.open[size_t(i - 1)];
+            const HiHatKnot& knot = h.knots[size_t(k)];
+            addTerm(hhLnStick_[size_t(k)], knot.frames, share);
+            // Moved from its own velocity to v by the closed EDGE's level change.
+            if (!haveEdgeLevel)
+            {
+                hiHatClosedLevel(1, v, lv);
+                haveEdgeLevel = true;
+            }
+            hiHatClosedLevel(1, knot.velocity, lk);
+            for (size_t b = 0; b < nb; ++b)
+                constant[b] += share * (lv[b] - lk[b]) * (kLn10 / 20.0);
+            if (art == 0)
+            {
+                // The tip at an opening: the EDGE's envelope there times the closed tip/edge
+                // level difference at v, with the closed tip's weights.
+                double lt[kExcitationBands];
+                hiHatClosedLevel(0, v, lt);
+                for (size_t b = 0; b < nb; ++b)
+                    constant[b] += share * (lt[b] - lv[b]) * (kLn10 / 20.0);
+                closed(0, share, false, true);
+            }
+            else
+                addWeights(knot.weights, share);
+        };
+        if (j == 0)
+            closed(art, 1.0 - a, false, false);
+        else
+            openKnot(j, 1.0 - a);
+        openKnot(j + 1, a);
+    }
+
+    // The log envelope, bands x frames, then its exp.
+    const size_t nf = size_t(frames);
+    const double lnPad = std::log(1e-9);
+    for (size_t b = 0; b < nb; ++b)
+    {
+        double* L = hhLog_.data() + b * nf;
+        std::fill(L, L + nf, constant[b]);
+        for (int q = 0; q < nTerms; ++q)
+        {
+            const Term& tm = terms[size_t(q)];
+            const double* x = tm.ln + b * size_t(tm.frames);
+            const size_t m = std::min(nf, size_t(tm.frames));
+            for (size_t k = 0; k < m; ++k)
+                L[k] += tm.coef * x[k];
+            for (size_t k = m; k < nf; ++k)
+                L[k] += tm.coef * lnPad;
+        }
+    }
+    vecmath::expArray(hhLog_.data(), hhExp_.data(), static_cast<int>(nb * nf));
+    const double peak = std::max(*std::max_element(hhExp_.begin(), hhExp_.begin() + long(nb * nf)), 1e-30);
+    const size_t stride = size_t(h.maxFrames + 1);
+    const double inv = 1.0 / peak;
+    for (size_t b = 0; b < nb; ++b)
+    {
+        const double* e = hhExp_.data() + b * nf;
+        float* out = c.hhEnv.data() + b * stride;
+        double m = 0.0;
+        size_t kPeak = 0;
+        for (size_t k = 0; k < nf; ++k)
+        {
+            out[k] = static_cast<float>(e[k] * inv);
+            if (e[k] > m)
+            {
+                m = e[k];
+                kPeak = k;
+            }
+        }
+        out[nf] = 0.0f; // the end fade reaches 0 one frame after the last
+        envPeakS_[b] = static_cast<double>(kPeak) * h.frameS;
+        std::fill(c.emax.begin() + bandStart_[b], c.emax.begin() + bandEnd_[b], static_cast<float>(m * inv));
+    }
+    c.hhFrames = frames + 1;
+    return peak;
+}
+
+// A hi-hat strike's band envelope at te seconds after it: its frames interpolated linearly,
+// the first before 0, 0 from the end fade's zero on.
+double FastEngine::hiHatEnvelopeAt(const Component& c, int band, double te) const noexcept
+{
+    const double kf = std::max(te / bake_->hihat.frameS, 0.0);
+    const int last = c.hhFrames - 1;
+    if (kf >= static_cast<double>(last))
+        return 0.0;
+    const int k0 = static_cast<int>(kf);
+    const double fr = kf - k0;
+    const float* e = c.hhEnv.data() + size_t(band) * size_t(bake_->hihat.maxFrames + 1);
+    return e[k0] * (1.0 - fr) + e[k0 + 1] * fr;
+}
+
+// HiHat.rate: each band's decay rate (amplitude, 1/s) at openness o, interpolated in log
+// between the rate knots (held beyond them).
+void FastEngine::hiHatRate(double o, double* out) const noexcept
+{
+    const HiHatData& h = bake_->hihat;
+    const int nr = static_cast<int>(h.rateOpenness.size());
+    int j = 0;
+    double a = 0.0;
+    if (o >= h.rateOpenness[size_t(nr - 1)])
+    {
+        j = nr - 2;
+        a = 1.0;
+    }
+    else if (o > h.rateOpenness[0])
+    {
+        while (j < nr - 2 && h.rateOpenness[size_t(j + 1)] <= o)
+            ++j;
+        a = (o - h.rateOpenness[size_t(j)]) / (h.rateOpenness[size_t(j + 1)] - h.rateOpenness[size_t(j)]);
+    }
+    const double* r0 = hhLnRate_.data() + size_t(j) * size_t(kExcitationBands);
+    const double* r1 = r0 + kExcitationBands;
+    for (size_t b = 0; b < size_t(kExcitationBands); ++b)
+        out[b] = std::exp(r0[b] + a * (r1[b] - r0[b]));
+}
+
+// The pedal choke of a hi-hat strike over the block t0 .. t1 (HiHat.choke_rate): its gain at t0
+// from the rate it last fell at, then per band the extra rate at the pedal's openness at t0,
+// max(rate(o), CHOKE_RATE (o_strike - o) / o_strike) - rate(o_strike), never negative, and 0
+// while the pedal is as open as at the strike or more (it never brings level back). The
+// openness and the band rates at t0 are computed once per block (openNow < 0: not yet).
+void FastEngine::hiHatChoke(Component& c, double t0, double t1, double& openNow, bool& rateDone) noexcept
+{
+    const HiHatData& h = bake_->hihat;
+    const size_t nb = size_t(kExcitationBands);
+    if (t0 == c.hhT1)
+        c.hhGain = c.hhGain1;
+    else
+        for (size_t b = 0; b < nb; ++b)
+            if (c.hhExtra[b] > 0.0)
+                c.hhGain[b] *= std::exp(-c.hhExtra[b] * (t0 - c.hhChokeT));
+    c.hhChokeT = t0;
+    if (openNow < 0.0)
+        openNow = pedalAt(t0);
+    bool any = false;
+    if (openNow < c.hhOpen)
+    {
+        if (!rateDone)
+        {
+            hiHatRate(openNow, hhRateNow_.data());
+            rateDone = true;
+        }
+        const double closing = h.chokeRate * (c.hhOpen - openNow) / std::max(c.hhOpen, 1e-6);
+        for (size_t b = 0; b < nb; ++b)
+        {
+            c.hhExtra[b] = std::max(std::max(hhRateNow_[b], closing) - c.hhRate0[b], 0.0);
+            any = any || c.hhExtra[b] > 0.0;
+        }
+    }
+    else
+        c.hhExtra.fill(0.0);
+    if (any)
+        for (size_t b = 0; b < nb; ++b)
+            c.hhGain1[b] = c.hhExtra[b] > 0.0 ? c.hhGain[b] * std::exp(-c.hhExtra[b] * (t1 - t0)) : c.hhGain[b];
+    else
+        c.hhGain1 = c.hhGain;
+    c.hhT1 = t1;
+}
+
+// A free component slot for a hi-hat strike; with the pool full, the quietest strike's (its
+// loudest band now, with its level) is taken: hi-hat strikes are never merged.
+FastEngine::Component& FastEngine::allocateHiHat() noexcept
+{
+    Component* quietest = nullptr;
+    for (auto& c : components_)
+    {
+        if (!c.used)
+            return c;
+        if (!c.cascade && (quietest == nullptr || c.hhLevel < quietest->hhLevel))
+            quietest = &c;
+    }
+    CYM_PROF_COUNT(poolFull);
+    if (quietest == nullptr)
+        quietest = &components_[0];
+    quietest->used = false;
+    return *quietest;
+}
+
+// The pedal's smoothed openness at time t: the latest segment starting at or before t (the
+// oldest kept one before them all).
+double FastEngine::pedalAt(double t) const noexcept
+{
+    int idx = pedalHead_;
+    for (int k = 1; k < pedalCount_ && pedal_[size_t(idx)].t0 > t; ++k)
+        idx = (idx + kPedalSegments - 1) % kPedalSegments;
+    const PedalSegment& s = pedal_[size_t(idx)];
+    const double dt = std::max(t - s.t0, 0.0);
+    return s.target + (s.o0 - s.target) * std::exp(-dt / bake_->hihat.pedalSmoothS);
+}
+
+void FastEngine::setPedal(double openness, bool immediate) noexcept
+{
+    if (!hihat_)
+        return;
+    const double target = clamp01(openness);
+    const double t = timeSeconds();
+    const double now = pedalAt(t);
+    // Within a segment the openness moves monotonically, so it peaked at one of its ends.
+    if (now >= bake_->hihat.footRearmAbove)
+        footArmed_ = true;
+    pedalHead_ = (pedalHead_ + 1) % kPedalSegments;
+    pedalCount_ = std::min(pedalCount_ + 1, kPedalSegments);
+    pedal_[size_t(pedalHead_)] = PedalSegment { t, immediate ? target : now, target };
+    if (immediate)
+        footArmed_ = target >= bake_->hihat.footRearmAbove;
+}
+
+// FOOT, fired by the pedal (process): its velocity from how fast the pedal closed, the
+// openness drop per second over the last footWindowS, / footFullSpeed, within the bounds.
+void FastEngine::footStrike() noexcept
+{
+    const HiHatData& h = bake_->hihat;
+    const double t = timeSeconds();
+    const double speed = std::max(0.0, (pedalAt(t - h.footWindowS) - pedalAt(t)) / h.footWindowS);
+    const double v = std::min(std::max(speed / h.footFullSpeed, h.footMinVelocity), 1.0);
+    footArmed_ = false;
+    ++footStrikes_;
+    lastFootTime_ = t;
+    lastFootVelocity_ = v;
+    strike(hhFootSlot_, v, bake_->slots[size_t(hhFootSlot_)].position);
+}
+
+// A hi-hat strike (strike() on a hi-hat bake): the knots at the pedal's openness now and the
+// strike's velocity give its envelopes and weights; each mode's coupling is its weight x the
+// envelope's peak, with this strike's phase, the slot's calibration, level and velocity curve,
+// band gains and brightness; it follows its envelope (normalised to its peak) from the strike
+// to the envelope's end, choked by the pedal. Its attack band gains, onset shift, stick click,
+// re-hit damping and the LF/MF accumulators and wander apply as on every preset; HIT
+// VARIATION varies its velocity only. No contact, no onset ramp. Does not allocate.
+void FastEngine::strikeHiHat(int slotIndex, double velocity, double position) noexcept
+{
+    CYM_PROF_BEGIN(strike);
+    if (hitVar_)
+    {
+        double p = position; // two draws as on every preset; the position spread does not apply
+        varyHit(p, velocity);
+    }
+    const BakeData& b = *bake_;
+    const HiHatData& h = b.hihat;
+    const SlotData& s = b.slots[size_t(slotIndex)];
+    const size_t n = size_t(n_);
+    sampleNow_ = static_cast<int64_t>(clock_);
+    if (gainRamp_)
+        interruptGainRamp();
+    if (freeStarted_)
+        rebaseComponents();
+    const double strikeTime = timeSeconds();
+    cymbalWideAtStrike(strikeTime);
+    drawPhasesAhead(n_);
+    rng_ = aheadRng_;
+    aheadDone_ = 0;
+
+    const int art = std::max<int>(hhArt_[size_t(slotIndex)], 0);
+    const double v = clamp01(velocity);
+    const double open = pedalAt(strikeTime);
+    const double curveDb = velocityCurveDb(slotCurve_[size_t(slotIndex)], velocity);
+    const double calib =
+        s.calibScalar * slotTrim_[size_t(slotIndex)] * (curveDb != 0.0 ? std::pow(10.0, curveDb / 20.0) : 1.0);
+    Component& comp = allocateComponent();
+    comp.used = true;
+    comp.cascade = false;
+    comp.rhoOn = false;
+    comp.rho0 = comp.rho1 = 1.0f;
+    startRehit(comp, slotIndex, velocity);
+    comp.order = ++componentOrder_;
+    comp.contactStart = sampleNow_;
+    comp.pending = false;
+    const double peak = hiHatEnvelope(comp, art, art == 2 ? 0.0 : open, v);
+
+    // Coupling: weight x peak, with the band gains and brightness, the phase and the level.
+    const float* excGain = excGainOn_[size_t(slotIndex)] != 0 ? excGain_.data() + size_t(slotIndex) * n : nullptr;
+    const double tiltDb = brightnessTiltDb(slotCurve_[size_t(slotIndex)], velocity);
+    if (tiltDb != 0.0)
+    {
+        const double tiltExp = tiltDb * 0.16609640474436813; // ln 10 / (20 ln 2)
+        for (size_t i = 0; i < n; ++i)
+            vmArg_[i] = tiltExp * logF1k_[i];
+        vecmath::expArray(vmArg_.data(), vmExp_.data(), n_);
+    }
+    for (size_t i = 0; i < n; ++i)
+    {
+        double m = scratchVel_[i] * peak;
+        if (excGain != nullptr)
+            m *= static_cast<double>(excGain[i]);
+        if (tiltDb != 0.0)
+            m *= vmExp_[i];
+        const double cr = (m * phaseCos_[i]) * calib;
+        const double ci = (m * phaseSin_[i]) * calib;
+        comp.Br[i] = comp.Er[i] = static_cast<float>(cr); // Br: its level for the skip threshold (no decay)
+        comp.Bi[i] = comp.Ei[i] = static_cast<float>(ci);
+        zr_[i] += cr;
+        zi_[i] += ci;
+    }
+    comp.hhScale = peak * calib;
+    comp.hhLevel = comp.hhScale;
+    wanderScale_ = 1.0 + velocity * clamp01(1.0 - position / 0.5) * params_.edgeWanderDepth;
+    edgeRateScale_ = std::max(1.0 + velocity * clamp01(1.0 - position / 0.5) * params_.edgeWanderRate, 0.1);
+    comp.eps = 0.0; // its envelope is its whole decay
+    std::fill(comp.epsK.begin(), comp.epsK.end(), 0.0);
+    setDecayAll(comp);
+    ++strikesApplied_;
+    lastSlot_ = slotIndex;
+    comp.tStrike = strikeTime;
+
+    // Its envelope, with the articulation's onset shift and the ring length, to its end.
+    comp.rampOn = false;
+    comp.envOn = true;
+    comp.frameRestart = false;
+    std::fill(comp.fd.begin(), comp.fd.end(), 1.0f);
+    comp.frameBlocksLeft = INT_MAX;
+    const ArticulationTuning& at = slotCurve_[size_t(slotIndex)];
+    const bool shift = onsetShiftOn_[size_t(slotIndex)] != 0;
+    const double* dly = at.delayMs.data();
+    const double* spd = at.speed.data();
+    if (shift && shiftLayers_[size_t(slotIndex)] != 0)
+    {
+        layeredShift(at, onsetLayerT(velocity), strikeDelay_.data(), strikeSpeed_.data());
+        dly = strikeDelay_.data();
+        spd = strikeSpeed_.data();
+    }
+    comp.envShift = shift;
+    comp.envRing = envRingOn_;
+    if (comp.envRing)
+    {
+        std::copy(envRingInv_.begin(), envRingInv_.end(), comp.envRingInv.begin());
+        comp.envKeep = envRingKeepS_;
+    }
+    // It ends when every band's envelope time reaches the end fade's zero.
+    const double end = static_cast<double>(comp.hhFrames - 1) * h.frameS;
+    comp.envWindow = 0.0;
+    for (size_t j = 0; j < size_t(kExcitationBands); ++j)
+    {
+        if (comp.envShift)
+        {
+            comp.envDelay[j] = static_cast<float>(dly[j] * 1e-3);
+            comp.envSpeed[j] = static_cast<float>(spd[j]);
+        }
+        if (bandEnd_[j] <= bandStart_[j])
+            continue;
+        double u = end; // envelope time at the end
+        if (comp.envRing && comp.envRingInv[j] != 1.0 && end > comp.envKeep)
+            u = comp.envKeep + (end - comp.envKeep) / comp.envRingInv[j];
+        if (comp.envShift)
+            u = u / static_cast<double>(comp.envSpeed[j]) + static_cast<double>(comp.envDelay[j]);
+        comp.envWindow = std::max(comp.envWindow, u);
+    }
+
+    // Attack band gains, as on every preset (the hi-hat's articulations all take them).
+    {
+        const size_t slot = size_t(slotIndex);
+        const double* gm1 = attackGm1_.data() + slot * size_t(kExcitationBands);
+        double gm1Max = attackGm1Max_[slot];
+        bool on = attackOn_[slot] != 0;
+        if (attackLayers_[slot] != 0)
+        {
+            layeredAttack(at, onsetLayerT(velocity), strikeAttackDb_.data());
+            gm1Max = 0.0;
+            for (size_t j = 0; j < size_t(kExcitationBands); ++j)
+            {
+                const double g = std::pow(10.0, strikeAttackDb_[j] / 20.0);
+                strikeGm1_[j] = std::fabs(g - 1.0) > 1e-3 ? g - 1.0 : 0.0;
+                if (bandHasModes_[j])
+                    gm1Max = std::max(gm1Max, std::fabs(strikeGm1_[j]));
+            }
+            gm1 = strikeGm1_.data();
+            on = gm1Max > 0.0;
+        }
+        comp.onsetOn = on;
+        comp.gm1Max = 0.0;
+        if (on)
+        {
+            comp.onsetTau = attackTauS_[slot];
+            for (size_t i = 0; i < n; ++i)
+                comp.gm1[i] = static_cast<float>(gm1[modeBand_[i]]);
+            comp.gm1Max = gm1Max;
+        }
+    }
+    comp.settled = false;
+    comp.ptMax = 0.0;
+
+    // The pedal choke: a strike more open than the pedal later is damped further.
+    comp.hhOpen = open;
+    comp.hhChoke = open > 0.0;
+    comp.hhChokeT = strikeTime;
+    comp.hhT1 = -1.0;
+    comp.hhGain.fill(1.0);
+    comp.hhGain1.fill(1.0);
+    comp.hhExtra.fill(0.0);
+    if (comp.hhChoke)
+        hiHatRate(open, comp.hhRate0.data());
+#if CYMBALIS_TUNING
+    onsetPeaks(comp, slotIndex);
+#endif
+    if (lfOn_)
+        lfAcc_.add(strikeTime, params_.lfTau,
+                   velocity * (position <= 0.25 ? params_.lfWEdge : (position >= 0.75 ? params_.lfWBell : params_.lfWBow)));
+    if (mfOn_)
+        mfAcc_.add(strikeTime, params_.mfTau,
+                   velocity * (position <= 0.25 ? params_.mfWEdge : (position >= 0.75 ? params_.mfWBell : params_.mfWBow)));
+    if (wanderOn_)
+        tauRate_ = params_.wanderRateHz * wanderRate(strikeTime);
+    startStick(slotIndex, velocity, position, calib);
+    freeStarted_ = false;
+    freePos_ = 0;
+    startFreePhase();
+    CYM_PROF_END(strike);
 }
 
 } // namespace cymbalis

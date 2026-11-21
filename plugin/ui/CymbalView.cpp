@@ -559,7 +559,9 @@ void CymbalView::setPreset (int preset, const juce::String& loadError)
     if (preset != shownPreset)
     {
         shownPreset = preset;
-        shownGeometry = std::make_shared<const wire::Geometry> (*kPresets[(size_t) preset].shape);
+        // A preset without a wireframe (the hi-hat, for now): nothing is drawn.
+        const auto* shape = kPresets[(size_t) preset].shape;
+        shownGeometry = shape != nullptr ? std::make_shared<const wire::Geometry> (*shape) : nullptr;
     }
     error = loadError;
     {
@@ -708,14 +710,18 @@ void CymbalView::renderOpenGL()
     const double t0 = juce::Time::getMillisecondCounterHiRes();
     auto& g = *gpu;
     std::shared_ptr<const wire::Geometry> newGeometry;
+    bool geometryChanged = false;
     {
         const juce::SpinLock::ScopedLockType sl (lock);
         if (pendingGeometry != g.geometry)
+        {
             newGeometry = pendingGeometry;
+            geometryChanged = true; // also to none (a preset without a wireframe)
+        }
         g.numHits = numPendingHits;
         std::copy (pendingHits.begin(), pendingHits.begin() + numPendingHits, g.hits.begin());
     }
-    if (newGeometry != nullptr)
+    if (geometryChanged)
         g.upload (std::move (newGeometry));
 
     GLint viewport[4] = {}, target = 0;

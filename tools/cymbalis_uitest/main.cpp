@@ -24,6 +24,11 @@
 //   swish     click the CYMBAL box, then SWISH (the fourth)          -> preset swish
 //   raven     click the CYMBAL box, then RAVEN (the fifth)           -> preset raven
 //   konstan   click the CYMBAL box, then KONSTAN CRASH 18" (the sixth) -> preset konstan
+//   hihat     click the CYMBAL box, then HI-HAT (the seventh)          -> preset hihat
+//   hihatplay (on HI-HAT) MIDI through the host into the plugin, on the session's channel and
+//             pedal CC: notes 42 and 46 (its rows' defaults, BOW and EDGE), each must sound;
+//             the pedal open, 46 must ring on long after a closed one has gone; the pedal
+//             closed again, FOOT must sound without a note       -> played
 //   wheel     the scroll wheel over the five knobs, a note box, a stick box, the CYMBAL and
 //             MIDI CHANNEL boxes                                     -> state and parameters unchanged
 //   arcs      (Tuning window closed) for each of the five knobs: drag it 40 design units, double-
@@ -65,6 +70,9 @@
 //                                                                    -> bow_shoulder's band gains,
 //                attack gains and attack time are Nova's bow profile (ShoulderProfiles.h)
 //   noprofile    (on NOVA RIDE) look for NOVA SHOULDER PROFILE down the list -> none
+//   hihattuning  (on HI-HAT) the list shows the values that act on it and not the others
+//                (stick click weights, position spread, EDGE VOICE FROM BOW, tau_ref)
+//                                                                    -> as expected
 //
 //   nova      click the CYMBAL box, then NOVA RIDE (the first)       -> preset nova_ride
 //   smoke     click the CYMBAL box, then SMOKE FLAT RIDE (the second) -> preset smoke_flat_ride
@@ -332,6 +340,72 @@ private:
         return s;
     }
 
+    // hihatplay: MIDI into the hosted plugin through its processBlock (the test host has no
+    // audio device), on the session's MIDI channel and pedal CC. Renders in blocks of 512 at
+    // 48 kHz; returns "played" or what did not sound.
+    juce::String playHiHat()
+    {
+        std::unique_ptr<juce::XmlElement> xml (juce::parseXML (sessionNow()));
+        if (xml == nullptr)
+            return "no session";
+        const int ch = xml->getIntAttribute ("midiChannel", 16), cc = xml->getIntAttribute ("pedalCc", 1);
+        const int tipNote = xml->getIntAttribute ("note_hihat_BOW", -1), edgeNote = xml->getIntAttribute ("note_hihat_EDGE", -1);
+        std::printf ("      channel %d, pedal CC %d, BOW note %d, EDGE note %d\n", ch, cc, tipNote, edgeNote);
+        if (tipNote != 42 || edgeNote != 46)
+            return "the hi-hat's notes are " + juce::String (tipNote) + " and " + juce::String (edgeNote) + ", not 42 and 46";
+        constexpr int block = 512;
+        constexpr double rate = 48000.0;
+        juce::AudioBuffer<float> buffer (juce::jmax (2, plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels()), block);
+        // Mean square of `seconds` rendered after `midi` (at the first sample), both channels.
+        auto render = [&] (double seconds, const juce::MidiMessage* msg) {
+            double sum = 0.0;
+            long count = 0;
+            const int blocks = juce::roundToInt (seconds * rate / block);
+            for (int b = 0; b < blocks; ++b)
+            {
+                juce::MidiBuffer midi;
+                if (b == 0 && msg != nullptr)
+                    midi.addEvent (*msg, 0);
+                buffer.clear();
+                plugin->processBlock (buffer, midi);
+                for (int c = 0; c < 2; ++c)
+                    for (int i = 0; i < block; ++i)
+                        sum += double (buffer.getSample (c, i)) * buffer.getSample (c, i);
+                count += 2 * block;
+            }
+            return sum / (double) juce::jmax (1L, count);
+        };
+        auto dB = [] (double ms) { return 10.0 * std::log10 (juce::jmax (ms, 1e-30)); };
+        const auto tip = juce::MidiMessage::noteOn (ch, tipNote, (juce::uint8) 100);
+        const auto edge = juce::MidiMessage::noteOn (ch, edgeNote, (juce::uint8) 100);
+        const auto open = juce::MidiMessage::controllerEvent (ch, cc, 127), shut = juce::MidiMessage::controllerEvent (ch, cc, 0);
+        render (0.5, &shut); // the plugin takes the HI-HAT cymbal its loader built; the pedal closed
+        const double tipMs = render (0.3, &tip);
+        render (2.5, nullptr);
+        const double edgeMs = render (0.3, &edge);
+        render (0.7, nullptr);
+        const double closedTail = render (0.5, nullptr); // 1.0 .. 1.5 s after the closed EDGE
+        render (2.0, nullptr);
+        render (0.1, &open);
+        render (1.0, &edge);
+        const double openTail = render (0.5, nullptr);   // 1.0 .. 1.5 s after the open EDGE
+        render (0.5, &shut); // closes the pedal on it: choked, and FOOT
+        render (2.5, nullptr);
+        render (0.3, &open); // open again with nothing ringing ...
+        const double footMs = render (0.2, &shut);       // ... and closed: FOOT alone
+        std::printf ("      BOW (TIP) %.1f dB, EDGE closed %.1f dB, 1-1.5 s after: closed %.1f dB, open %.1f dB; FOOT %.1f dB\n",
+                     dB (tipMs), dB (edgeMs), dB (closedTail), dB (openTail), dB (footMs));
+        if (! (tipMs > 1e-8))
+            return "BOW (TIP) is silent";
+        if (! (edgeMs > 1e-8))
+            return "EDGE is silent";
+        if (! (openTail > 100.0 * closedTail))
+            return "the open EDGE does not ring on 20 dB above the closed one";
+        if (! (footMs > 1e-8))
+            return "the pedal closing plays no FOOT";
+        return "played";
+    }
+
     // The saved session settings, through the host API.
     juce::String sessionNow()
     {
@@ -396,7 +470,8 @@ private:
         else if (name == "sticks")
         {
             // A new instance: in every preset BELL and BOW start on TIP, BELL2 and BOW2 on
-            // SHOULDER (UI_SPEC section 8). NOVA RIDE's keys have no preset id (stick_BELL).
+            // SHOULDER (UI_SPEC section 8). NOVA RIDE's keys have no preset id (stick_BELL). Only
+            // rows with a TIP / SHOULDER choice have one (none on HI-HAT).
             s.actions = { wait };
             s.key = "sticks";
             s.expected = "defaults";
@@ -406,8 +481,10 @@ private:
                 if (xml == nullptr)
                     return juce::String ("no session");
                 for (int k = 0; k < cymbalis::kNumPresets; ++k)
-                    for (const char* row : { "BELL", "BOW", "BELL2", "BOW2" })
+                    for (const auto& [row, slot] : { std::pair<const char*, int> { "BELL", 0 }, { "BOW", 1 }, { "BELL2", 3 }, { "BOW2", 4 } })
                     {
+                        if (! cymbalis::hasStickChoice (k, slot))
+                            continue;
                         const auto key = juce::String ("stick_") + (k == 0 ? juce::String() : juce::String (cymbalis::kPresets[(size_t) k].id) + "_") + row;
                         const juce::String expected = juce::String (row).endsWith ("2") ? "SHOULDER" : "TIP";
                         const auto value = xml->getStringAttribute (key, "?");
@@ -791,6 +868,46 @@ private:
             s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + 4.0f * 40.0f + 20.0f), wait };
             s.key = "preset";
             s.expected = "raven";
+        }
+        else if (name == "hihat")
+        {
+            // The same list; HI-HAT is its seventh row.
+            s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + 6.0f * 40.0f + 20.0f), wait };
+            s.key = "preset";
+            s.expected = "hihat";
+        }
+        else if (name == "hihatplay")
+        {
+            s.actions = { wait };
+            s.key = "hi-hat";
+            s.expected = "played";
+            s.probe = [this] { return playHiHat(); };
+        }
+        else if (name == "hihattuning")
+        {
+            s.actions = { wait };
+            s.key = "hi-hat tuning";
+            s.expected = "as expected";
+            s.probe = [this] {
+                const std::pair<const char*, const char*> rows[] = {
+                    { "STICK CLICK gain (0 = none)", "shown" },
+                    { "Kept onset (ring length acts after it): TIP, EDGE, FOOT", "shown" },
+                    { "VELOCITY SPREAD", "shown" },
+                    { "STICK CLICK bow weight", "none" },
+                    { "POSITION SPREAD (0 edge, 0.5 bow, 1 bell)", "none" },
+                    { "Bow brightness vs velocity (tau_ref): TIP", "none" },
+                    { "EDGE VOICE FROM BOW (0: the edge's own modes, 100: its long-ringing modes take the bow's): EDGE, FOOT",
+                      "none" },
+                };
+                for (const auto& r : rows)
+                {
+                    const auto got = cymbalis::uitest::tuningShows (*editor, r.first);
+                    std::printf ("      \"%s\": %s\n", r.first, got.toRawUTF8());
+                    if (got != r.second)
+                        return juce::String (r.first) + ": " + got + " (expected " + r.second + ")";
+                }
+                return juce::String ("as expected");
+            };
         }
         else if (name == "konstan")
         {

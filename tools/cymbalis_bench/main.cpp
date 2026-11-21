@@ -9,7 +9,8 @@
 // does, and reports the time spent in the engine as a percentage of one core
 // (render time / audio time x 100). Denormals are flushed to zero, as in the plugin.
 // It also reports the output's peak and fails if any sample is not finite. Nothing is
-// written to disk.
+// written to disk. On the hi-hat the pedal moves as well (pedalOpenness, Dense.h): a CC every
+// 10 ms, opening and closing every 1.5 s, so the choke runs and FOOT fires at every close.
 //
 //   cymbalis_bench --dense --bake BAKE.json [--bake ...] [options]
 //
@@ -99,7 +100,7 @@ int main(int argc, char** argv)
             cymbalis::FastEngine engine(bake);
             engine.prepare(sr);
             const int64_t total = static_cast<int64_t>(seconds * sr);
-            struct Hit { int64_t sample; int slot; double velocity; };
+            struct Hit { int64_t sample; int slot; double velocity; }; // slot -1: the pedal at `velocity`
             std::vector<Hit> hits;
             const double vel[] = {0.3, 0.45, 0.6, 0.75, 0.9, 1.0, 0.5};
             int k = 0;
@@ -109,6 +110,15 @@ int main(int argc, char** argv)
                 hits.push_back({s, k % slots, vel[k % 7]});
                 if (k % 4 == 0) hits.push_back({s, (k / 4 + 2) % slots, vel[(k + 3) % 7]});
             }
+            if (engine.isHiHat())
+            {
+                for (int64_t m = 0; m * kPedalStepS < seconds; ++m)
+                    hits.push_back({static_cast<int64_t>(double(m) * kPedalStepS * sr), -1, pedalOpenness(double(m) * kPedalStepS)});
+                std::stable_sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) { return a.sample < b.sample; });
+            }
+            size_t strikes = 0;
+            for (const auto& x : hits)
+                strikes += x.slot >= 0 ? 1 : 0;
             std::vector<float> L(static_cast<size_t>(block)), R(static_cast<size_t>(block));
             size_t h = 0;
             double engineSeconds = 0.0, strikeSeconds = 0.0, worstBlock = 0.0;
@@ -130,6 +140,11 @@ int main(int argc, char** argv)
                         engine.process(L.data() + pos, R.data() + pos, at - pos);
                         pos = at;
                     }
+                    if (hits[h].slot < 0)
+                    {
+                        engine.setPedal(hits[h].velocity);
+                        continue;
+                    }
                     const auto s0 = clock::now();
                     engine.strike(hits[h].slot, hits[h].velocity, bake->slots[size_t(hits[h].slot)].position);
                     strikeSeconds += std::chrono::duration<double>(clock::now() - s0).count();
@@ -148,9 +163,11 @@ int main(int argc, char** argv)
             std::sort(blockTimes.begin(), blockTimes.end());
             const double p99 = blockTimes[std::min(blockTimes.size() - 1, blockTimes.size() * 99 / 100)];
             const double audio = static_cast<double>(total) / sr;
-            std::printf("| %.0f Hz | %d | %d | %zu | %.2f %% | %.0f | %.0f | %.0f | %.0f | %s |\n", sr,
-                        engine.controlBlock(), block, hits.size(), 100.0 * engineSeconds / audio,
-                        1e6 * strikeSeconds / double(hits.size()), 1e6 * p99, 1e6 * worstBlock, 1e6 * block / sr,
+            const std::string strikeText =
+                std::to_string(strikes) + (engine.isHiHat() ? " + " + std::to_string(engine.footStrikes()) + " FOOT" : std::string());
+            std::printf("| %.0f Hz | %d | %d | %s | %.2f %% | %.0f | %.0f | %.0f | %.0f | %s |\n", sr,
+                        engine.controlBlock(), block, strikeText.c_str(), 100.0 * engineSeconds / audio,
+                        1e6 * strikeSeconds / double(strikes), 1e6 * p99, 1e6 * worstBlock, 1e6 * block / sr,
                         finite ? std::to_string(peak).c_str() : "NOT FINITE");
             allFinite = allFinite && finite;
         }

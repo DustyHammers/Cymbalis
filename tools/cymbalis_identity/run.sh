@@ -52,7 +52,16 @@ fi
 wait
 "$CXX" ${ARCH:+-arch "$ARCH"} "$TMP/check.o" "$TMP/ref.o" "$TMP/new.o" "$BUILD/plugin/dsp/libcymbalis_engine.a" -o "$TMP/check"
 
-BAKES=("$ROOT"/resources/presets/*.bake.json)
+# Every bake REF's engine can play: a preset newer than REF (the hi-hat, with its own strike
+# model, before it was added) is left out and named.
+BAKES=()
+for B in "$ROOT"/resources/presets/*.bake.json; do
+  if ! git -C "$ROOT" cat-file -e "$REF:resources/presets/$(basename "$B")" 2>/dev/null; then
+    echo "skipped $(basename "$B"): not in $REF"
+    continue
+  fi
+  BAKES+=("$B")
+done
 echo "FastEngine of the working tree against $REF ($(git -C "$ROOT" rev-parse --short "$REF"))${ARCH:+, $ARCH}"
 # ${a[@]+"${a[@]}"}: an empty array under set -u in bash 3.2 (macOS).
 if [ ${#TIME[@]} -gt 0 ]; then

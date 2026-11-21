@@ -11,12 +11,13 @@
 #include <memory>
 #include <vector>
 
-// Cymbalis: one cymbal engine (FastEngine) playing one of three baked presets (nl_amount 0,
-// compiled in, parsed at load). MIDI note-ons on the selected channel strike the slots whose
-// notes they match, at their exact sample. Choosing a preset loads its bake into the engine:
-// the new engine state is built off the audio thread and handed over without locks.
-// Parameters: exactly the five of docs/UI_SPEC.md section 9; the preset is session state,
-// like the MIDI channel.
+// Cymbalis: one cymbal engine (FastEngine) playing one of the baked presets (compiled in,
+// parsed at load). MIDI note-ons on the selected channel strike the slots whose notes they
+// match, at their exact sample; on the hi-hat the pedal CC (on the same channel) sets the
+// openness at its sample. Choosing a preset loads its bake into the engine: the new engine
+// state is built off the audio thread and handed over without locks. Parameters: exactly the
+// five of docs/UI_SPEC.md section 9; the preset is session state, like the MIDI channel and the
+// pedal CC.
 class CymbalisProcessor final : public juce::AudioProcessor
 {
 public:
@@ -65,9 +66,18 @@ public:
     int midiChannel() const noexcept { return channel.load(); }
     void setMidiChannel (int newChannel) noexcept;
 
-    // Note of a slot, -1 = unassigned.
-    int slotNote (int slot) const noexcept { return notes[(size_t) slot].load(); }
-    void setSlotNote (int slot, int note) noexcept;
+    // Note of a slot in the current preset, -1 = unassigned. The cymbals share their notes; a
+    // preset with notes of its own (the hi-hat) keeps its own (cymbalis::noteSet).
+    int slotNote (int slot) const noexcept { return slotNote (presetIndex(), slot); }
+    int slotNote (int preset, int slot) const noexcept { return notes[(size_t) cymbalis::noteSet (preset)][(size_t) slot].load(); }
+    void setSlotNote (int slot, int note) noexcept { setSlotNote (presetIndex(), slot, note); }
+    void setSlotNote (int preset, int slot, int note) noexcept;
+
+    // The hi-hat pedal's MIDI CC (1-127, default 1, the mod wheel), read on the MIDI channel:
+    // its value / 127 is the hi-hat's openness, 0 closed. Per instance, saved with the session;
+    // not a parameter.
+    int pedalCc() const noexcept { return pedalController.load(); }
+    void setPedalCc (int cc) noexcept;
 
     // The stick chosen for a slot (TIP or SHOULDER) in the current preset, where the preset
     // offers a choice on it (StickDisplay::choice). Each preset keeps its own choices. Not a
@@ -197,7 +207,9 @@ private:
     std::vector<float> fadeLeft, fadeRight; // allocated in prepareToPlay
 
     std::atomic<int> channel { cymbalis::kDefaultMidiChannel };
-    std::array<std::atomic<int>, cymbalis::kNumSlots> notes;
+    std::array<std::array<std::atomic<int>, cymbalis::kNumSlots>, cymbalis::kNumNoteSets> notes;
+    std::atomic<int> pedalController { cymbalis::kDefaultPedalCc };
+    int pedalValue = 0; // audio thread: the pedal CC's last value (0 closed), for a new cymbal
     std::array<std::array<std::atomic<int>, cymbalis::kNumSlots>, cymbalis::kNumPresets> sticks; // cymbalis::Stick
     std::atomic<int> learnSlot { -1 };
     std::atomic<int> editorWidth { 0 }, editorHeight { 0 };

@@ -31,7 +31,11 @@ bool applies (Needs needs, const BakeData& b)
         case Needs::always: return true;
         case Needs::npzEdge: return b.edgeNpz.present && b.edgeNpz.useVelw;
         case Needs::envelope: return b.edgeNpz.present; // the tuning can switch the envelope on
+        case Needs::bandEnvelope: return b.edgeNpz.present || b.hihat.present;
+        case Needs::positions: return ! b.hihat.present;
         case Needs::noVelocityTables:
+            if (b.hihat.present)
+                return false; // the hi-hat's strikes do not take the hertz velocity law
             for (const auto& s : b.slots)
                 if (! s.hasBowVp)
                     return true;
@@ -50,6 +54,7 @@ juce::String scopeNames (Scope scope, const BakeData& b)
                         : scope == Scope::bow  ? x > 0.25 && x < 0.75
                         : scope == Scope::bell ? x >= 0.75
                         : scope == Scope::hertz ? x > 0.25 && ! s.hasBowVp
+                        : scope == Scope::envelope ? b.hihat.present || x <= 0.25
                                                 : false;
         if (in)
             names.add (juce::String (s.id).toUpperCase());
@@ -65,9 +70,9 @@ const std::vector<Field>& cymbalFields()
         { "edge_velocity_remap_exponent", "Edge capture curve", "", Group::cymbal, Needs::npzEdge, 0.25, 2.0, 2, &C::edgeRemapExponent, false, Scope::edge },
         { "tau_ref_ms", "Bow brightness vs velocity (tau_ref)", "ms", Group::cymbal, Needs::noVelocityTables, 0.05, 8.0, 2, &C::tauRefMs, false, Scope::hertz },
         { "ring_length", "Ring length (x t60_scale)", "x", Group::cymbal, Needs::always, 0.5, 2.0, 2, &C::ringLength, true },
-        { "edge_ring_keep_ms", "Kept onset (ring length acts after it)", "ms", Group::cymbal, Needs::envelope, 0.0, 300.0, 0, &C::edgeRingKeepMs, false, Scope::edge },
+        { "edge_ring_keep_ms", "Kept onset (ring length acts after it)", "ms", Group::cymbal, Needs::bandEnvelope, 0.0, 300.0, 0, &C::edgeRingKeepMs, false, Scope::envelope },
 
-        { kHitPositionSpreadKey, "POSITION SPREAD (0 edge, 0.5 bow, 1 bell)", "", Group::hitVariation, Needs::always, 0.0, kHitPositionSpreadMax, 3, &C::hitPositionSpread, false },
+        { kHitPositionSpreadKey, "POSITION SPREAD (0 edge, 0.5 bow, 1 bell)", "", Group::hitVariation, Needs::positions, 0.0, kHitPositionSpreadMax, 3, &C::hitPositionSpread, false },
         { kHitVelocitySpreadKey, "VELOCITY SPREAD", "%", Group::hitVariation, Needs::always, 0.0, kHitVelocitySpreadMax, 1, &C::hitVelocitySpreadPct, false },
 
         { "stereo_width", "Overall width (x every band's width)", "%", Group::stereo, Needs::always, 0.0, kWidthMax, 0, &C::stereoWidth, false },
@@ -134,9 +139,9 @@ const std::vector<ArticulationField>& articulationFields()
         { kStickHiKey, "STICK CLICK band high", "Hz", kStickHiMinHz, kStickHiMaxHz, 0, &A::stickHiHz },
         { kStickLenKey, "STICK CLICK length", "ms", kStickLenMinMs, kStickLenMaxMs, 1, &A::stickLenMs },
         { kStickDecayKey, "STICK CLICK decay", "ms", kStickDecayMinMs, kStickDecayMaxMs, 1, &A::stickDecayMs },
-        { kStickBowWeightKey, "STICK CLICK bow weight", "", 0.0, kStickWeightMax, 2, &A::stickBowWeight },
-        { kStickBellWeightKey, "STICK CLICK bell weight", "", 0.0, kStickWeightMax, 2, &A::stickBellWeight },
-        { kStickEdgeWeightKey, "STICK CLICK edge weight", "", 0.0, kStickWeightMax, 2, &A::stickEdgeWeight },
+        { kStickBowWeightKey, "STICK CLICK bow weight", "", 0.0, kStickWeightMax, 2, &A::stickBowWeight, false, true },
+        { kStickBellWeightKey, "STICK CLICK bell weight", "", 0.0, kStickWeightMax, 2, &A::stickBellWeight, false, true },
+        { kStickEdgeWeightKey, "STICK CLICK edge weight", "", 0.0, kStickWeightMax, 2, &A::stickEdgeWeight, false, true },
     };
     return fields;
 }

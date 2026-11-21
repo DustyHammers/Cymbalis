@@ -96,15 +96,16 @@ jobs:
             exit 1
           fi
 
-      # CPU cost of the real-time engine on this runner (Apple Silicon), every slot playing.
-      # Printed to the log and the job summary only; nothing is uploaded.
+      # CPU cost of the real-time engine on this runner (Apple Silicon), every slot playing (on
+      # HI-HAT with the pedal moving: cymbalis_bench). Printed to the log and the job summary
+      # only; nothing is uploaded.
       - name: CPU benchmark (fast engine, all slots playing)
         run: |
           CPU=$(sysctl -n machdep.cpu.brand_string)
           BENCH=build/tools/cymbalis_bench/cymbalis_bench
           {
             echo "### Fast engine CPU on ${CPU}"
-            for PRESET in nova_ride smoke_flat_ride hammered_thin_ride swish raven konstan; do
+            for PRESET in nova_ride smoke_flat_ride hammered_thin_ride swish raven konstan hihat; do
               BAKE="resources/presets/${PRESET}.bake.json"
               echo
               echo "#### ${PRESET}"
@@ -116,15 +117,15 @@ jobs:
           } | tee -a "$GITHUB_STEP_SUMMARY"
           test "${PIPESTATUS[0]}" -eq 0
 
-      # The engine's block times in dense playing (a strike every 24 ms, every preset, 44.1 and
-      # 96 kHz, 128- and 64-sample blocks, real-time thread, each case three times in turn),
+      # The engine's block times in dense playing (a strike every 24 ms, every preset, HI-HAT with
+      # its pedal moving, 44.1 and 96 kHz, 128- and 64-sample blocks, real-time thread, each case three times in turn),
       # then where strike() and the slowest blocks spend their time (profile build, blocks back
       # to back). Printed to the log and the job summary only; nothing is uploaded.
       - name: Engine block times in dense playing
         timeout-minutes: 15
         run: |
           BAKES=()
-          for PRESET in nova_ride smoke_flat_ride hammered_thin_ride swish raven konstan; do
+          for PRESET in nova_ride smoke_flat_ride hammered_thin_ride swish raven konstan hihat; do
             BAKES+=(--bake "resources/presets/${PRESET}.bake.json")
           done
           {
@@ -211,7 +212,8 @@ jobs:
       # default sticks of every preset (BELL and BOW TIP, BELL2 and BOW2 SHOULDER), then change
       # the MIDI channel, the slot notes (drag, menu, RESET DEFAULT, note list), a stick, the
       # preset and a stick of that preset, then SWISH, RAVEN and KONSTAN CRASH 18", in the
-      # editor, and check the plugin's saved state; the scroll wheel over the knobs and boxes
+      # editor, and check the plugin's saved state; HI-HAT: its two rows and the pedal played
+      # through the host (MIDI notes and CC), then KONSTAN again; the scroll wheel over the knobs and boxes
       # must change nothing; dragging, double-clicking and automating each of the five knobs
       # must move its parameter and the value the knob shows, which its position arc is drawn
       # from (docs/UI_SPEC.md section 6). Then click TUNING: the Tuning window must be
@@ -221,13 +223,14 @@ jobs:
       # NOVA SHOULDER PROFILE's bow profile, and NOVA RIDE must have no such button; NOVA's first articulation's
       # three STICK CLICK weights must move; HIT VARIATION's switch must flip and its two spreads
       # move (NOVA); a tuning file saved and loaded back (through
-      # stand-ins for the file panels) must hold and restore the tuning; a second click on
+      # stand-ins for the file panels) must hold and restore the tuning; on HI-HAT the window
+      # shows the values that act on it and hides the others; a second click on
       # TUNING hides the window (tools/cymbalis_uitest).
       - name: Editor mouse test (AU and VST3)
         timeout-minutes: 5
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
-          STEPS="edge sticks channel drag reset none edgereset list stick preset shoulder swish raven konstan wheel arcs tuning wheeltuning voice raven voice swish voice profile preset voice smoke voice nova noprofile clickweights hitvariation savetuning loadtuning tuningclose"
+          STEPS="edge sticks channel drag reset none edgereset list stick preset shoulder swish raven konstan hihat hihatplay konstan wheel arcs tuning wheeltuning voice raven voice swish voice profile preset voice smoke voice nova noprofile clickweights hitvariation savetuning loadtuning hihat hihattuning tuningclose"
           echo "--- VST3 ---"
           "$UITEST" "$PWD/$VST3" $STEPS
           echo "--- AU ---"
