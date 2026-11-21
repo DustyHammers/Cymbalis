@@ -36,7 +36,15 @@ public:
 
     // The preset's cymbal; with a load error, the error instead.
     void setPreset (int preset, const juce::String& error);
+    // The cymbal the hits strike (the hi-hat's top cymbal), and the hi-hat's bottom cymbal (else
+    // none).
     std::shared_ptr<const wire::Geometry> geometry() const { return shownGeometry; }
+    std::shared_ptr<const wire::Geometry> lowerGeometry() const { return shownLower; }
+
+    // The hi-hat's opening, 0 closed to 1 open (the pedal's smoothed openness): its top cymbal,
+    // clutch and rod rise by opening x 0.7" (message thread). A new frame is drawn with it.
+    void setOpening (float opening);
+    float opening() const noexcept { return shownOpening; }
 
     // The hits to show (message thread): with OpenGL, a new frame is drawn with them.
     void setHits (const wire::Hit* hits, int count);
@@ -75,13 +83,14 @@ private:
 
     const Assets& assets;
     juce::Image background; // the area's part of the background image
-    std::shared_ptr<const wire::Geometry> shownGeometry;
+    std::shared_ptr<const wire::Geometry> shownGeometry, shownLower;
     int shownPreset = -1;
+    float shownOpening = 0.0f;
     juce::String error;
 
-    // The still drawing (no OpenGL), at the physical scale it was made for.
+    // The still drawing (no OpenGL), at the physical scale and opening it was made for.
     juce::Image still;
-    float stillScale = 0.0f;
+    float stillScale = 0.0f, stillOpening = -1.0f;
     const wire::Geometry* stillGeometry = nullptr;
 
     // OpenGL. The geometry and hits for the render thread, under `lock`.
@@ -90,9 +99,10 @@ private:
     bool attached = false;
     double attachedMs = 0.0;
     juce::SpinLock lock;
-    std::shared_ptr<const wire::Geometry> pendingGeometry;
+    std::shared_ptr<const wire::Geometry> pendingGeometry, pendingLower;
     std::array<wire::Hit, wire::kMaxHits> pendingHits {};
     int numPendingHits = 0;
+    float pendingOpening = 0.0f;
     std::unique_ptr<Gpu> gpu; // render thread only
 
     mutable juce::SpinLock statsLock;

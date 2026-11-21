@@ -78,6 +78,9 @@ public:
     // not a parameter.
     int pedalCc() const noexcept { return pedalController.load(); }
     void setPedalCc (int cc) noexcept;
+    // The hi-hat's smoothed pedal openness (0 closed to 1 open, as the engine plays it) at the end
+    // of the last block, for the editor's hats and pedal; unchanged while another preset plays.
+    float pedalOpenness() const noexcept { return pedalShown.load(); }
 
     // The stick chosen for a slot (TIP or SHOULDER) in the current preset, where the preset
     // offers a choice on it (StickDisplay::choice). Each preset keeps its own choices. Not a
@@ -210,6 +213,7 @@ private:
     std::array<std::array<std::atomic<int>, cymbalis::kNumSlots>, cymbalis::kNumNoteSets> notes;
     std::atomic<int> pedalController { cymbalis::kDefaultPedalCc };
     int pedalValue = 0; // audio thread: the pedal CC's last value (0 closed), for a new cymbal
+    std::atomic<float> pedalShown { 0.0f }; // written by the audio thread (pedalOpenness)
     std::array<std::array<std::atomic<int>, cymbalis::kNumSlots>, cymbalis::kNumPresets> sticks; // cymbalis::Stick
     std::atomic<int> learnSlot { -1 };
     std::atomic<int> editorWidth { 0 }, editorHeight { 0 };

@@ -34,13 +34,16 @@ const std::array<Mode, kModes>& modes();
 // J_m(x) as (1/pi) times the integral over 0 .. pi of cos(m t - x sin t), a 64-point midpoint sum.
 double besselJ (int m, double x);
 
-// The camera of the reference's project(): elevation 38 degrees, centre 787,400, 345 design units
-// per cymbal radius, perspective distance 5 radii.
+// The camera of the reference's project(): elevation 38 degrees, perspective distance 5 radii,
+// and the shape's centre and scale (CymbalShape::cx, cy, scale: 787,400 and 345 design units per
+// radius for the cymbals, 787,430 and 270 for the hi-hat).
 struct Camera
 {
-    static constexpr double elevationDeg = 38.0, cx = 787.0, cy = 400.0, scale = 345.0, distance = 5.0;
+    static constexpr double elevationDeg = 38.0, distance = 5.0;
+    double cx = 787.0, cy = 400.0, scale = 345.0;
     double sinE, cosE;
     Camera();
+    explicit Camera (const CymbalShape& shape);
     // Screen position (design units) of the point X, Y, Z.
     void project (double X, double Y, double Z, double& sx, double& sy) const noexcept;
 };
@@ -121,11 +124,16 @@ public:
 
     const CymbalShape& shape;
     double bell;
+    Camera camera; // the shape's
+    // 1, or -1 for a cymbal bell down (CymbalShape::inverted): its heights and dents mirrored.
+    double zSign = 1.0;
 
     // The profile's height at radius fraction r (clipped to 0 .. 1): PCHIP through the points,
     // and its slope.
     double height (double r) const noexcept;
     double slope (double r) const noexcept;
+    // The smooth surface as drawn, zSign x height (r).
+    double restHeight (double r) const noexcept { return zSign * height (r); }
     // The photo's brightness at r (the reference's lum(): the table smoothed, divided by its 98th
     // percentile over entries 5 .. 79, raised to shape.lumGamma, clipped to 0.3 .. 1.15); 1
     // without a table.
@@ -142,6 +150,8 @@ public:
     int numVertices() const noexcept { return (int) vertexR.size(); }
     std::vector<std::uint32_t> lineIndices;
     int numThinIndices = 0;
+    // The rim's vertices in order around (the hi-hat's top cymbal hides the bottom one inside it).
+    std::vector<std::uint32_t> rimVertices;
     std::vector<float> segmentMetal;
     // How a segment is coloured: from its ends' averaged light at its middle's metal (the
     // reference's Cymbal), or as the average of its two ends' colours (Cymbal2, dented).
@@ -234,6 +244,9 @@ struct Frame
     std::vector<float> height, dzr, dzt, glow;
     std::vector<float> coef; // the dented mesh's flex per radius and m (scratch)
     double tiltX = 0.0, tiltY = 0.0, spinDeg = 0.0;
+    // A vertical offset of the whole cymbal, fractions of R (the hi-hat's top cymbal, raised by
+    // the pedal's opening). Set by the caller; evaluate keeps it.
+    double lift = 0.0;
     double yTop = 0.0, yBottom = 1.0;
     struct Flash
     {
@@ -266,5 +279,37 @@ Rgb segmentColour (const Geometry& g, const Frame& f, int k, double shadeA, doub
 void projectSurface (const SurfaceVertex& v, const Frame& f, const Camera& cam, double& sx, double& sy) noexcept;
 // The colour of a surface vertex at ytl.
 Rgb surfaceColour (const SurfaceVertex& v, double ytl) noexcept;
+
+//==============================================================================
+// The hi-hat (the reference's hihat_draw, UI_SPEC section 11): its top cymbal rises with the
+// pedal's smoothed opening o, by o x 0.7" (kHiHatMaxGap R); the bottom cymbal stays. The clutch and
+// rod sit on the top cymbal's axis, above its bell top zb (its height at the centre, raised with
+// it), and rise with it.
+constexpr double kHiHatMaxGap = 0.7 / 7.0;
+
+// A line of the clutch or rod, its ends in the cymbal's frame (z above zb), its colour and width
+// (design units).
+struct HardwareLine
+{
+    double x0, y0, z0, x1, y1, z1;
+    Rgb colour;
+    float width;
+};
+// A solid part, a vertical cylinder on the axis from z0 to z1 above zb: the cymbal lines behind
+// its silhouette are cleared.
+struct HardwareSolid
+{
+    double z0, z1, r;
+};
+struct HiHatHardware
+{
+    std::vector<HardwareLine> lines;     // the rod, the upper felt, the clutch body, the top nut, the locking screw
+    std::array<HardwareSolid, 4> solids; // the felt, the body, the nut, the rod
+};
+const HiHatHardware& hiHatHardware();
+
+// A solid's silhouette on screen (design units): the convex hull of its end circles (49 points
+// each, the reference's sil_cyl), its points in order around, the solid standing on zb.
+void silhouette (const Camera& cam, const HardwareSolid& s, double zb, std::vector<std::array<float, 2>>& hull);
 
 } // namespace cymbalis::ui::wire

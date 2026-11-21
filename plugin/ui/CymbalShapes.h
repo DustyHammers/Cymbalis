@@ -241,6 +241,18 @@ struct CymbalShape
     bool bellLine = true;            // the bell ring 2 units wide (else 1, like the other rings)
     bool dented = false;             // the hammering pressed into the mesh (Dents)
     Dents dents {};
+
+    // 2026-11-20 (HI-HAT)
+    // The camera's centre and scale, design units per radius (the reference's cx, cy, scale):
+    // 787, 400, 345 for the cymbals, 787, 430, 270 for the hi-hat (hihat_draw).
+    double cx = 787.0, cy = 400.0, scale = 345.0;
+    // Bell down (the hi-hat's bottom cymbal, the reference's _hh_make with invert): its heights
+    // and dents mirrored, below z 0.
+    bool inverted = false;
+    // The hi-hat (hihat_draw): this shape is its top cymbal, which rises with the pedal and
+    // carries the clutch and rod; `lower` is its bottom cymbal, drawn under it and hidden where
+    // the top cymbal is in front of it. nullptr for a single cymbal.
+    const CymbalShape* lower = nullptr;
 };
 
 // NOVA RIDE (2026-10-28): a bell like Raven's (its edge at 2.2"), a longer, shallower bow down to
@@ -411,6 +423,71 @@ inline constexpr CymbalShape kKonstanShape = [] {
                         { 0.70, 0.97, 260, 0.020, 0.032, 0.45, 0.85, 1.0 } } }; // towards the edge
     s.dents.numZones = 2;
     s.dents.linesFollowDents = true;
+    return s;
+}();
+
+// HI-HAT (2026-11-20, approved by Kris from mockups; the reference's hihat_draw): 14" hats, R 7",
+// both on one profile (a bell to 2.6", its top 1.1"), drawn at centre 787,430 and 270 design
+// units per radius. No photo tables. Hammered in dents in the mesh, the lathe lines following them.
+inline constexpr std::array<ProfilePoint, 10> kHiHatProfile { {
+    { 0.0, 1.10 }, { 0.5, 1.07 }, { 1.2, 0.95 }, { 1.9, 0.72 }, { 2.4, 0.52 }, { 2.6, 0.47 }, { 3.0, 0.44 }, { 4.5, 0.30 },
+    { 6.0, 0.12 }, { 7.0, 0.0 },
+} };
+
+inline constexpr CymbalShape kHiHatShapeBase = [] {
+    CymbalShape s {};
+    s.R = 7.0;
+    s.bell = 0.37;
+    for (std::size_t k = 0; k < kHiHatProfile.size(); ++k)
+        s.profile[k] = kHiHatProfile[k];
+    s.numProfile = (int) kHiHatProfile.size();
+    s.hammer = Hammer::none;
+    s.hammerZone = { 0.0, 0.0 };
+    s.bellLine = false;
+    s.dented = true;
+    s.dents.ringStep = 5;
+    s.dents.linesFollowDents = true;
+    s.cx = 787.0;
+    s.cy = 430.0;
+    s.scale = 270.0;
+    return s;
+}();
+
+// The bottom cymbal ('hh_bottom', from Kris's photo Hi_Hat_bottom), bell down: lathed all over
+// with the hammering showing through (gold lathing every 0.03 R through the dents, no zone edge
+// lines), an unlathed band at the rim (0.93-1.0 R); shallow dents.
+inline constexpr CymbalShape kHiHatBottomShape = [] {
+    CymbalShape s = kHiHatShapeBase;
+    s.key = "hh_bottom";
+    s.gold = { { { 0.03, 0.93, 1.0 } } };
+    s.numGold = 1;
+    s.goldStep = 0.03;
+    s.zoneEdges = false;
+    s.dents.depth = 1.2;
+    s.dents.contrast = 6.0;
+    s.dents.zones = { { { 0.10, 0.92, 500, 0.022, 0.034, 0.5, 0.9, 0.8 } } };
+    s.dents.numZones = 1;
+    s.inverted = true;
+    return s;
+}();
+
+// The top cymbal ('hh_top', from Kris's photo Hi_hat_top, rim 457 px): a lathed disc around the
+// hole to 0.15 R, a lathed ring at the bell's edge (0.355-0.385 R), lathed rings at 0.80-0.82 and
+// 0.85-0.93 R, an unlathed dark band to the rim; heavy hammering on the bell and the bow. It
+// rises with the pedal and carries the clutch and rod (CymbalModel's hiHatHardware); the bottom
+// cymbal is drawn under it.
+inline constexpr CymbalShape kHiHatTopShape = [] {
+    CymbalShape s = kHiHatShapeBase;
+    s.key = "hh_top";
+    s.gold = { { { 0.03, 0.15, 1.0 }, { 0.355, 0.385, 1.0 }, { 0.80, 0.82, 1.0 }, { 0.85, 0.93, 1.0 } } };
+    s.numGold = 4;
+    s.goldStep = 0.012;
+    s.dents.depth = 2.6;
+    s.dents.contrast = 9.0;
+    s.dents.zones = { { { 0.16, 0.35, 90, 0.022, 0.030, 0.6, 0.95, 1.0 },     // the bell
+                        { 0.40, 0.79, 420, 0.028, 0.042, 0.55, 0.95, 1.1 } } }; // the bow
+    s.dents.numZones = 2;
+    s.lower = &kHiHatBottomShape;
     return s;
 }();
 

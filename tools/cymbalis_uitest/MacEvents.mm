@@ -341,6 +341,28 @@ juce::String sliderText (juce::Component& target, juce::Point<float> p)
     return "no slider at the point";
 }
 
+juce::String elementText (juce::Component& target, const juce::String& title)
+{
+    auto* peer = target.getPeer();
+    NSWindow* window = peer != nullptr ? [(NSView*) peer->getNativeHandle() window] : nil;
+    if (window == nil)
+        return "no window";
+    NSString* wanted = [NSString stringWithUTF8String: title.toRawUTF8()];
+    NSMutableArray* all = [NSMutableArray array];
+    collectFromViews ([window contentView], all);
+    for (id e in all)
+    {
+        if (! [e respondsToSelector: @selector (accessibilityTitle)])
+            continue;
+        id t = [e accessibilityTitle];
+        if (! [t isKindOfClass: [NSString class]] || ! [(NSString*) t isEqualToString: wanted])
+            continue;
+        id label = [e respondsToSelector: @selector (accessibilityLabel)] ? [e accessibilityLabel] : nil;
+        return [label isKindOfClass: [NSString class]] ? juce::String::fromUTF8 ([(NSString*) label UTF8String]) : juce::String ("(no description)");
+    }
+    return "no element titled " + title;
+}
+
 juce::String wheel (juce::Component& target, juce::Point<float> p)
 {
     NSWindow* window = nil;

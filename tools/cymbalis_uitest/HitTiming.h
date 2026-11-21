@@ -13,8 +13,10 @@
 //
 // Each case runs three times, the cases in turn, and the editor closed once more at the end.
 // Then the three cases run once more with HAMMERED THIN RIDE selected, and once each with SWISH,
-// RAVEN and KONSTAN CRASH 18", the heaviest cymbals to draw (their dented meshes), at normal
-// priority with 256-sample blocks.
+// RAVEN and KONSTAN CRASH 18", the heaviest cymbals to draw (their dented meshes), and HI-HAT (two
+// dented cymbals, its clutch and rod), at normal priority with 256-sample blocks. On HI-HAT the
+// notes are its own (42 and 46) and its pedal CC sweeps from closed to open and back every 2 s, so
+// the hats and the pedal drawing move as well.
 // For each case: processBlock's median and 99th percentile over all its runs, each run's
 // worst block (and the worst against the block's time budget), the audio thread's CPU time
 // per block, the CPU time of the rest of the process, and WindowServer's (macOS); then the

@@ -52,6 +52,7 @@ vec3 bronze (float shade, float ytl, float metal, float factor, float dent, floa
 // units on screen.
 const char* const kProjectGlsl = R"(uniform vec2 uTilt;    // the wobble's tilt, Z -= 2.2 (X T0 + Y T1)
 uniform float uSpin;   // radians
+uniform float uLift;   // the cymbal raised by this (the hi-hat's top cymbal, with the pedal)
 uniform vec3 uCam;     // sin and cos of the elevation, the perspective distance
 uniform vec3 uCentre;  // the cymbal's centre on screen and its scale, design units
 uniform vec2 uOrigin;  // this view's top-left, design units
@@ -61,7 +62,7 @@ vec2 project (float r, float theta, float z)
 {
     float phi = theta + uSpin;
     float X = r * cos (phi), Y = r * sin (phi);
-    float Z = z - 2.2 * (X * uTilt.x + Y * uTilt.y);
+    float Z = z + uLift - 2.2 * (X * uTilt.x + Y * uTilt.y);
     float yv = Y * uCam.x - Z * uCam.y, zv = Y * uCam.y + Z * uCam.x;
     return uCentre.xy + uCentre.z * vec2 (X, yv) * (uCam.z / (uCam.z - zv));
 }
@@ -219,6 +220,45 @@ void main()
 }
 )";
 
+// The hi-hat's clutch and rod: lines whose ends are already on screen (design units), each with
+// its colour and width.
+const char* const kFlatVertex = R"(in vec2 aA;
+in vec2 aB;
+in vec4 aColour; // rgb, width in design units
+uniform vec2 uOrigin;
+uniform float uPx;
+void main()
+{
+    vColour = aColour.rgb;
+    gl_Position = quadCorner ((aA - uOrigin) * uPx, (aB - uOrigin) * uPx, 0.5 * aColour.w * uPx, 0.5 * aColour.w * uPx);
+}
+)";
+
+// A polygon on screen (design units), as a triangle fan: in one colour, or with uUseTexture the
+// background under it (the view's texture, its top row first).
+const char* const kFillVertex = R"(in vec2 aPos;
+uniform vec2 uOrigin;
+uniform float uPx;
+uniform vec2 uViewPx;
+out vec2 vUv;
+void main()
+{
+    vec2 q = (aPos - uOrigin) * uPx;
+    vUv = q / uViewPx;
+    gl_Position = vec4 (q.x / uViewPx.x * 2.0 - 1.0, 1.0 - q.y / uViewPx.y * 2.0, 0.0, 1.0);
+}
+)";
+const char* const kFillFragment = R"(in vec2 vUv;
+uniform vec3 uColour;
+uniform float uUseTexture;
+uniform sampler2D uTexture;
+out vec4 fragColour;
+void main()
+{
+    fragColour = vec4 (uUseTexture > 0.5 ? texture (uTexture, vUv).rgb : uColour, 1.0);
+}
+)";
+
 // A flash: the disc blurred (wire::flashProfile), drawn out to 3 radii.
 const char* const kFlashVertex = R"(in vec2 aPos; // -1 .. 1
 uniform vec2 uCentrePx;
@@ -250,23 +290,236 @@ void main()
 //==============================================================================
 struct CymbalView::Gpu
 {
-    std::unique_ptr<juce::OpenGLShaderProgram> mesh, surface, back, flash;
-    GLuint meshVao = 0, meshVbo = 0, meshIndex = 0, staticTexture = 0, stateTexture = 0;
-    GLuint surfaceVao = 0, surfaceVbo = 0, surfaceIndex = 0;
+    std::unique_ptr<juce::OpenGLShaderProgram> mesh, surface, back, flash, flat, fill;
     GLuint quadVao = 0, quadVbo = 0, flashVao = 0, flashVbo = 0;
     GLuint texture = 0;
-    // The lines' layer: multisampled, then resolved into a texture (layerTexture).
-    GLuint layerFbo = 0, layerSamples = 0, resolveFbo = 0, layerTexture = 0;
-    int layerW = 0, layerH = 0;
-    bool layerOk = false;
+    // The hi-hat's clutch and rod (flat: lines already on screen), and the polygons that hide
+    // what is behind its top cymbal and its clutch and rod (fill).
+    GLuint flatVao = 0, flatVbo = 0, flatIndex = 0, fillVao = 0, fillVbo = 0;
+    int flatSegments = 0;
+    // A layer of lines: multisampled (as the view's own framebuffer), then resolved into a
+    // texture, at the view's size. ok is false if the driver refuses it.
+    struct Layer
+    {
+        GLuint fbo = 0, samples = 0, resolveFbo = 0, texture = 0;
+        int w = 0, h = 0;
+        bool ok = false;
 
-    std::shared_ptr<const wire::Geometry> geometry;
-    int meshSegments = 0, thinMeshSegments = 0, surfaceSegments = 0;
-    int textureRows = 0;
-    wire::Frame frame;
-    std::vector<float> disp, state;
+        // True when it is ready at w x h; `made` tells whether it was (re)made.
+        bool prepare (int width, int height, bool& made)
+        {
+            made = false;
+            if (width == w && height == h)
+                return ok;
+            release();
+            made = true;
+            w = width;
+            h = height;
+            GLint maxSamples = 0;
+            glGetIntegerv (GL_MAX_SAMPLES, &maxSamples);
+            glGenFramebuffers (1, &fbo);
+            glGenRenderbuffers (1, &samples);
+            glBindRenderbuffer (GL_RENDERBUFFER, samples);
+            glRenderbufferStorageMultisample (GL_RENDERBUFFER, juce::jmin (4, (int) maxSamples), GL_RGBA8, w, h);
+            glBindFramebuffer (GL_FRAMEBUFFER, fbo);
+            glFramebufferRenderbuffer (GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, samples);
+            ok = glCheckFramebufferStatus (GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+            glGenTextures (1, &texture);
+            glBindTexture (GL_TEXTURE_2D, texture);
+            glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glBindTexture (GL_TEXTURE_2D, 0);
+            glGenFramebuffers (1, &resolveFbo);
+            glBindFramebuffer (GL_FRAMEBUFFER, resolveFbo);
+            glFramebufferTexture2D (GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+            ok = ok && glCheckFramebufferStatus (GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+            return ok;
+        }
+
+        // The multisampled lines into the texture.
+        void resolve() const
+        {
+            glBindFramebuffer (GL_READ_FRAMEBUFFER, fbo);
+            glBindFramebuffer (GL_DRAW_FRAMEBUFFER, resolveFbo);
+            glBlitFramebuffer (0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        }
+
+        void release()
+        {
+            for (auto* f : { &fbo, &resolveFbo })
+                if (*f != 0)
+                    glDeleteFramebuffers (1, f);
+            if (samples != 0)
+                glDeleteRenderbuffers (1, &samples);
+            if (texture != 0)
+                glDeleteTextures (1, &texture);
+            fbo = samples = resolveFbo = texture = 0;
+            w = h = 0;
+            ok = false;
+        }
+    };
+    Layer layer;
+    // The hi-hat's bottom cymbal, which never moves: drawn once (and on a resize) into a layer of
+    // its own, which each frame starts from.
+    Layer lowerLayer;
+    bool lowerDrawn = false;
+
+    // One cymbal's buffers: the preset's cymbal (or the hi-hat's top cymbal), and the hi-hat's
+    // bottom cymbal.
+    struct Part
+    {
+        GLuint meshVao = 0, meshVbo = 0, meshIndex = 0, staticTexture = 0, stateTexture = 0;
+        GLuint surfaceVao = 0, surfaceVbo = 0, surfaceIndex = 0;
+        std::shared_ptr<const wire::Geometry> geometry;
+        int meshSegments = 0, thinMeshSegments = 0, surfaceSegments = 0;
+        int textureRows = 0;
+        wire::Frame frame;
+        std::vector<float> disp, state;
+
+        void create()
+        {
+            glGenVertexArrays (1, &meshVao);
+            glGenVertexArrays (1, &surfaceVao);
+            for (auto* b : { &meshVbo, &meshIndex, &surfaceVbo, &surfaceIndex })
+                glGenBuffers (1, b);
+            glGenTextures (1, &staticTexture);
+            glGenTextures (1, &stateTexture);
+        }
+
+        void release()
+        {
+            for (auto* vao : { &meshVao, &surfaceVao })
+                if (*vao != 0)
+                    glDeleteVertexArrays (1, vao);
+            for (auto* b : { &meshVbo, &meshIndex, &surfaceVbo, &surfaceIndex })
+                if (*b != 0)
+                    glDeleteBuffers (1, b);
+            for (auto* t : { &staticTexture, &stateTexture })
+                if (*t != 0)
+                    glDeleteTextures (1, t);
+            meshVao = surfaceVao = meshVbo = meshIndex = surfaceVbo = surfaceIndex = staticTexture = stateTexture = 0;
+        }
+
+        void upload (std::shared_ptr<const wire::Geometry> g)
+        {
+            geometry = std::move (g);
+            if (geometry == nullptr)
+                return;
+            const auto& geo = *geometry;
+            frame.resize (geo);
+            disp.assign ((size_t) geo.numVertices(), 0.0f);
+            textureRows = (geo.numVertices() + kTexWidth - 1) / kTexWidth;
+            state.assign ((size_t) (textureRows * kTexWidth) * 4, 0.0f);
+            constexpr float corners[4][2] = { { 0.0f, -1.0f }, { 0.0f, 1.0f }, { 1.0f, -1.0f }, { 1.0f, 1.0f } };
+
+            // The mesh: per quad corner, the corner, its segment's two mesh vertices, and their metal.
+            meshSegments = (int) geo.lineIndices.size() / 2;
+            thinMeshSegments = geo.numThinIndices / 2;
+            std::vector<float> quads;
+            quads.reserve ((size_t) meshSegments * 32);
+            for (int k = 0; k < meshSegments; ++k)
+            {
+                const float* metal = geo.segmentMetal.data() + 4 * k;
+                for (const auto& c : corners)
+                    for (float v : { c[0], c[1], (float) geo.lineIndices[(size_t) (2 * k)], (float) geo.lineIndices[(size_t) (2 * k + 1)],
+                                     metal[0], metal[1], metal[2], metal[3] })
+                        quads.push_back (v);
+            }
+            glBindVertexArray (meshVao);
+            glBindBuffer (GL_ARRAY_BUFFER, meshVbo);
+            glBufferData (GL_ARRAY_BUFFER, (GLsizeiptr) (quads.size() * sizeof (float)), quads.data(), GL_STATIC_DRAW);
+            const auto meshStride = (GLsizei) (8 * sizeof (float));
+            glEnableVertexAttribArray (0);
+            glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, meshStride, nullptr);
+            glEnableVertexAttribArray (1);
+            glVertexAttribPointer (1, 2, GL_FLOAT, GL_FALSE, meshStride, (const void*) (2 * sizeof (float)));
+            glEnableVertexAttribArray (2);
+            glVertexAttribPointer (2, 4, GL_FLOAT, GL_FALSE, meshStride, (const void*) (4 * sizeof (float)));
+            uploadQuadIndices (meshIndex, meshSegments);
+
+            // The mesh's vertices, one texel each: static (radius, angle, dent light factor), and
+            // their state per frame.
+            std::vector<float> fixed ((size_t) (textureRows * kTexWidth) * 4, 0.0f);
+            for (size_t x = 0; x < (size_t) geo.numVertices(); ++x)
+            {
+                fixed[4 * x] = (float) geo.vertexR[x];
+                fixed[4 * x + 1] = (float) geo.vertexTheta[x];
+                fixed[4 * x + 2] = geo.vertexDent[x];
+            }
+            for (auto [vertexTexture, data] : { std::pair<GLuint, const float*> { staticTexture, fixed.data() }, { stateTexture, nullptr } })
+            {
+                glBindTexture (GL_TEXTURE_2D, vertexTexture);
+                glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA32F, kTexWidth, textureRows, 0, GL_RGBA, GL_FLOAT, data);
+                glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            }
+            glBindTexture (GL_TEXTURE_2D, 0);
+
+            // The surface lines: per quad corner, the corner, both ends, the segment's kind, width and
+            // dent light factor (its ends' average).
+            surfaceSegments = (int) geo.surface.size() / 2;
+            std::vector<float> lines;
+            lines.reserve ((size_t) surfaceSegments * 56);
+            for (int k = 0; k < surfaceSegments; ++k)
+            {
+                const auto& a = geo.surface[(size_t) (2 * k)];
+                const auto& b = geo.surface[(size_t) (2 * k + 1)];
+                for (const auto& c : corners)
+                    for (float v : { c[0], c[1], a.r, a.theta, a.z, b.r, b.theta, b.z, a.kind, a.param, a.metal, a.factor, a.width,
+                                     0.5f * (a.dent + b.dent) })
+                        lines.push_back (v);
+            }
+            glBindVertexArray (surfaceVao);
+            glBindBuffer (GL_ARRAY_BUFFER, surfaceVbo);
+            glBufferData (GL_ARRAY_BUFFER, (GLsizeiptr) (lines.size() * sizeof (float)), lines.data(), GL_STATIC_DRAW);
+            const auto stride = (GLsizei) (14 * sizeof (float));
+            glEnableVertexAttribArray (0);
+            glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, stride, nullptr);
+            for (GLuint a = 1; a <= 3; ++a)
+            {
+                glEnableVertexAttribArray (a);
+                glVertexAttribPointer (a, a < 3 ? 3 : 4, GL_FLOAT, GL_FALSE, stride, (const void*) ((size_t) (2 + 3 * (a - 1)) * sizeof (float)));
+            }
+            glEnableVertexAttribArray (4);
+            glVertexAttribPointer (4, 2, GL_FLOAT, GL_FALSE, stride, (const void*) (12 * sizeof (float)));
+            uploadQuadIndices (surfaceIndex, surfaceSegments);
+            glBindVertexArray (0);
+        }
+
+        // The cymbal at `nowMs` with the hits, raised by `lift`, into the state texture.
+        void evaluate (const wire::Hit* hits, int numHits, double nowMs, double lift)
+        {
+            const auto& geo = *geometry;
+            frame.lift = lift;
+            wire::evaluate (geo, hits, numHits, nowMs, frame, disp);
+            for (size_t x = 0; x < (size_t) geo.numVertices(); ++x)
+            {
+                state[4 * x] = frame.height[x];
+                state[4 * x + 1] = frame.dzr[x];
+                state[4 * x + 2] = frame.dzt[x];
+                state[4 * x + 3] = frame.glow[x];
+            }
+            glBindTexture (GL_TEXTURE_2D, stateTexture);
+            glTexSubImage2D (GL_TEXTURE_2D, 0, 0, 0, kTexWidth, textureRows, GL_RGBA, GL_FLOAT, state.data());
+            glBindTexture (GL_TEXTURE_2D, 0);
+        }
+    };
+    std::array<Part, 2> parts; // the cymbal (the hi-hat's top), the hi-hat's bottom cymbal
+    bool lowerEvaluated = false; // the bottom cymbal never moves: its state is set once
+    double shownLift = -1.0;
+
     std::array<wire::Hit, wire::kMaxHits> hits {};
     int numHits = 0;
+    float opening = 0.0f;
+    // The hi-hat's polygons this frame (fill): their points, and each fan's first point and count.
+    std::vector<float> fans;
+    std::vector<std::array<int, 2>> fanRanges;
+    std::vector<std::array<float, 2>> hull;
 
     static GLint at (const juce::OpenGLShaderProgram& p, const char* name)
     {
@@ -307,163 +560,63 @@ struct CymbalView::Gpu
         glBufferData (GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr) (ix.size() * sizeof (std::uint32_t)), ix.data(), GL_STATIC_DRAW);
     }
 
-    void upload (std::shared_ptr<const wire::Geometry> g)
+    // The clutch and rod on screen, standing on the top cymbal's bell top zb (raised with it),
+    // into the flat buffer: per quad corner, the corner, both ends, the colour and width.
+    void uploadHardware (const wire::Camera& cam, double zb)
     {
-        geometry = std::move (g);
-        if (geometry == nullptr)
-            return;
-        const auto& geo = *geometry;
-        frame.resize (geo);
-        disp.assign ((size_t) geo.numVertices(), 0.0f);
-        textureRows = (geo.numVertices() + kTexWidth - 1) / kTexWidth;
-        state.assign ((size_t) (textureRows * kTexWidth) * 4, 0.0f);
+        const auto& hw = wire::hiHatHardware();
         constexpr float corners[4][2] = { { 0.0f, -1.0f }, { 0.0f, 1.0f }, { 1.0f, -1.0f }, { 1.0f, 1.0f } };
-
-        // The mesh: per quad corner, the corner, its segment's two mesh vertices, and their metal.
-        meshSegments = (int) geo.lineIndices.size() / 2;
-        thinMeshSegments = geo.numThinIndices / 2;
         std::vector<float> quads;
-        quads.reserve ((size_t) meshSegments * 32);
-        for (int k = 0; k < meshSegments; ++k)
+        quads.reserve (hw.lines.size() * 40);
+        for (const auto& l : hw.lines)
         {
-            const float* metal = geo.segmentMetal.data() + 4 * k;
+            double ax = 0.0, ay = 0.0, bx = 0.0, by = 0.0;
+            cam.project (l.x0, l.y0, zb + l.z0, ax, ay);
+            cam.project (l.x1, l.y1, zb + l.z1, bx, by);
             for (const auto& c : corners)
-                for (float v : { c[0], c[1], (float) geo.lineIndices[(size_t) (2 * k)], (float) geo.lineIndices[(size_t) (2 * k + 1)],
-                                 metal[0], metal[1], metal[2], metal[3] })
+                for (float v : { c[0], c[1], (float) ax, (float) ay, (float) bx, (float) by, l.colour.r, l.colour.g, l.colour.b, l.width })
                     quads.push_back (v);
         }
-        glBindVertexArray (meshVao);
-        glBindBuffer (GL_ARRAY_BUFFER, meshVbo);
-        glBufferData (GL_ARRAY_BUFFER, (GLsizeiptr) (quads.size() * sizeof (float)), quads.data(), GL_STATIC_DRAW);
-        const auto meshStride = (GLsizei) (8 * sizeof (float));
-        glEnableVertexAttribArray (0);
-        glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, meshStride, nullptr);
-        glEnableVertexAttribArray (1);
-        glVertexAttribPointer (1, 2, GL_FLOAT, GL_FALSE, meshStride, (const void*) (2 * sizeof (float)));
-        glEnableVertexAttribArray (2);
-        glVertexAttribPointer (2, 4, GL_FLOAT, GL_FALSE, meshStride, (const void*) (4 * sizeof (float)));
-        uploadQuadIndices (meshIndex, meshSegments);
-
-        // The mesh's vertices, one texel each: static (radius, angle, dent light factor), and
-        // their state per frame.
-        std::vector<float> fixed ((size_t) (textureRows * kTexWidth) * 4, 0.0f);
-        for (size_t x = 0; x < (size_t) geo.numVertices(); ++x)
-        {
-            fixed[4 * x] = (float) geo.vertexR[x];
-            fixed[4 * x + 1] = (float) geo.vertexTheta[x];
-            fixed[4 * x + 2] = geo.vertexDent[x];
-        }
-        for (auto [vertexTexture, data] : { std::pair<GLuint, const float*> { staticTexture, fixed.data() }, { stateTexture, nullptr } })
-        {
-            glBindTexture (GL_TEXTURE_2D, vertexTexture);
-            glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA32F, kTexWidth, textureRows, 0, GL_RGBA, GL_FLOAT, data);
-            glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-            glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        }
-        glBindTexture (GL_TEXTURE_2D, 0);
-        mesh->use();
-        glUniform1i (at (*mesh, "uStatic"), 1);
-        glUniform1i (at (*mesh, "uState"), 2);
-        glUniform1f (at (*mesh, "uPerVertex"), geo.perVertexColour ? 1.0f : 0.0f);
-
-        // The surface lines: per quad corner, the corner, both ends, the segment's kind, width and
-        // dent light factor (its ends' average).
-        surfaceSegments = (int) geo.surface.size() / 2;
-        std::vector<float> lines;
-        lines.reserve ((size_t) surfaceSegments * 56);
-        for (int k = 0; k < surfaceSegments; ++k)
-        {
-            const auto& a = geo.surface[(size_t) (2 * k)];
-            const auto& b = geo.surface[(size_t) (2 * k + 1)];
-            for (const auto& c : corners)
-                for (float v : { c[0], c[1], a.r, a.theta, a.z, b.r, b.theta, b.z, a.kind, a.param, a.metal, a.factor, a.width,
-                                 0.5f * (a.dent + b.dent) })
-                    lines.push_back (v);
-        }
-        glBindVertexArray (surfaceVao);
-        glBindBuffer (GL_ARRAY_BUFFER, surfaceVbo);
-        glBufferData (GL_ARRAY_BUFFER, (GLsizeiptr) (lines.size() * sizeof (float)), lines.data(), GL_STATIC_DRAW);
-        const auto stride = (GLsizei) (14 * sizeof (float));
+        glBindVertexArray (flatVao);
+        glBindBuffer (GL_ARRAY_BUFFER, flatVbo);
+        glBufferData (GL_ARRAY_BUFFER, (GLsizeiptr) (quads.size() * sizeof (float)), quads.data(), GL_DYNAMIC_DRAW);
+        const auto stride = (GLsizei) (10 * sizeof (float));
         glEnableVertexAttribArray (0);
         glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, stride, nullptr);
-        for (GLuint a = 1; a <= 3; ++a)
+        glEnableVertexAttribArray (1);
+        glVertexAttribPointer (1, 2, GL_FLOAT, GL_FALSE, stride, (const void*) (2 * sizeof (float)));
+        glEnableVertexAttribArray (2);
+        glVertexAttribPointer (2, 2, GL_FLOAT, GL_FALSE, stride, (const void*) (4 * sizeof (float)));
+        glEnableVertexAttribArray (3);
+        glVertexAttribPointer (3, 4, GL_FLOAT, GL_FALSE, stride, (const void*) (6 * sizeof (float)));
+        if (flatSegments != (int) hw.lines.size())
         {
-            glEnableVertexAttribArray (a);
-            glVertexAttribPointer (a, a < 3 ? 3 : 4, GL_FLOAT, GL_FALSE, stride, (const void*) ((size_t) (2 + 3 * (a - 1)) * sizeof (float)));
+            flatSegments = (int) hw.lines.size();
+            uploadQuadIndices (flatIndex, flatSegments);
         }
-        glEnableVertexAttribArray (4);
-        glVertexAttribPointer (4, 2, GL_FLOAT, GL_FALSE, stride, (const void*) (12 * sizeof (float)));
-        uploadQuadIndices (surfaceIndex, surfaceSegments);
         glBindVertexArray (0);
-        glUseProgram (0);
-    }
-
-    // The lines' layer at the view's size, multisampled (as the view's own framebuffer) and
-    // resolved into a texture. False if the driver refuses it: the lines are then drawn straight
-    // over the background.
-    bool prepareLayer (int w, int h)
-    {
-        if (w == layerW && h == layerH)
-            return layerOk;
-        releaseLayer();
-        layerW = w;
-        layerH = h;
-        GLint maxSamples = 0;
-        glGetIntegerv (GL_MAX_SAMPLES, &maxSamples);
-        glGenFramebuffers (1, &layerFbo);
-        glGenRenderbuffers (1, &layerSamples);
-        glBindRenderbuffer (GL_RENDERBUFFER, layerSamples);
-        glRenderbufferStorageMultisample (GL_RENDERBUFFER, juce::jmin (4, (int) maxSamples), GL_RGBA8, w, h);
-        glBindFramebuffer (GL_FRAMEBUFFER, layerFbo);
-        glFramebufferRenderbuffer (GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, layerSamples);
-        layerOk = glCheckFramebufferStatus (GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-        glGenTextures (1, &layerTexture);
-        glBindTexture (GL_TEXTURE_2D, layerTexture);
-        glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glBindTexture (GL_TEXTURE_2D, 0);
-        glGenFramebuffers (1, &resolveFbo);
-        glBindFramebuffer (GL_FRAMEBUFFER, resolveFbo);
-        glFramebufferTexture2D (GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, layerTexture, 0);
-        layerOk = layerOk && glCheckFramebufferStatus (GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-        return layerOk;
-    }
-
-    void releaseLayer()
-    {
-        for (auto* f : { &layerFbo, &resolveFbo })
-            if (*f != 0)
-                glDeleteFramebuffers (1, f);
-        if (layerSamples != 0)
-            glDeleteRenderbuffers (1, &layerSamples);
-        if (layerTexture != 0)
-            glDeleteTextures (1, &layerTexture);
-        layerFbo = layerSamples = resolveFbo = layerTexture = 0;
-        layerW = layerH = 0;
-        layerOk = false;
     }
 
     void release()
     {
-        releaseLayer();
-        for (auto* vao : { &meshVao, &surfaceVao, &quadVao, &flashVao })
+        layer.release();
+        lowerLayer.release();
+        for (auto& part : parts)
+            part.release();
+        for (auto* vao : { &quadVao, &flashVao, &flatVao, &fillVao })
             if (*vao != 0)
                 glDeleteVertexArrays (1, vao);
-        for (auto* b : { &meshVbo, &meshIndex, &surfaceVbo, &surfaceIndex, &quadVbo, &flashVbo })
+        for (auto* b : { &quadVbo, &flashVbo, &flatVbo, &flatIndex, &fillVbo })
             if (*b != 0)
                 glDeleteBuffers (1, b);
-        for (auto* t : { &texture, &staticTexture, &stateTexture })
-            if (*t != 0)
-                glDeleteTextures (1, t);
+        if (texture != 0)
+            glDeleteTextures (1, &texture);
         mesh.reset();
         surface.reset();
         back.reset();
         flash.reset();
+        flat.reset();
+        fill.reset();
     }
 };
 
@@ -559,14 +712,20 @@ void CymbalView::setPreset (int preset, const juce::String& loadError)
     if (preset != shownPreset)
     {
         shownPreset = preset;
-        // A preset without a wireframe (the hi-hat, for now): nothing is drawn.
+        // A preset without a wireframe: nothing is drawn. The hi-hat: its top cymbal (the one
+        // the hits strike) and its bottom cymbal.
         const auto* shape = kPresets[(size_t) preset].shape;
         shownGeometry = shape != nullptr ? std::make_shared<const wire::Geometry> (*shape) : nullptr;
+        shownLower = shape != nullptr && shape->lower != nullptr ? std::make_shared<const wire::Geometry> (*shape->lower) : nullptr;
+        // Its opening, for screen readers (and tools/cymbalis_uitest).
+        setTitle (shownLower != nullptr ? "HI-HAT" : "");
+        setDescription (shownLower != nullptr ? "open " + juce::String (shownOpening, 3) : juce::String());
     }
     error = loadError;
     {
         const juce::SpinLock::ScopedLockType sl (lock);
         pendingGeometry = shownGeometry;
+        pendingLower = shownLower;
         numPendingHits = 0;
     }
     {
@@ -581,6 +740,27 @@ void CymbalView::setPreset (int preset, const juce::String& loadError)
     repaint();
     if (glActive.load())
         context.triggerRepaint();
+}
+
+void CymbalView::setOpening (float o)
+{
+    o = juce::jlimit (0.0f, 1.0f, o);
+    if (juce::exactlyEqual (o, shownOpening))
+        return;
+    shownOpening = o;
+    bool hitsMoving = false;
+    {
+        const juce::SpinLock::ScopedLockType sl (lock);
+        pendingOpening = o;
+        hitsMoving = numPendingHits > 0;
+    }
+    if (shownLower == nullptr)
+        return; // only the hi-hat opens
+    setDescription ("open " + juce::String (o, 3));
+    if (! glActive.load())
+        repaint();
+    else if (! hitsMoving)
+        context.triggerRepaint(); // while hits move, their next frame (30 Hz) draws it
 }
 
 void CymbalView::setHits (const wire::Hit* hits, int count)
@@ -632,21 +812,21 @@ void CymbalView::newOpenGLContextCreated()
     g->surface = Gpu::build (context, common + kSurfaceVertex, kLineFragment, { "aCorner", "aA", "aB", "aKind", "aWidth" });
     g->back = Gpu::build (context, kBackgroundVertex, kBackgroundFragment, { "aPos" });
     g->flash = Gpu::build (context, kFlashVertex, kFlashFragment, { "aPos" });
-    if (g->mesh == nullptr || g->surface == nullptr || g->back == nullptr || g->flash == nullptr)
+    g->flat = Gpu::build (context, juce::String (kQuadGlsl) + kFlatVertex, kLineFragment, { "aCorner", "aA", "aB", "aColour" });
+    g->fill = Gpu::build (context, kFillVertex, kFillFragment, { "aPos" });
+    if (g->mesh == nullptr || g->surface == nullptr || g->back == nullptr || g->flash == nullptr || g->flat == nullptr || g->fill == nullptr)
     {
         g->release();
         glFailed = true;
         return;
     }
 
-    glGenVertexArrays (1, &g->meshVao);
-    glGenVertexArrays (1, &g->surfaceVao);
-    glGenVertexArrays (1, &g->quadVao);
-    glGenVertexArrays (1, &g->flashVao);
-    for (auto* b : { &g->meshVbo, &g->meshIndex, &g->surfaceVbo, &g->surfaceIndex, &g->quadVbo, &g->flashVbo })
+    for (auto& part : g->parts)
+        part.create();
+    for (auto* vao : { &g->quadVao, &g->flashVao, &g->flatVao, &g->fillVao })
+        glGenVertexArrays (1, vao);
+    for (auto* b : { &g->quadVbo, &g->flashVbo, &g->flatVbo, &g->flatIndex, &g->fillVbo })
         glGenBuffers (1, b);
-    glGenTextures (1, &g->staticTexture);
-    glGenTextures (1, &g->stateTexture);
 
     const float unit[] = { 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f };
     glBindVertexArray (g->quadVao);
@@ -709,26 +889,37 @@ void CymbalView::renderOpenGL()
         return;
     const double t0 = juce::Time::getMillisecondCounterHiRes();
     auto& g = *gpu;
-    std::shared_ptr<const wire::Geometry> newGeometry;
+    auto& top = g.parts[0];
+    auto& bottom = g.parts[1];
+    std::shared_ptr<const wire::Geometry> newGeometry, newLower;
     bool geometryChanged = false;
     {
         const juce::SpinLock::ScopedLockType sl (lock);
-        if (pendingGeometry != g.geometry)
+        if (pendingGeometry != top.geometry || pendingLower != bottom.geometry)
         {
             newGeometry = pendingGeometry;
+            newLower = pendingLower;
             geometryChanged = true; // also to none (a preset without a wireframe)
         }
         g.numHits = numPendingHits;
         std::copy (pendingHits.begin(), pendingHits.begin() + numPendingHits, g.hits.begin());
+        g.opening = pendingOpening;
     }
     if (geometryChanged)
-        g.upload (std::move (newGeometry));
+    {
+        top.upload (std::move (newGeometry));
+        bottom.upload (std::move (newLower));
+        g.lowerEvaluated = false;
+        g.lowerDrawn = false;
+        g.shownLift = -1.0;
+    }
 
     GLint viewport[4] = {}, target = 0;
     glGetIntegerv (GL_VIEWPORT, viewport);
     glGetIntegerv (GL_FRAMEBUFFER_BINDING, &target); // the view's framebuffer
     const float viewW = (float) viewport[2], viewH = (float) viewport[3];
     const float px = (float) context.getRenderingScale(); // physical pixels per design unit
+    const auto origin = area().getPosition().toFloat();
 
     glDisable (GL_DEPTH_TEST);
     glDisable (GL_CULL_FACE);
@@ -747,34 +938,84 @@ void CymbalView::renderOpenGL()
         glDrawArrays (GL_TRIANGLE_STRIP, 0, 4);
     };
 
-    if (g.geometry == nullptr)
+    if (top.geometry == nullptr)
         drawTexture (g.texture, false);
     else
     {
-        const auto& geo = *g.geometry;
-        wire::evaluate (geo, g.hits.data(), g.numHits, juce::Time::getMillisecondCounterHiRes(), g.frame, g.disp);
-        const auto& f = g.frame;
-        for (size_t x = 0; x < (size_t) geo.numVertices(); ++x)
+        const auto& geo = *top.geometry;
+        const bool hiHat = bottom.geometry != nullptr;
+        // The hi-hat's top cymbal, its clutch and rod rise with the pedal's opening; the bottom
+        // cymbal stays, and never moves: its state is set once.
+        const double lift = hiHat ? (double) g.opening * wire::kHiHatMaxGap : 0.0;
+        top.evaluate (g.hits.data(), g.numHits, juce::Time::getMillisecondCounterHiRes(), lift);
+        if (hiHat && ! g.lowerEvaluated)
         {
-            g.state[4 * x] = f.height[x];
-            g.state[4 * x + 1] = f.dzr[x];
-            g.state[4 * x + 2] = f.dzt[x];
-            g.state[4 * x + 3] = f.glow[x];
+            bottom.evaluate (nullptr, 0, 0.0, 0.0);
+            g.lowerEvaluated = true;
         }
-        glActiveTexture (GL_TEXTURE1);
-        glBindTexture (GL_TEXTURE_2D, g.staticTexture);
-        glActiveTexture (GL_TEXTURE2);
-        glBindTexture (GL_TEXTURE_2D, g.stateTexture);
-        glTexSubImage2D (GL_TEXTURE_2D, 0, 0, 0, kTexWidth, g.textureRows, GL_RGBA, GL_FLOAT, g.state.data());
-        glActiveTexture (GL_TEXTURE0);
 
-        const wire::Camera cam;
-        const auto common = [&] (const juce::OpenGLShaderProgram& p) {
+        // The hi-hat's polygons, as triangle fans: the top cymbal's outline on screen (its rim, as
+        // it moves), which hides the bottom cymbal; and the clutch and rod's silhouettes, which
+        // hide the cymbal lines behind them. The clutch and rod's lines, when the opening changed.
+        g.fans.clear();
+        g.fanRanges.clear();
+        if (hiHat)
+        {
+            const auto fan = [&g] (const auto& points, auto pointAt) {
+                const int first = (int) g.fans.size() / 2;
+                double cx = 0.0, cy = 0.0;
+                for (size_t k = 0; k < points.size(); ++k)
+                {
+                    const auto q = pointAt (k);
+                    cx += q[0];
+                    cy += q[1];
+                }
+                const double n = (double) juce::jmax ((size_t) 1, points.size());
+                g.fans.push_back ((float) (cx / n));
+                g.fans.push_back ((float) (cy / n));
+                for (size_t k = 0; k <= points.size(); ++k)
+                {
+                    const auto q = pointAt (k % points.size());
+                    g.fans.push_back ((float) q[0]);
+                    g.fans.push_back ((float) q[1]);
+                }
+                g.fanRanges.push_back ({ first, (int) g.fans.size() / 2 - first });
+            };
+            fan (geo.rimVertices, [&] (size_t k) {
+                std::array<double, 2> q {};
+                wire::projectVertex (geo, top.frame, geo.camera, (int) geo.rimVertices[k], q[0], q[1]);
+                return q;
+            });
+            const double zb = geo.restHeight (0.0) + lift; // the top cymbal's bell top
+            for (const auto& solid : wire::hiHatHardware().solids)
+            {
+                wire::silhouette (geo.camera, solid, zb, g.hull);
+                fan (g.hull, [&g] (size_t k) { return std::array<double, 2> { g.hull[k][0], g.hull[k][1] }; });
+            }
+            glBindVertexArray (g.fillVao);
+            glBindBuffer (GL_ARRAY_BUFFER, g.fillVbo);
+            glBufferData (GL_ARRAY_BUFFER, (GLsizeiptr) (g.fans.size() * sizeof (float)), g.fans.data(), GL_STREAM_DRAW);
+            glEnableVertexAttribArray (0);
+            glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+            glBindVertexArray (0);
+            if (! juce::exactlyEqual (lift, g.shownLift))
+            {
+                g.uploadHardware (geo.camera, zb);
+                g.shownLift = lift;
+            }
+        }
+
+        // The uniforms a cymbal's lines share: its frame (tilt, spin, lift, top and bottom on
+        // screen) and its camera.
+        const auto common = [&] (const juce::OpenGLShaderProgram& p, const Gpu::Part& part) {
+            const auto& f = part.frame;
+            const auto& cam = part.geometry->camera;
             glUniform2f (Gpu::at (p, "uTilt"), (float) f.tiltX, (float) f.tiltY);
             glUniform1f (Gpu::at (p, "uSpin"), (float) (f.spinDeg * kPi / 180.0));
+            glUniform1f (Gpu::at (p, "uLift"), (float) f.lift);
             glUniform3f (Gpu::at (p, "uCam"), (float) cam.sinE, (float) cam.cosE, (float) wire::Camera::distance);
-            glUniform3f (Gpu::at (p, "uCentre"), (float) wire::Camera::cx, (float) wire::Camera::cy, (float) wire::Camera::scale);
-            glUniform2f (Gpu::at (p, "uOrigin"), (float) area().getX(), (float) area().getY());
+            glUniform3f (Gpu::at (p, "uCentre"), (float) cam.cx, (float) cam.cy, (float) cam.scale);
+            glUniform2f (Gpu::at (p, "uOrigin"), origin.x, origin.y);
             glUniform1f (Gpu::at (p, "uPx"), px);
             glUniform2f (Gpu::at (p, "uY"), (float) f.yTop, (float) f.yBottom);
             glUniform2f (Gpu::at (p, "uViewPx"), viewW, viewH);
@@ -783,11 +1024,19 @@ void CymbalView::renderOpenGL()
         const auto segments = [] (int first, int count) {
             glDrawElements (GL_TRIANGLES, 6 * count, GL_UNSIGNED_INT, (const void*) ((size_t) first * 6 * sizeof (std::uint32_t)));
         };
-        // The mesh, 1 and 2 units wide; with a glow gain, its glow instead.
-        const auto drawMesh = [&] (float glowGain) {
+        // A cymbal's mesh, 1 and 2 units wide; with a glow gain, its glow instead.
+        const auto drawMesh = [&] (const Gpu::Part& part, float glowGain) {
             g.mesh->use();
-            common (*g.mesh);
-            glBindVertexArray (g.meshVao);
+            common (*g.mesh, part);
+            glUniform1i (Gpu::at (*g.mesh, "uStatic"), 1);
+            glUniform1i (Gpu::at (*g.mesh, "uState"), 2);
+            glUniform1f (Gpu::at (*g.mesh, "uPerVertex"), part.geometry->perVertexColour ? 1.0f : 0.0f);
+            glActiveTexture (GL_TEXTURE1);
+            glBindTexture (GL_TEXTURE_2D, part.staticTexture);
+            glActiveTexture (GL_TEXTURE2);
+            glBindTexture (GL_TEXTURE_2D, part.stateTexture);
+            glActiveTexture (GL_TEXTURE0);
+            glBindVertexArray (part.meshVao);
             for (const bool wide : { false, true })
             {
                 const float width = wide ? 2.0f : 1.0f, gain = glowGain * width;
@@ -795,28 +1044,29 @@ void CymbalView::renderOpenGL()
                 glUniform1f (Gpu::at (*g.mesh, "uCap"), gain > 0.0f ? 0.0f : 0.5f * width * px);
                 glUniform1f (Gpu::at (*g.mesh, "uGlowGain"), gain);
                 if (wide)
-                    segments (g.thinMeshSegments, g.meshSegments - g.thinMeshSegments);
+                    segments (part.thinMeshSegments, part.meshSegments - part.thinMeshSegments);
                 else
-                    segments (0, g.thinMeshSegments);
+                    segments (0, part.thinMeshSegments);
             }
         };
-        // The surface lines in their order, each over those before it.
-        const auto drawSurface = [&] {
+        // A cymbal's surface lines in their order, each over those before it.
+        const auto drawSurface = [&] (const Gpu::Part& part) {
             g.surface->use();
-            common (*g.surface);
+            common (*g.surface, part);
             glUniform1f (Gpu::at (*g.surface, "uGlowGain"), 0.0f);
-            glBindVertexArray (g.surfaceVao);
-            segments (0, g.surfaceSegments);
+            glBindVertexArray (part.surfaceVao);
+            segments (0, part.surfaceSegments);
         };
 
         // The lines' layer, as the reference draws it: the surface lines over one another in their
         // order, lightened (max) by the mesh; on the dented mesh, the surface lines over the mesh.
         // Then the layer lightens the background. (Without a layer, everything lightens the
         // background directly.)
-        const bool layered = g.prepareLayer (viewport[2], viewport[3]);
+        bool remade = false;
+        const bool layered = g.layer.prepare (viewport[2], viewport[3], remade);
         if (layered)
         {
-            glBindFramebuffer (GL_FRAMEBUFFER, g.layerFbo);
+            glBindFramebuffer (GL_FRAMEBUFFER, g.layer.fbo);
             glViewport (0, 0, viewport[2], viewport[3]);
             glClear (GL_COLOR_BUFFER_BIT);
         }
@@ -830,40 +1080,121 @@ void CymbalView::renderOpenGL()
             else
                 glEnable (GL_BLEND);
         };
-        if (geo.perVertexColour)
+        if (! hiHat)
         {
-            glEnable (GL_BLEND);
-            drawMesh (0.0f);
-            overwrite();
-            drawSurface();
+            if (geo.perVertexColour)
+            {
+                glEnable (GL_BLEND);
+                drawMesh (top, 0.0f);
+                overwrite();
+                drawSurface (top);
+            }
+            else
+            {
+                overwrite();
+                drawSurface (top);
+                glEnable (GL_BLEND);
+                drawMesh (top, 0.0f);
+            }
         }
         else
         {
-            overwrite();
-            drawSurface();
+            // The hi-hat, as hihat_draw: the bottom cymbal; hidden where the top cymbal is in
+            // front of it; the top cymbal over it; the clutch and rod's silhouettes clearing the
+            // lines behind them (to 0.08); then the clutch and rod. Each cymbal's glow goes with
+            // it (the reference blooms each cymbal as it draws it), so it is hidden with it.
+            // Without a layer, what is hidden shows the background instead.
+            const auto cymbal = [&] (const Gpu::Part& part) {
+                glEnable (GL_BLEND);
+                glBlendFunc (GL_ONE, GL_ONE);
+                glBlendEquation (GL_MAX);
+                drawMesh (part, 0.0f);
+                overwrite();
+                drawSurface (part);
+                glEnable (GL_BLEND);
+                glBlendEquation (GL_FUNC_ADD);
+                drawMesh (part, kGlowPerUnit);
+            };
+            const auto hide = [&] (size_t fanIndex, float keep) {
+                g.fill->use();
+                glUniform2f (Gpu::at (*g.fill, "uOrigin"), origin.x, origin.y);
+                glUniform1f (Gpu::at (*g.fill, "uPx"), px);
+                glUniform2f (Gpu::at (*g.fill, "uViewPx"), viewW, viewH);
+                glUniform3f (Gpu::at (*g.fill, "uColour"), keep, keep, keep);
+                glUniform1f (Gpu::at (*g.fill, "uUseTexture"), layered ? 0.0f : 1.0f);
+                glUniform1i (Gpu::at (*g.fill, "uTexture"), 0);
+                glActiveTexture (GL_TEXTURE0);
+                glBindTexture (GL_TEXTURE_2D, g.texture);
+                if (layered)
+                {
+                    // multiplies what is there by `keep`
+                    glEnable (GL_BLEND);
+                    glBlendFunc (GL_ZERO, GL_SRC_COLOR);
+                    glBlendEquation (GL_FUNC_ADD);
+                }
+                else
+                    glDisable (GL_BLEND);
+                glBindVertexArray (g.fillVao);
+                const auto range = g.fanRanges[fanIndex];
+                glDrawArrays (GL_TRIANGLE_FAN, range[0], range[1]);
+                glBlendFunc (GL_ONE, GL_ONE);
+            };
+            // The bottom cymbal never moves: drawn once into its own layer, which the lines'
+            // layer starts from each frame.
+            bool lowerRemade = false;
+            if (layered && g.lowerLayer.prepare (viewport[2], viewport[3], lowerRemade))
+            {
+                if (lowerRemade || ! g.lowerDrawn)
+                {
+                    glBindFramebuffer (GL_FRAMEBUFFER, g.lowerLayer.fbo);
+                    glClear (GL_COLOR_BUFFER_BIT);
+                    cymbal (bottom);
+                    g.lowerLayer.resolve();
+                    g.lowerDrawn = true;
+                    glBindFramebuffer (GL_FRAMEBUFFER, g.layer.fbo);
+                }
+                glDisable (GL_BLEND);
+                drawTexture (g.lowerLayer.texture, true);
+            }
+            else
+                cymbal (bottom);
+            hide (0, 0.0f);
+            cymbal (top);
+            for (size_t k = 1; k < g.fanRanges.size(); ++k)
+                hide (k, 0.08f);
             glEnable (GL_BLEND);
-            drawMesh (0.0f);
+            glBlendFunc (GL_ONE, GL_ONE);
+            glBlendEquation (GL_MAX);
+            g.flat->use();
+            glUniform2f (Gpu::at (*g.flat, "uOrigin"), origin.x, origin.y);
+            glUniform1f (Gpu::at (*g.flat, "uPx"), px);
+            glUniform2f (Gpu::at (*g.flat, "uViewPx"), viewW, viewH);
+            glUniform1f (Gpu::at (*g.flat, "uGlowGain"), 0.0f);
+            glBindVertexArray (g.flatVao);
+            segments (0, g.flatSegments);
         }
         if (layered)
         {
-            glBindFramebuffer (GL_READ_FRAMEBUFFER, g.layerFbo);
-            glBindFramebuffer (GL_DRAW_FRAMEBUFFER, g.resolveFbo);
-            glBlitFramebuffer (0, 0, viewport[2], viewport[3], 0, 0, viewport[2], viewport[3], GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            g.layer.resolve();
             glBindFramebuffer (GL_FRAMEBUFFER, (GLuint) target);
             glViewport (viewport[0], viewport[1], viewport[2], viewport[3]);
             glDisable (GL_BLEND);
             drawTexture (g.texture, false);
             glEnable (GL_BLEND);
+            glBlendFunc (GL_ONE, GL_ONE);
             glBlendEquation (GL_MAX);
-            drawTexture (g.layerTexture, true);
+            drawTexture (g.layer.texture, true);
         }
 
-        // The glow around the bright mesh lines, added.
+        // The glow around the bright mesh lines, added (the hi-hat's went with its cymbals).
         glEnable (GL_BLEND);
+        glBlendFunc (GL_ONE, GL_ONE);
         glBlendEquation (GL_FUNC_ADD);
-        drawMesh (kGlowPerUnit);
+        if (! hiHat)
+            drawMesh (top, kGlowPerUnit);
 
         // The flashes where the hits struck, added.
+        const auto& f = top.frame;
         if (f.numFlashes > 0)
         {
             g.flash->use();
@@ -872,7 +1203,7 @@ void CymbalView::renderOpenGL()
             for (int k = 0; k < f.numFlashes; ++k)
             {
                 const auto& fl = f.flashes[(size_t) k];
-                glUniform2f (Gpu::at (*g.flash, "uCentrePx"), (fl.x - (float) area().getX()) * px, (fl.y - (float) area().getY()) * px);
+                glUniform2f (Gpu::at (*g.flash, "uCentrePx"), (fl.x - origin.x) * px, (fl.y - origin.y) * px);
                 glUniform1f (Gpu::at (*g.flash, "uExtentPx"), 3.0f * fl.radius * px);
                 glUniform3f (Gpu::at (*g.flash, "uColour"), wire::colour::flash.r * fl.intensity, wire::colour::flash.g * fl.intensity,
                              wire::colour::flash.b * fl.intensity);
@@ -912,20 +1243,24 @@ void CymbalView::paint (juce::Graphics& g)
     }
     if (shownGeometry == nullptr)
         return;
-    if (! still.isValid() || std::abs (scale - stillScale) > 1.0e-3f * scale || stillGeometry != shownGeometry.get())
+    const float opening = shownLower != nullptr ? shownOpening : 0.0f;
+    if (! still.isValid() || std::abs (scale - stillScale) > 1.0e-3f * scale || stillGeometry != shownGeometry.get()
+        || ! juce::exactlyEqual (opening, stillOpening))
     {
         still = renderStill (scale);
         stillScale = scale;
         stillGeometry = shownGeometry.get();
+        stillOpening = opening;
     }
     g.drawImageTransformed (still, juce::AffineTransform::scale (1.0f / scale));
 }
 
 // The background, and the mesh and surface lines at rest lightening it (max), at `scale` pixels
-// per design unit.
+// per design unit. The hi-hat as in renderOpenGL, at its opening: the bottom cymbal, hidden inside
+// the top cymbal's outline, the top cymbal, the clutch and rod's silhouettes clearing the lines
+// behind them (to 0.08), and the clutch and rod lightening it all.
 juce::Image CymbalView::renderStill (float scale) const
 {
-    const auto& geo = *shownGeometry;
     const int w = juce::jmax (1, juce::roundToInt ((float) getWidth() * scale)), h = juce::jmax (1, juce::roundToInt ((float) getHeight() * scale));
     juce::Image image (juce::Image::ARGB, w, h, true);
     {
@@ -936,67 +1271,131 @@ juce::Image CymbalView::renderStill (float scale) const
         if (background.isValid())
             ig.drawImageAt (background, 0, 0);
     }
-
-    wire::Frame f;
-    f.resize (geo);
-    std::vector<float> disp ((size_t) geo.numVertices(), 0.0f);
-    wire::evaluate (geo, nullptr, 0, 0.0, f, disp);
-    const wire::Camera cam;
     const auto origin = area().getPosition().toDouble();
-    std::vector<juce::Point<float>> at ((size_t) geo.numVertices());
-    std::vector<double> shade ((size_t) geo.numVertices());
-    for (int x = 0; x < geo.numVertices(); ++x)
-    {
-        double sx = 0.0, sy = 0.0;
-        wire::projectVertex (geo, f, cam, x, sx, sy);
-        at[(size_t) x] = { (float) (sx - origin.x), (float) (sy - origin.y) };
-        shade[(size_t) x] = wire::shadeAt (geo, f, x);
-    }
-    const auto ytl = [&f, &origin] (double y) { return 1.0 - (y + origin.y - f.yTop) / std::max (f.yBottom - f.yTop, 1.0); };
     const auto toColour = [] (wire::Rgb c) {
         const auto u8 = [] (float v) { return (juce::uint8) juce::jlimit (0, 255, juce::roundToInt (v * 255.0f)); };
         return juce::Colour (u8 (c.r), u8 (c.g), u8 (c.b));
     };
+    const auto blackLayer = [w, h] {
+        juce::Image i (juce::Image::ARGB, w, h, true);
+        juce::Graphics (i).fillAll (juce::Colours::black);
+        return i;
+    };
+    const bool hiHat = shownLower != nullptr;
+    const double lift = hiHat ? (double) shownOpening * wire::kHiHatMaxGap : 0.0;
 
-    // The lines' layer, as in renderOpenGL: the mesh; the surface lines over one another in
-    // their order, in a layer of their own that the mesh lightens (on the dented mesh, over the
-    // mesh).
-    juce::Image layer (juce::Image::ARGB, w, h, true), surfaceLayer;
-    {
-        juce::Graphics lg (layer);
-        lg.fillAll (juce::Colours::black);
-        lg.addTransform (juce::AffineTransform::scale (scale));
-        for (int k = 0; k < (int) geo.lineIndices.size() / 2; ++k)
+    // A cymbal at rest, raised by `lift`: its mesh into `layer`; its surface lines over one another
+    // in their order, over the mesh on the dented mesh, else into a layer of their own that the
+    // mesh lightens (as in renderOpenGL).
+    juce::Image layer = blackLayer(), surfaceLayer;
+    const auto drawCymbal = [&] (const wire::Geometry& geo, double raise) {
+        wire::Frame f;
+        f.resize (geo);
+        f.lift = raise;
+        std::vector<float> disp ((size_t) geo.numVertices(), 0.0f);
+        wire::evaluate (geo, nullptr, 0, 0.0, f, disp);
+        const auto& cam = geo.camera;
+        std::vector<juce::Point<float>> at ((size_t) geo.numVertices());
+        std::vector<double> shade ((size_t) geo.numVertices());
+        for (int x = 0; x < geo.numVertices(); ++x)
         {
-            const auto a = geo.lineIndices[(size_t) (2 * k)], b = geo.lineIndices[(size_t) (2 * k + 1)];
-            lg.setColour (toColour (wire::segmentColour (geo, f, k, shade[a], ytl (at[a].y), shade[b], ytl (at[b].y))));
-            lg.drawLine ({ at[a], at[b] }, 2 * k < geo.numThinIndices ? 1.0f : 2.0f);
+            double sx = 0.0, sy = 0.0;
+            wire::projectVertex (geo, f, cam, x, sx, sy);
+            at[(size_t) x] = { (float) (sx - origin.x), (float) (sy - origin.y) };
+            shade[(size_t) x] = wire::shadeAt (geo, f, x);
         }
-    }
-    if (! geo.perVertexColour)
-    {
-        surfaceLayer = juce::Image (juce::Image::ARGB, w, h, true);
-        juce::Graphics (surfaceLayer).fillAll (juce::Colours::black);
-    }
-    {
-        juce::Graphics lg (geo.perVertexColour ? layer : surfaceLayer);
-        lg.addTransform (juce::AffineTransform::scale (scale));
-        for (size_t k = 0; k < geo.surface.size(); k += 2)
+        const auto ytl = [&f, &origin] (double y) { return 1.0 - (y + origin.y - f.yTop) / std::max (f.yBottom - f.yTop, 1.0); };
         {
-            juce::Point<float> p[2];
-            wire::Rgb c[2];
-            for (size_t e = 0; e < 2; ++e)
+            juce::Graphics lg (layer);
+            lg.addTransform (juce::AffineTransform::scale (scale));
+            for (int k = 0; k < (int) geo.lineIndices.size() / 2; ++k)
+            {
+                const auto a = geo.lineIndices[(size_t) (2 * k)], b = geo.lineIndices[(size_t) (2 * k + 1)];
+                lg.setColour (toColour (wire::segmentColour (geo, f, k, shade[a], ytl (at[a].y), shade[b], ytl (at[b].y))));
+                lg.drawLine ({ at[a], at[b] }, 2 * k < geo.numThinIndices ? 1.0f : 2.0f);
+            }
+        }
+        if (! geo.perVertexColour && ! surfaceLayer.isValid())
+            surfaceLayer = blackLayer();
+        {
+            juce::Graphics lg (geo.perVertexColour ? layer : surfaceLayer);
+            lg.addTransform (juce::AffineTransform::scale (scale));
+            for (size_t k = 0; k < geo.surface.size(); k += 2)
+            {
+                juce::Point<float> p[2];
+                wire::Rgb c[2];
+                for (size_t e = 0; e < 2; ++e)
+                {
+                    double sx = 0.0, sy = 0.0;
+                    wire::projectSurface (geo.surface[k + e], f, cam, sx, sy);
+                    p[e] = { (float) (sx - origin.x), (float) (sy - origin.y) };
+                    c[e] = wire::surfaceColour (geo.surface[k + e], ytl (sy - origin.y));
+                }
+                const double dent = 0.5 * (geo.surface[k].dent + geo.surface[k + 1].dent);
+                lg.setColour (toColour (wire::lineDent ({ 0.5f * (c[0].r + c[1].r), 0.5f * (c[0].g + c[1].g), 0.5f * (c[0].b + c[1].b) }, dent)));
+                lg.drawLine ({ p[0], p[1] }, geo.surface[k].width);
+            }
+        }
+    };
+    // A polygon in design units, filled black at `opacity` over the layer: what it hides keeps
+    // 1 - opacity of its light.
+    const auto hide = [&] (const juce::Path& path, float opacity) {
+        juce::Graphics lg (layer);
+        lg.addTransform (juce::AffineTransform::translation ((float) -origin.x, (float) -origin.y).scaled (scale));
+        lg.setColour (juce::Colours::black.withAlpha (opacity));
+        lg.fillPath (path);
+    };
+    juce::Image hardware;
+    if (hiHat)
+    {
+        drawCymbal (*shownLower, 0.0);
+        const auto& geo = *shownGeometry;
+        {
+            // the top cymbal's outline: its rim, raised
+            wire::Frame f;
+            f.resize (geo);
+            f.lift = lift;
+            std::vector<float> disp ((size_t) geo.numVertices(), 0.0f);
+            wire::evaluate (geo, nullptr, 0, 0.0, f, disp);
+            juce::Path rim;
+            for (size_t k = 0; k < geo.rimVertices.size(); ++k)
             {
                 double sx = 0.0, sy = 0.0;
-                wire::projectSurface (geo.surface[k + e], f, cam, sx, sy);
-                p[e] = { (float) (sx - origin.x), (float) (sy - origin.y) };
-                c[e] = wire::surfaceColour (geo.surface[k + e], ytl (sy - origin.y));
+                wire::projectVertex (geo, f, geo.camera, (int) geo.rimVertices[k], sx, sy);
+                if (k == 0)
+                    rim.startNewSubPath ((float) sx, (float) sy);
+                else
+                    rim.lineTo ((float) sx, (float) sy);
             }
-            const double dent = 0.5 * (geo.surface[k].dent + geo.surface[k + 1].dent);
-            lg.setColour (toColour (wire::lineDent ({ 0.5f * (c[0].r + c[1].r), 0.5f * (c[0].g + c[1].g), 0.5f * (c[0].b + c[1].b) }, dent)));
-            lg.drawLine ({ p[0], p[1] }, geo.surface[k].width);
+            rim.closeSubPath();
+            hide (rim, 1.0f);
+        }
+        drawCymbal (geo, lift);
+        const double zb = geo.restHeight (0.0) + lift;
+        std::vector<std::array<float, 2>> hull;
+        for (const auto& solid : wire::hiHatHardware().solids)
+        {
+            wire::silhouette (geo.camera, solid, zb, hull);
+            juce::Path p;
+            for (size_t k = 0; k < hull.size(); ++k)
+                k == 0 ? p.startNewSubPath (hull[k][0], hull[k][1]) : p.lineTo (hull[k][0], hull[k][1]);
+            p.closeSubPath();
+            hide (p, 0.92f);
+        }
+        hardware = blackLayer();
+        juce::Graphics hg (hardware);
+        hg.addTransform (juce::AffineTransform::translation ((float) -origin.x, (float) -origin.y).scaled (scale));
+        for (const auto& l : wire::hiHatHardware().lines)
+        {
+            double ax = 0.0, ay = 0.0, bx = 0.0, by = 0.0;
+            geo.camera.project (l.x0, l.y0, zb + l.z0, ax, ay);
+            geo.camera.project (l.x1, l.y1, zb + l.z1, bx, by);
+            hg.setColour (toColour (l.colour));
+            hg.drawLine ((float) ax, (float) ay, (float) bx, (float) by, l.width);
         }
     }
+    else
+        drawCymbal (*shownGeometry, 0.0);
 
     // Lighten: the brighter of the background and the lines, per channel.
     juce::Image::BitmapData out (image, juce::Image::BitmapData::readWrite);
@@ -1013,6 +1412,8 @@ juce::Image CymbalView::renderStill (float scale) const
     lighten (layer);
     if (surfaceLayer.isValid())
         lighten (surfaceLayer);
+    if (hardware.isValid())
+        lighten (hardware);
     return image;
 }
 

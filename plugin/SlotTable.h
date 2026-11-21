@@ -81,8 +81,10 @@ struct PresetInfo
     // cymbals share, with its own defaults (PresetSlot::defaultNote).
     bool ownNotes = false;
     // The Blend Position knobs move its rows' strike positions (slotPosition); otherwise each row
-    // strikes at its base position.
+    // strikes at its base position, and the editor hides the knobs.
     bool blendKnobs = true;
+    // A pedal (the hi-hat's, a MIDI CC): the editor shows it and its PEDAL row.
+    bool pedal = false;
 };
 
 constexpr int kNumPresets = 7;
@@ -147,14 +149,15 @@ constexpr std::array<PresetInfo, kNumPresets> kPresets {{
     // HI-HAT (GF A60, 14"; docs/PORT_MAP.md, "Hi-hat"; a placeholder name until Kris names it):
     // the BOW row plays TIP and the EDGE row EDGE, each with its fixed stick, on General MIDI's
     // closed and open hi-hat notes; no BELL, BELL2 or BOW2 rows. FOOT has no row: the pedal (a
-    // MIDI CC) plays it. No wireframe yet; the Blend Position knobs do nothing on it.
-    { "hihat", "HI-HAT", "hihat.bake.json", nullptr, {{
+    // MIDI CC) plays it. Its wireframe is the pair of hats (the top cymbal's shape names the
+    // bottom one); the Blend Position knobs do nothing on it.
+    { "hihat", "HI-HAT", "hihat.bake.json", &ui::kHiHatTopShape, {{
         { "", "", StickDisplay::dash, Stick::none },
         { "TIP", "TIP", StickDisplay::tip, Stick::none, nullptr, 0.0f, 42 },
         { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none, nullptr, 0.0f, 46 },
         { "", "", StickDisplay::dash, Stick::none },
         { "", "", StickDisplay::dash, Stick::none },
-    }}, "BELL", true, false },
+    }}, "BELL", true, false, true },
 }};
 
 constexpr int kDefaultMidiChannel = 16;

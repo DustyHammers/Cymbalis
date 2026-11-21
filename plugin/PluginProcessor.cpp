@@ -436,6 +436,8 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     {
         if (pos < n)
             engine->process (left + pos, right + pos, n - pos);
+        if (engine->isHiHat())
+            pedalShown.store ((float) engine->pedalOpenness()); // for the editor's hats and pedal
     }
     else
         buffer.clear (0, n);
