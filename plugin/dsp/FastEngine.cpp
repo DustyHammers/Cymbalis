@@ -4180,8 +4180,9 @@ void FastEngine::hiHatClosedLevel(int articulation, double v, double* out) const
 // HiHat.envelope: a strike's band envelopes (into c.hhEnv, divided by their peak, the end
 // fade's zero after the last frame) and mode weights (into scratchVel_), for articulation 0
 // TIP, 1 EDGE, 2 FOOT at openness o and velocity v. Every knot's envelope is padded to the
-// longest of those taken with 1e-9, and they are interpolated in log. Returns the peak.
-// Does not allocate.
+// longest of those taken with 1e-9, and they are interpolated in log; the mode weights are the
+// nearer knot's alone (the knots share few modes: blended, two sets of partials ring at once).
+// Returns the peak. Does not allocate.
 double FastEngine::hiHatEnvelope(Component& c, int art, double o, double v) noexcept
 {
     const HiHatData& h = bake_->hihat;
@@ -4210,8 +4211,9 @@ double FastEngine::hiHatEnvelope(Component& c, int art, double o, double v) noex
     };
     double lv[kExcitationBands], lk[kExcitationBands], lc[kExcitationBands];
     // HiHat._closed(a, v): between the two closed knots around v in log, or the nearest one
-    // moved by the closed level law outside 0.3 .. 1.0; with weight `share` in the strike.
-    auto closed = [&](int a, double share, bool raw, bool weightsOnly) {
+    // moved by the closed level law outside 0.3 .. 1.0; with weight `share` in the strike's
+    // envelope and `wshare` in its mode weights.
+    auto closed = [&](int a, double share, double wshare, bool raw) {
         const double* vs = h.closedVelocity;
         int i0 = 0, i1 = 0;
         double t = 0.0;
@@ -4226,10 +4228,8 @@ double FastEngine::hiHatEnvelope(Component& c, int art, double o, double v) noex
             t = (v - vs[i0]) / (vs[i1] - vs[i0]);
         }
         const int k0 = h.closed[a][i0], k1 = h.closed[a][i1];
-        addWeights(h.knots[size_t(k0)].weights, share * (1.0 - t));
-        addWeights(h.knots[size_t(k1)].weights, share * t);
-        if (weightsOnly)
-            return;
+        addWeights(h.knots[size_t(k0)].weights, wshare * (1.0 - t));
+        addWeights(h.knots[size_t(k1)].weights, wshare * t);
         const auto& ln0 = raw ? hhLnRaw_[size_t(k0)] : hhLnStick_[size_t(k0)];
         const auto& ln1 = raw ? hhLnRaw_[size_t(k1)] : hhLnStick_[size_t(k1)];
         addTerm(ln0, h.knots[size_t(k0)].frames, share * (1.0 - t));
@@ -4243,9 +4243,9 @@ double FastEngine::hiHatEnvelope(Component& c, int art, double o, double v) noex
         }
     };
     if (art == 2)
-        closed(1, 1.0, true, false); // FOOT: the closed EDGE's own rise
+        closed(1, 1.0, 1.0, true); // FOOT: the closed EDGE's own rise
     else if (o <= 0.0)
-        closed(art, 1.0, false, false);
+        closed(art, 1.0, 1.0, false);
     else
     {
         // The knots: closed (openness 0), then the open EDGE knots; the two around o.
@@ -4257,7 +4257,8 @@ double FastEngine::hiHatEnvelope(Component& c, int art, double o, double v) noex
         j = std::min(j, nOpen - 1);
         const double a = (o - xAt(j)) / (xAt(j + 1) - xAt(j));
         bool haveEdgeLevel = false;
-        auto openKnot = [&](int i, double share) {
+        // An open knot with weight `share` in the envelope and `wshare` in the mode weights.
+        auto openKnot = [&](int i, double share, double wshare) {
             if (share == 0.0)
                 return;
             const int k = h.open[size_t(i - 1)];
@@ -4274,24 +4275,45 @@ double FastEngine::hiHatEnvelope(Component& c, int art, double o, double v) noex
                 constant[b] += share * (lv[b] - lk[b]) * (kLn10 / 20.0);
             if (art == 0)
             {
-                // The tip at an opening: the EDGE's envelope there times the closed tip/edge
-                // level difference at v, with the closed tip's weights; TIP OPEN LEVEL takes
-                // value x the knot's openness of that difference off.
-                double lt[kExcitationBands];
+                // The tip at an opening (there is no open tip capture): the EDGE's envelope
+                // there with the knot's own modes, times the closed tip/edge level difference at
+                // v smoothed to its straight-line fit over the 22 bands (least squares on the
+                // band index): per band the difference jumps by up to 13 dB, which over a long
+                // open ring sounds like a comb filter. TIP OPEN LEVEL takes value x the knot's
+                // openness of it off.
+                double lt[kExcitationBands], d[kExcitationBands];
                 hiHatClosedLevel(0, v, lt);
+                const double mb = 0.5 * static_cast<double>(nb - 1);
+                double md = 0.0;
+                for (size_t b = 0; b < nb; ++b)
+                {
+                    d[b] = lt[b] - lv[b];
+                    md += d[b];
+                }
+                md /= static_cast<double>(nb);
+                double sxy = 0.0, sxx = 0.0;
+                for (size_t b = 0; b < nb; ++b)
+                {
+                    const double x = static_cast<double>(b) - mb;
+                    sxy += x * (d[b] - md);
+                    sxx += x * x;
+                }
+                const double slope = sxy / sxx;
                 const double keep = 1.0 - hhTipOpenLevel_ * knot.openness;
                 for (size_t b = 0; b < nb; ++b)
-                    constant[b] += share * keep * (lt[b] - lv[b]) * (kLn10 / 20.0);
-                closed(0, share, false, true);
+                    constant[b] += share * keep * (md + slope * (static_cast<double>(b) - mb)) * (kLn10 / 20.0);
             }
-            else
-                addWeights(knot.weights, share);
+            addWeights(knot.weights, wshare);
         };
+        // The envelope between the two knots; the mode weights of the nearer one (the upper from
+        // halfway). Between closed and the first open knot the closed side's are the closed
+        // knots' at v.
+        const double upper = a >= 0.5 ? 1.0 : 0.0;
         if (j == 0)
-            closed(art, 1.0 - a, false, false);
+            closed(art, 1.0 - a, 1.0 - upper, false);
         else
-            openKnot(j, 1.0 - a);
-        openKnot(j + 1, a);
+            openKnot(j, 1.0 - a, 1.0 - upper);
+        openKnot(j + 1, a, upper);
     }
 
     // The log envelope, bands x frames, then its exp.

@@ -8,19 +8,32 @@ Model (prototype renders approved by ear in the project session, 2026-11-20):
 - A strike at openness o and velocity v: per band, the envelope is interpolated in log amplitude
   between the two knots around o; velocity comes from the closed captures directly (closed knots)
   or, for the open knots, from the closed EDGE's level change with velocity per band (dB, first
-  100 ms). Each mode's amplitude = its weight (interpolated the same way) x its band's envelope.
+  100 ms). Each mode's amplitude = its weight (the nearer knot's, below) x its band's envelope.
 - Stick articulations (TIP, EDGE) fire the modes at full level on the strike: SPEAR smears the
   strike over its first frames (a 20-40 ms rise); that rise is replaced by the band's decay after
   its peak, extended back to t = 0 (at most +9 dB above the captured peak). FOOT keeps SPEAR's own
   rise (it is the pedal closing the cymbals, not a stick).
-- The tip at an opening uses the EDGE's envelope at that opening times the per-band level
-  difference between the closed tip and the closed edge at that velocity, with the closed tip's
-  mode weights. TIP OPEN LEVEL (tip_open_level, a Tuning window value, 0 .. 1: Kris, 2026-11-21)
-  takes part of that difference off on open hats: each open knot's tip at the knot's openness x
-  uses (1 - tip_open_level x) x the difference, so the tip between knots follows it smoothly in o
+- The tip at an opening (there is no open tip capture) uses the EDGE's envelope at that opening,
+  with that open knot's own mode weights, times the level difference between the closed tip and
+  the closed edge at that velocity, smoothed to its straight-line fit over the 22 bands (least
+  squares on the band index, i.e. log frequency): d_b = closed_level('tip', v) -
+  closed_level('edge', v), d^_b = c0 + k b. TIP OPEN LEVEL (tip_open_level, a Tuning window value,
+  0 .. 1: Kris, 2026-11-21) takes part of it off on open hats: each open knot's tip at the knot's
+  openness x uses (1 - tip_open_level x) x d^_b, so the tip between knots follows it smoothly in o
   (0, or a closed strike: as captured). The gap grows with velocity (the closed tip is about 4.5 dB
   under the closed edge at 0.6 and 10.9 dB at 1.0), so a hard tip on open hats sat 7-8 dB under
-  the edge at every opening.
+  the edge at every opening. The open modes and the smoothing (Kris, 2026-11-21, by ear: "version
+  C"): with the closed tip's mode weights an open tip rang the clamped hats' partials for seconds
+  (in bands 0-8 and 9-14 they have a cosine similarity of only 0.29 and 0.52 with the fully open
+  knot's), and the per-band difference swings by up to 13 dB between neighbouring bands (taken
+  from the closed captures' first 100 ms), which over a long open ring sounded like a comb filter:
+  open hats, the tip above all, sounded phasey and shifted in pitch.
+- Between two knots the envelope and levels are interpolated in log, but the mode weights are the
+  nearer knot's alone (the upper one from halfway; between closed and the first open knot, the
+  closed side's are the closed knots' at v). Neighbouring knots share few modes (the 0.75 and 1.0
+  knots' weights have a similarity of 0.29 in bands 0-8 and 0.66 in bands 9-14), so their blend
+  rang two slightly different sets of partials at once, and it was not unit norm per band (those
+  bands up to about 2 dB low).
 - The pedal moves a ringing strike's decay both ways (approved by Kris, 2026-11-21: prototype
   renders, version B; the opened state, the threshold and the clamp: Kris, 2026-11-21, the pedal
   bursts fix; the floor rule, the choke from the highest opening and the rate floor: Kris,
@@ -174,17 +187,18 @@ class HiHat:
             k = opens[i - 1]
             e = self._pad(self.stick[k['id']], n) * (10 ** ((self.closed_level('edge', v) - self.closed_level('edge', k['velocity'])) / 20))[:, None]
             if art == 'tip':
+                d = self.closed_level('tip', v) - self.closed_level('edge', v)
+                d_fit = np.polyval(np.polyfit(np.arange(NB), d, 1), np.arange(NB))
                 keep = 1.0 - tip_open_level * k['openness']
-                g = 10 ** (keep * (self.closed_level('tip', v) - self.closed_level('edge', v)) / 20)
-                _, wt = self._closed('tip', v, 1, self.stick)
-                return e * g[:, None], wt
+                e = e * (10 ** (keep * d_fit / 20))[:, None]
             return e, self.w[k['id']]
         if o <= 0:
             return knot(0)
         j = min(max(int(np.searchsorted(xs, o)) - 1, 0), len(xs) - 2)
         a = (o - xs[j]) / (xs[j + 1] - xs[j])
         e0, w0 = knot(j); e1, w1 = knot(j + 1)
-        return np.exp((1 - a) * np.log(e0) + a * np.log(e1)), (1 - a) * w0 + a * w1
+        # The envelope between the two knots; the mode weights of the nearer one alone.
+        return np.exp((1 - a) * np.log(e0) + a * np.log(e1)), (w1 if a >= 0.5 else w0)
 
     def rate(self, o, ring_floor=1.0):
         """Each band's decay rate (amplitude, 1/s) at openness o, interpolated in log between the
