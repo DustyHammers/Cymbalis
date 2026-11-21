@@ -263,8 +263,9 @@ private:
         // reaches), the openness it was struck at, and what the pedal does to it (HiHat.level_step
         // of docs/hihat_reference.py): per band the gain on its envelope at hhChokeT and the rate
         // its log changed at since (1/s), the gain at hhT1 (the current block's end), the choke's
-        // extra decay rate (amplitude, 1/s), the band decay rates at its openness, and each band's
-        // peak (the envelope's, so the gain never takes a band above it).
+        // extra decay rate (amplitude, 1/s), the band decay rates at its openness (floored at their
+        // median for TIP and EDGE, raw for FOOT), and each band's peak (the envelope's, so the gain
+        // never takes a band above it).
         std::vector<float> hhEnv;
         int hhFrames = 0;
         double hhOpen = 0.0;
@@ -272,10 +273,13 @@ private:
         // TIP and EDGE (not FOOT): the pedal opening after the strike opens it up, and past its
         // captured envelope it rings on at its openness's rate, to -120 dB or kHiHatMaxRingS.
         // hhOpened: it has opened up (from its first opening block on, its band levels follow
-        // HiHat.level_step's opened step on every block, whatever the pedal does).
+        // HiHat.level_step's opened step on every block, whatever the pedal does). hhOpenRef:
+        // the highest openness the pedal has opened it to (o_ref, from its own), which the choke
+        // measures from once it has opened, and hhRateRef the band rates there.
         bool hhOpens = false, hhOpened = false;
-        double hhChokeT = 0.0, hhT1 = -1.0;
+        double hhChokeT = 0.0, hhT1 = -1.0, hhOpenRef = 0.0;
         std::array<double, kExcitationBands> hhGain {}, hhGain1 {}, hhExtra {}, hhRate0 {}, hhLogRate {}, hhPeak {};
+        std::array<double, kExcitationBands> hhRateRef {};
         double hhScale = 0.0, hhLevel = 0.0; // its peak level (with its calibration), its loudest band now
     };
 
@@ -372,7 +376,8 @@ private:
     double hiHatEnvelope(Component& c, int articulation, double openness, double velocity) noexcept;
     void hiHatClosedLevel(int articulation, double velocity, double* outDb) const noexcept;
     double hiHatEnvelopeAt(const Component& c, int band, double te) const noexcept;
-    void hiHatRate(double openness, double* out) const noexcept;
+    void hiHatRate(double openness, double* out, bool floored = true) const noexcept;
+    static void hiHatRateFloor(double* rates) noexcept;
     // What the pedal does to a strike over a block (HiHat.level_step): none, the choke (closing),
     // or opening it up, with the opening's blend weight.
     enum class PedalStep
@@ -657,21 +662,22 @@ private:
     // raw: the closed EDGE knots); the band decay rates' knots in log (rate knots x bands);
     // scratch for a strike's envelope (bands x maxFrames); a closed TIP strike's peak level per
     // band at velocity 1 (the cascade's and damping's reference); the band rates at the pedal's
-    // openness now (hiHatPedalStep).
+    // openness now (hiHatPedalStep), floored and raw (FOOT's choke).
     bool hihat_ = false;
     // HiHat.level_step's constants (docs/hihat_reference.py): the openness over which a ringing
     // strike blends from its own envelope to the pedal's rate (OPEN_BLEND), how long after the
     // strike the pedal can open it up (OPEN_AFTER), and the longest a TIP or EDGE strike rings;
     // how far the pedal must be above the strike's openness to open it up (OPEN_EPS, half a CC
     // step), and the largest log step per second an opened strike takes from its envelope
-    // (STEP_MAX).
+    // (STEP_MAX); the floor: an envelope under this share of the strike's peak (-120 dB) counts as
+    // past the end of its captured data for an opened strike (FLOOR).
     static constexpr double kHiHatOpenBlend = 0.1, kHiHatOpenAfterS = 0.03, kHiHatMaxRingS = 8.0;
-    static constexpr double kHiHatOpenEps = 0.004, kHiHatStepMax = 50.0;
+    static constexpr double kHiHatOpenEps = 0.004, kHiHatStepMax = 50.0, kHiHatFloor = 1e-6;
     std::vector<int8_t> hhArt_;
     int hhFootSlot_ = -1;
     std::vector<std::vector<double>> hhLnStick_, hhLnRaw_;
     std::vector<double> hhLnRate_, hhLog_, hhExp_;
-    std::array<double, kExcitationBands> hhRefPeak_ {}, hhRateNow_ {};
+    std::array<double, kExcitationBands> hhRefPeak_ {}, hhRateNow_ {}, hhRateNowRaw_ {};
     // The pedal: its smoothed openness as segments, from t0 going from o0 towards target with
     // the bake's time constant; a ring of the latest (the FOOT's closing speed looks back
     // footWindowS). footArmed_: the openness was at footRearmAbove or more since the last FOOT.
