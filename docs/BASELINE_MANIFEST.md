@@ -155,6 +155,7 @@ Built 2026-10-28 in the project session from Kris's SPEAR captures (Bow V1-V6, E
 - **The bell is inferred, not captured.** On NOVA RIDE, RAVEN and HAMMERED THIN RIDE the bell excites the same modes as the bow with a consistent tilt in absolute frequency (less below 1.3 kHz, more at 2.5-9 kHz), concentrated in a few modes whose choice nothing measured predicts. The builder applies that tilt (eased below 1.5 kHz), an extra tilt putting the bell's centroid at 0.7 x the bow's, and a per-mode scatter from Nova's and Raven's bells (seed 3) widened to make the bell purer than theirs; chosen by ear by Kris, 2026-10-28. Shaping values in `data/konstan_build_info.json` (`bell_shaping`). Real bell captures would replace it.
 - SPEAR level targets in `data/konstan_build_info.json`: EDGE +13.5 dB above BOW (Edge V7 against Bow V6); BELL +4.72 dB, RAVEN's measured value (the bell is inferred).
 - Build-up (LF and MF) as Bettis and Swish; wander, stick click and NL off. No velocity tables: bell and bow use the hertz law (v^2).
+- `hihat_weights_free.json` (added 2026-11-21, Kris: "version C"): the fully open knot (V7) as a single free-ringing cymbal, its mode weights from the SPEAR partials lasting at least 0.4 s only, each partial to its nearest mode, no floor (237 modes above 0.05, against 510). The fully open capture still has the bottom cymbal in it: its level pulses at about 1 and 4 Hz and its partials are short-lived (about 7,200 tracks in 1.5 s); the long partials are the top cymbal ringing.
 - No photo: the plugin draws the wireframe (`docs/ui/wireframe_reference.py`, `konstan`).
 
 # HI-HAT (GF A60, 14")
@@ -166,6 +167,7 @@ Built 2026-11-20 in the project session from Kris's SPEAR captures of a pair of 
 | `presets/hihat/HiHat_A60.json` | `c491060b013d35997116a2ab99eeacea` |
 | `presets/hihat/data/hihat_envelopes.json` | `d78586a3de2d06f65bae5764e0d52269` |
 | `presets/hihat/data/hihat_weights.json` | `6f9f0a6e61d34fb535ce84647dcaa89d` |
+| `presets/hihat/data/hihat_weights_free.json` | `687ef98f22320a52a3c5b99b13df7dc2` |
 
 ## Notes
 
