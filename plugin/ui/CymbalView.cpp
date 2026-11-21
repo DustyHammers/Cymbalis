@@ -511,7 +511,8 @@ struct CymbalView::Gpu
     };
     std::array<Part, 2> parts; // the cymbal (the hi-hat's top), the hi-hat's bottom cymbal
     bool lowerEvaluated = false; // the bottom cymbal never moves: its state is set once
-    double shownLift = -1.0;
+    // The top cymbal's lift, tilt and spin the clutch and rod were last uploaded with.
+    std::array<double, 4> shownPose { -1.0, 0.0, 0.0, 0.0 };
 
     std::array<wire::Hit, wire::kMaxHits> hits {};
     int numHits = 0;
@@ -561,8 +562,9 @@ struct CymbalView::Gpu
     }
 
     // The clutch and rod on screen, standing on the top cymbal's bell top zb (raised with it),
-    // into the flat buffer: per quad corner, the corner, both ends, the colour and width.
-    void uploadHardware (const wire::Camera& cam, double zb)
+    // tilted and spun with it, into the flat buffer: per quad corner, the corner, both ends, the
+    // colour and width.
+    void uploadHardware (const wire::Camera& cam, const wire::Frame& top, double zb)
     {
         const auto& hw = wire::hiHatHardware();
         constexpr float corners[4][2] = { { 0.0f, -1.0f }, { 0.0f, 1.0f }, { 1.0f, -1.0f }, { 1.0f, 1.0f } };
@@ -571,8 +573,8 @@ struct CymbalView::Gpu
         for (const auto& l : hw.lines)
         {
             double ax = 0.0, ay = 0.0, bx = 0.0, by = 0.0;
-            cam.project (l.x0, l.y0, zb + l.z0, ax, ay);
-            cam.project (l.x1, l.y1, zb + l.z1, bx, by);
+            wire::projectHardware (cam, top, zb, l.x0, l.y0, l.z0, ax, ay);
+            wire::projectHardware (cam, top, zb, l.x1, l.y1, l.z1, bx, by);
             for (const auto& c : corners)
                 for (float v : { c[0], c[1], (float) ax, (float) ay, (float) bx, (float) by, l.colour.r, l.colour.g, l.colour.b, l.width })
                     quads.push_back (v);
@@ -717,9 +719,9 @@ void CymbalView::setPreset (int preset, const juce::String& loadError)
         const auto* shape = kPresets[(size_t) preset].shape;
         shownGeometry = shape != nullptr ? std::make_shared<const wire::Geometry> (*shape) : nullptr;
         shownLower = shape != nullptr && shape->lower != nullptr ? std::make_shared<const wire::Geometry> (*shape->lower) : nullptr;
-        // Its opening, for screen readers (and tools/cymbalis_uitest).
+        // On the hi-hat, its opening and wobble, for screen readers (and tools/cymbalis_uitest):
+        // hiHatDescription, made when asked for.
         setTitle (shownLower != nullptr ? "HI-HAT" : "");
-        setDescription (shownLower != nullptr ? "open " + juce::String (shownOpening, 3) : juce::String());
     }
     error = loadError;
     {
@@ -756,7 +758,6 @@ void CymbalView::setOpening (float o)
     }
     if (shownLower == nullptr)
         return; // only the hi-hat opens
-    setDescription ("open " + juce::String (o, 3));
     if (! glActive.load())
         repaint();
     else if (! hitsMoving)
@@ -794,7 +795,33 @@ CymbalView::Stats CymbalView::stats() const noexcept
 void CymbalView::resetStats() noexcept
 {
     const juce::SpinLock::ScopedLockType sl (statsLock);
-    counts = { 0, 0.0, 0.0, 0, counts.hits };
+    counts = { 0, 0.0, 0.0, 0, counts.hits, counts.wobble, counts.tiltDrawn, counts.tiltFull, counts.tiltBottom };
+}
+
+// The hi-hat's description, made when it is asked for: "open 0.504; wobble 0.578, top tilt
+// 0.00123 of 0.00213, bottom tilt 0" (the last frame's).
+juce::String CymbalView::hiHatDescription() const
+{
+    if (shownLower == nullptr)
+        return {};
+    const auto s = stats();
+    return "open " + juce::String (shownOpening, 3) + "; wobble " + juce::String (s.wobble, 3) + ", top tilt " + juce::String (s.tiltDrawn, 6)
+           + " of " + juce::String (s.tiltFull, 6) + ", bottom tilt " + juce::String (s.tiltBottom, 6);
+}
+
+class CymbalView::Accessibility final : public juce::AccessibilityHandler
+{
+public:
+    explicit Accessibility (CymbalView& v) : juce::AccessibilityHandler (v, juce::AccessibilityRole::unspecified), view (v) {}
+    juce::String getDescription() const override { return view.hiHatDescription(); }
+
+private:
+    CymbalView& view;
+};
+
+std::unique_ptr<juce::AccessibilityHandler> CymbalView::createAccessibilityHandler()
+{
+    return std::make_unique<Accessibility> (*this);
 }
 
 //==============================================================================
@@ -911,7 +938,7 @@ void CymbalView::renderOpenGL()
         bottom.upload (std::move (newLower));
         g.lowerEvaluated = false;
         g.lowerDrawn = false;
-        g.shownLift = -1.0;
+        g.shownPose[0] = -1.0;
     }
 
     GLint viewport[4] = {}, target = 0;
@@ -944,9 +971,11 @@ void CymbalView::renderOpenGL()
     {
         const auto& geo = *top.geometry;
         const bool hiHat = bottom.geometry != nullptr;
-        // The hi-hat's top cymbal, its clutch and rod rise with the pedal's opening; the bottom
-        // cymbal stays, and never moves: its state is set once.
+        // The hi-hat's top cymbal, its clutch and rod rise with the pedal's opening, and swing
+        // with the hits by 0.15 + 0.85 x the opening (closed, the bottom cymbal holds the top one
+        // still); the bottom cymbal stays, and never moves: its state is set once.
         const double lift = hiHat ? (double) g.opening * wire::kHiHatMaxGap : 0.0;
+        top.frame.wobble = hiHat ? 0.15 + 0.85 * (double) g.opening : 1.0;
         top.evaluate (g.hits.data(), g.numHits, juce::Time::getMillisecondCounterHiRes(), lift);
         if (hiHat && ! g.lowerEvaluated)
         {
@@ -989,7 +1018,7 @@ void CymbalView::renderOpenGL()
             const double zb = geo.restHeight (0.0) + lift; // the top cymbal's bell top
             for (const auto& solid : wire::hiHatHardware().solids)
             {
-                wire::silhouette (geo.camera, solid, zb, g.hull);
+                wire::silhouette (geo.camera, top.frame, solid, zb, g.hull);
                 fan (g.hull, [&g] (size_t k) { return std::array<double, 2> { g.hull[k][0], g.hull[k][1] }; });
             }
             glBindVertexArray (g.fillVao);
@@ -998,10 +1027,11 @@ void CymbalView::renderOpenGL()
             glEnableVertexAttribArray (0);
             glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
             glBindVertexArray (0);
-            if (! juce::exactlyEqual (lift, g.shownLift))
+            const std::array<double, 4> pose { lift, top.frame.tiltX, top.frame.tiltY, top.frame.spinDeg };
+            if (pose != g.shownPose)
             {
-                g.uploadHardware (geo.camera, zb);
-                g.shownLift = lift;
+                g.uploadHardware (geo.camera, top.frame, zb);
+                g.shownPose = pose;
             }
         }
 
@@ -1217,6 +1247,14 @@ void CymbalView::renderOpenGL()
 
     const double ms = juce::Time::getMillisecondCounterHiRes() - t0;
     const juce::SpinLock::ScopedLockType sl (statsLock);
+    if (top.geometry != nullptr)
+    {
+        const auto& f = top.frame;
+        counts.wobble = f.wobble;
+        counts.tiltDrawn = std::hypot (f.tiltX, f.tiltY);
+        counts.tiltFull = f.wobble > 0.0 ? counts.tiltDrawn / f.wobble : 0.0;
+        counts.tiltBottom = bottom.geometry != nullptr ? std::hypot (bottom.frame.tiltX, bottom.frame.tiltY) : 0.0;
+    }
     ++counts.frames;
     counts.totalMs += ms;
     counts.worstMs = std::max (counts.worstMs, ms);
@@ -1372,10 +1410,11 @@ juce::Image CymbalView::renderStill (float scale) const
         }
         drawCymbal (geo, lift);
         const double zb = geo.restHeight (0.0) + lift;
+        const wire::Frame atRest; // no tilt or spin
         std::vector<std::array<float, 2>> hull;
         for (const auto& solid : wire::hiHatHardware().solids)
         {
-            wire::silhouette (geo.camera, solid, zb, hull);
+            wire::silhouette (geo.camera, atRest, solid, zb, hull);
             juce::Path p;
             for (size_t k = 0; k < hull.size(); ++k)
                 k == 0 ? p.startNewSubPath (hull[k][0], hull[k][1]) : p.lineTo (hull[k][0], hull[k][1]);
@@ -1388,8 +1427,8 @@ juce::Image CymbalView::renderStill (float scale) const
         for (const auto& l : wire::hiHatHardware().lines)
         {
             double ax = 0.0, ay = 0.0, bx = 0.0, by = 0.0;
-            geo.camera.project (l.x0, l.y0, zb + l.z0, ax, ay);
-            geo.camera.project (l.x1, l.y1, zb + l.z1, bx, by);
+            wire::projectHardware (geo.camera, atRest, zb, l.x0, l.y0, l.z0, ax, ay);
+            wire::projectHardware (geo.camera, atRest, zb, l.x1, l.y1, l.z1, bx, by);
             hg.setColour (toColour (l.colour));
             hg.drawLine ((float) ax, (float) ay, (float) bx, (float) by, l.width);
         }
