@@ -66,10 +66,11 @@
 //     the bake's knots at the strike's openness and velocity (docs/hihat_reference.py), at the
 //     strike; each mode's level is its weight x its band's envelope x a gain the pedal moves.
 //     The pedal (setPedal) sets the openness, smoothed; a strike more open than the pedal now is
-//     choked per band, and a TIP or EDGE strike less open than it opens up (HiHat.level_step);
-//     the pedal closing fires FOOT itself. A TIP or EDGE strike rings on past its captured
-//     envelope at its openness's rate, to 120 dB under its peak or kHiHatMaxRingS; a FOOT ends
-//     with its envelope and a 10 ms fade. The shared oscillator carries no decay, and the pool
+//     choked per band, and a TIP or EDGE strike less open than it opens up (HiHat.level_step):
+//     once opened, its band levels follow a step of their own, which the envelope's dropouts
+//     cannot move. The pedal closing fires FOOT itself. A TIP or EDGE strike rings on past its
+//     captured envelope at its openness's rate, to 120 dB under its peak or kHiHatMaxRingS; a
+//     FOOT ends with its envelope and a 10 ms fade. The shared oscillator carries no decay, and the pool
 //     holds kMaxPool strikes, none merged: when it is full the quietest is replaced.
 //
 // Thread use: the constructor and prepare() allocate and must not run on the audio
@@ -270,7 +271,9 @@ private:
         bool hhChoke = false;           // struck open: the pedal can choke it
         // TIP and EDGE (not FOOT): the pedal opening after the strike opens it up, and past its
         // captured envelope it rings on at its openness's rate, to -120 dB or kHiHatMaxRingS.
-        bool hhOpens = false;
+        // hhOpened: it has opened up (from its first opening block on, its band levels follow
+        // HiHat.level_step's opened step on every block, whatever the pedal does).
+        bool hhOpens = false, hhOpened = false;
         double hhChokeT = 0.0, hhT1 = -1.0;
         std::array<double, kExcitationBands> hhGain {}, hhGain1 {}, hhExtra {}, hhRate0 {}, hhLogRate {}, hhPeak {};
         double hhScale = 0.0, hhLevel = 0.0; // its peak level (with its calibration), its loudest band now
@@ -658,8 +661,12 @@ private:
     bool hihat_ = false;
     // HiHat.level_step's constants (docs/hihat_reference.py): the openness over which a ringing
     // strike blends from its own envelope to the pedal's rate (OPEN_BLEND), how long after the
-    // strike the pedal can open it up (OPEN_AFTER), and the longest a TIP or EDGE strike rings.
+    // strike the pedal can open it up (OPEN_AFTER), and the longest a TIP or EDGE strike rings;
+    // how far the pedal must be above the strike's openness to open it up (OPEN_EPS, half a CC
+    // step), and the largest log step per second an opened strike takes from its envelope
+    // (STEP_MAX).
     static constexpr double kHiHatOpenBlend = 0.1, kHiHatOpenAfterS = 0.03, kHiHatMaxRingS = 8.0;
+    static constexpr double kHiHatOpenEps = 0.004, kHiHatStepMax = 50.0;
     std::vector<int8_t> hhArt_;
     int hhFootSlot_ = -1;
     std::vector<std::vector<double>> hhLnStick_, hhLnRaw_;
