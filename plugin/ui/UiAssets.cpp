@@ -50,6 +50,31 @@ float capHeightInEm (const char* data, int size)
     return upem > 0 && cap > 0 ? (float) cap / (float) upem : 0.0f;
 }
 
+// unitsPerEm / (hhea ascender - descender) of a TrueType/OpenType font, or 0 if the tables
+// are missing.
+float emPerHeightFromHhea (const char* data, int size)
+{
+    const auto* d = reinterpret_cast<const unsigned char*> (data);
+    auto u16 = [d] (int o) { return (int) ((d[o] << 8) | d[o + 1]); };
+    auto u32 = [d] (int o) { return ((juce::uint32) d[o] << 24) | ((juce::uint32) d[o + 1] << 16) | ((juce::uint32) d[o + 2] << 8) | d[o + 3]; };
+    if (size < 12)
+        return 0.0f;
+    const int numTables = u16 (4);
+    int head = -1, hhea = -1;
+    for (int i = 0; i < numTables && 12 + 16 * i + 16 <= size; ++i)
+    {
+        const int rec = 12 + 16 * i;
+        const auto off = (int) u32 (rec + 8);
+        if (std::memcmp (d + rec, "head", 4) == 0) head = off;
+        if (std::memcmp (d + rec, "hhea", 4) == 0) hhea = off;
+    }
+    if (head < 0 || hhea < 0 || head + 20 > size || hhea + 8 > size)
+        return 0.0f;
+    const int upem = u16 (head + 18);
+    const int ascender = (int) (juce::int16) u16 (hhea + 4), descender = (int) (juce::int16) u16 (hhea + 6);
+    return upem > 0 && ascender - descender > 0 ? (float) upem / (float) (ascender - descender) : 0.0f;
+}
+
 juce::GlyphArrangement arrange (const juce::Font& font, const juce::String& text)
 {
     juce::GlyphArrangement ga;
@@ -84,6 +109,13 @@ Assets::Assets()
         if (cap > 0.0f && ink > 0.0f)
             emPerHeight = ink / (100.0f * cap);
     }
+
+    if (const char* logoData = resource ("PinyonScript-Regular.ttf", size))
+    {
+        logoTypeface = juce::Typeface::createSystemTypefaceFor (logoData, (size_t) size);
+        if (const float e = emPerHeightFromHhea (logoData, size); e > 0.0f)
+            logoEmPerHeight = e;
+    }
 }
 
 // The spec's sizes are em sizes in design units (Kris's measurements with Carlito).
@@ -93,6 +125,13 @@ juce::Font Assets::font (float sizePx, float spacingPx) const
     f.setHeight (sizePx / emPerHeight);
     if (spacingPx != 0.0f)
         f.setExtraKerningFactor (spacingPx / f.getHeight());
+    return f;
+}
+
+juce::Font Assets::logoFont (float sizePx) const
+{
+    juce::Font f = logoTypeface != nullptr ? juce::Font (logoTypeface) : juce::Font (sizePx);
+    f.setHeight (sizePx / logoEmPerHeight);
     return f;
 }
 

@@ -212,8 +212,10 @@ jobs:
       # the MIDI channel, the slot notes (drag, menu, RESET DEFAULT, note list), a stick, the
       # preset and a stick of that preset, then SWISH, RAVEN and KONSTAN CRASH 18", in the
       # editor, and check the plugin's saved state; the scroll wheel over the knobs and boxes
-      # must change nothing. Then click TUNING: the Tuning window must be visible, in front of
-      # the editor and attached to it;
+      # must change nothing; dragging, double-clicking and automating each of the five knobs
+      # must move its parameter and the value the knob shows, which its position arc is drawn
+      # from (docs/UI_SPEC.md section 6). Then click TUNING: the Tuning window must be
+      # visible, in front of the editor and attached to it;
       # the wheel over its sliders and numeric boxes must change nothing; EDGE VOICE FROM BOW
       # must move on KONSTAN, RAVEN, SWISH, HAMMERED and SMOKE; SWISH's bow_shoulder must take
       # NOVA SHOULDER PROFILE's bow profile, and NOVA RIDE must have no such button; NOVA's first articulation's
@@ -225,7 +227,7 @@ jobs:
         timeout-minutes: 5
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
-          STEPS="edge sticks channel drag reset none edgereset list stick preset shoulder swish raven konstan wheel tuning wheeltuning voice raven voice swish voice profile preset voice smoke voice nova noprofile clickweights hitvariation savetuning loadtuning tuningclose"
+          STEPS="edge sticks channel drag reset none edgereset list stick preset shoulder swish raven konstan wheel arcs tuning wheeltuning voice raven voice swish voice profile preset voice smoke voice nova noprofile clickweights hitvariation savetuning loadtuning tuningclose"
           echo "--- VST3 ---"
           "$UITEST" "$PWD/$VST3" $STEPS
           echo "--- AU ---"

@@ -114,7 +114,7 @@ void uncover (NSWindow* window, NSPoint location)
     [other setFrameOrigin: NSMakePoint (p.x + 24.0, NSMinY (f))];
 }
 
-void post (NSWindow* window, NSEventType type, NSPoint location)
+void post (NSWindow* window, NSEventType type, NSPoint location, int clickCount = 1)
 {
     NSEvent* e = [NSEvent mouseEventWithType: type
                                     location: location
@@ -123,7 +123,7 @@ void post (NSWindow* window, NSEventType type, NSPoint location)
                                 windowNumber: [window windowNumber]
                                      context: nil
                                  eventNumber: 0
-                                  clickCount: 1
+                                  clickCount: clickCount
                                     pressure: type == NSEventTypeLeftMouseUp ? 0.0f : 1.0f];
     [NSApp postEvent: e atStart: NO];
 }
@@ -161,6 +161,17 @@ id findShowing (NSWindow* window, NSString* text, bool prefix)
         if (showsText (e, text, prefix))
             return e;
     return nil;
+}
+
+// The accessibility elements of `view` and of every view inside it: a plugin's editor is a
+// view of its own (the plugin's JUCE) inside the host's window.
+void collectFromViews (NSView* view, NSMutableArray* out)
+{
+    if (view == nil)
+        return;
+    collectElements (view, out, 0);
+    for (NSView* sub in [view subviews])
+        collectFromViews (sub, out);
 }
 
 // The slider whose frame holds the middle of `row` vertically, right of it.
@@ -291,6 +302,43 @@ void putBack()
         return;
     [movedWindow setFrameOrigin: movedFrom];
     movedWindow = nil;
+}
+
+void doubleClick (juce::Component& target, juce::Point<float> p)
+{
+    NSWindow* window = nil;
+    const NSPoint loc = windowPoint (target, p, window);
+    [NSApp activateIgnoringOtherApps: YES];
+    [window makeKeyAndOrderFront: nil];
+    uncover (window, loc);
+    post (window, NSEventTypeMouseMoved, loc);
+    post (window, NSEventTypeLeftMouseDown, loc, 1);
+    post (window, NSEventTypeLeftMouseUp, loc, 1);
+    post (window, NSEventTypeLeftMouseDown, loc, 2);
+    post (window, NSEventTypeLeftMouseUp, loc, 2);
+}
+
+juce::String sliderText (juce::Component& target, juce::Point<float> p)
+{
+    NSWindow* window = nil;
+    const NSPoint loc = windowPoint (target, p, window);
+    if (window == nil)
+        return "no window";
+    const NSPoint screen = [window convertRectToScreen: NSMakeRect (loc.x, loc.y, 0.0, 0.0)].origin;
+    NSMutableArray* all = [NSMutableArray array];
+    collectFromViews ([window contentView], all);
+    for (id e in all)
+    {
+        if (! [e respondsToSelector: @selector (accessibilityRole)] || ! [e respondsToSelector: @selector (accessibilityFrame)])
+            continue;
+        if (! [[e accessibilityRole] isEqualToString: NSAccessibilitySliderRole] || ! NSPointInRect (screen, [e accessibilityFrame]))
+            continue;
+        id v = [e respondsToSelector: @selector (accessibilityValue)] ? [e accessibilityValue] : nil;
+        if ([v isKindOfClass: [NSString class]])
+            return juce::String::fromUTF8 ([(NSString*) v UTF8String]);
+        return v != nil ? juce::String::fromUTF8 ([[v description] UTF8String]) : juce::String ("(no value)");
+    }
+    return "no slider at the point";
 }
 
 juce::String wheel (juce::Component& target, juce::Point<float> p)

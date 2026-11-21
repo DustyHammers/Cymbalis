@@ -103,16 +103,19 @@ foreach(preset nova_ride smoke_flat_ride hammered_thin_ride swish raven konstan)
 endforeach()
 
 # ---------------------------------------------------------------------------
-# Compiled-in resources: the packed presets, and the UI artwork and font. The presets' photos
+# Compiled-in resources: the packed presets, and the UI artwork and fonts. The presets' photos
 # in resources/ui/ are references only: the editor draws a wireframe cymbal instead
 # (docs/UI_SPEC.md section 11). Calibri Light is used when resources/ui/calibril.ttf exists;
-# Carlito Regular stands in until then.
+# Carlito Regular stands in until then. Pinyon Script draws the DHammers logo (UI_SPEC
+# section 4). Both fonts are under the SIL Open Font License 1.1 (their licence files are next
+# to them in resources/ui/; docs/BUILDS.md).
 # ---------------------------------------------------------------------------
 set(CYMBALIS_RESOURCES
     ${CYMBALIS_PACKED_PRESETS}
     resources/ui/CYMBALIS_Background_logo.png
     resources/ui/knob.png
     resources/ui/Carlito-Regular.ttf
+    resources/ui/PinyonScript-Regular.ttf
 )
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/ui/calibril.ttf")
     list(APPEND CYMBALIS_RESOURCES resources/ui/calibril.ttf)

@@ -19,15 +19,23 @@ namespace cymbalis::ui
 {
 
 // A knob drawn from the filmstrip (UI_SPEC sections 1, 6): vertical drag, double-click
-// resets to the default.
+// resets to the default. Around it, its position arc (UI_SPEC section 6): from 7 o'clock for
+// a unipolar knob, from 12 o'clock to either side for a bipolar one (Pan). The component is
+// the filmstrip's 128 x 128 plus a margin that holds the arc; only the filmstrip's square
+// takes the mouse.
 class Knob final : public juce::Slider
 {
 public:
-    explicit Knob (const Assets& assets);
+    Knob (const Assets& assets, bool bipolar);
     void paint (juce::Graphics& g) override;
+    bool hitTest (int x, int y) override;
+
+    static constexpr int margin = 4;              // around the filmstrip, for the arc
+    static constexpr int size = 128 + 2 * margin; // the component's width and height
 
 private:
     const Assets& assets;
+    const bool bipolar;
 };
 
 // The CYMBAL and MIDI CHANNEL boxes: value text, dropdown arrow, hover and open outlines.
@@ -230,6 +238,7 @@ private:
     std::unique_ptr<HitTracker> hitTracker;
 
     std::array<KnobSpec, 5> knobSpecs;
+    juce::Path logoPath; // the DHammers logo, in design units (paintLabels)
     std::array<std::unique_ptr<Knob>, 5> knobs;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, 5> attachments;
     int draggingKnob = -1;
