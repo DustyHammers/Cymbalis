@@ -17,20 +17,30 @@ Model (prototype renders approved by ear in the project session, 2026-11-20):
   difference between the closed tip and the closed edge at that velocity, with the closed tip's
   mode weights.
 - The pedal moves a ringing strike's decay both ways (approved by Kris, 2026-11-21: prototype
-  renders, version B). Per strike and band its level L (natural log of amplitude) is followed at
-  the control rate (at most 10 ms): L(t) = L(t - dt) + level_step(s_env, o_strike, o_now, dt,
-  t_since_strike), s_env being the captured envelope's own log step over dt (ln E(t) - ln E(t - dt),
-  as the strike reads its envelope), o_strike its openness at the strike, o_now the pedal's
-  smoothed openness now. rate(o) is interpolated in log between the knots' measured band decay rates.
-  - Closing (o_now < o_strike), the pedal choke: the strike is damped further at each band's
-    extra rate max(rate(o_now), CHOKE_RATE x (o_strike - o_now) / o_strike) - rate(o_strike),
-    never negative (choke_rate).
-  - Opening (o_now > o_strike), from OPEN_AFTER after the strike: the step blends from the
-    envelope's own to the pedal's rate, w = min(1, (o_now - o_strike) / OPEN_BLEND), slope =
-    (1 - w) s_env + w (-rate(o_now) dt), never above max(s_env, 0): opening never makes a band
-    louder (a captured bloom still shows). Fully opened (w = 1) it decays at rate(o_now) from the
-    level it had.
-  - Otherwise (o_now = o_strike, or the first OPEN_AFTER): s_env.
+  renders, version B; the opened state, the threshold and the clamp: Kris, 2026-11-21, the pedal
+  bursts fix). Per strike and band its level L (natural log of amplitude) is followed at the
+  control rate (at most 10 ms): L(t) = L(t - dt) + step, (step, opened) = level_step(s_env,
+  o_strike, o_now, dt, t_since_strike, opened), s_env being the captured envelope's own log step
+  over dt (ln E(t) - ln E(t - dt), as the strike reads its envelope), o_strike its openness at the
+  strike, o_now the pedal's smoothed openness now, `opened` whether the strike has opened up
+  (False at the strike; level_step returns it). rate(o) is interpolated in log between the knots'
+  measured band decay rates.
+  - A strike that has not opened up follows its envelope: closing (o_now < o_strike), the pedal
+    choke damps it further at each band's extra rate max(rate(o_now), CHOKE_RATE x (o_strike -
+    o_now) / o_strike) - rate(o_strike), never negative (choke_rate); otherwise s_env.
+  - Opening (o_now > o_strike + OPEN_EPS, half a CC step, so a pedal still settling towards where
+    it was at the strike does not count), from OPEN_AFTER after the strike: the strike has opened
+    up, from this step on for the rest of its life.
+  - Once opened, its level is a state of its own: the envelope gives only its step clamped,
+    s_c = s_env clipped to +-STEP_MAX dt (-STEP_MAX dt where either end of the step is 0). SPEAR's
+    partials stop and restart, so a knot's band envelope can fall to its floor for a few frames
+    and come back (a log step of about -20 and then +20); clamped, these dropouts cannot move the
+    level, nor leave it raised when the pedal step changes while the envelope is down. On every
+    step: opening, the step blends from the envelope's own to the pedal's rate, w = min(1, (o_now
+    - o_strike) / OPEN_BLEND), slope = (1 - w) s_c + w (-rate(o_now) dt), never above max(s_c, 0):
+    opening never makes a band louder (a captured bloom still shows), and fully opened (w = 1) it
+    decays at rate(o_now) from the level it had; closing, s_c less the choke's extra rate x dt;
+    otherwise (the pedal within OPEN_EPS of o_strike) s_c.
   - Past the end of its captured envelope a strike takes s_env = -rate(o_strike) dt, so a hit
     opened after it was struck rings on at the opening's rate instead of stopping when its closed
     data ends. It ends when every band is 120 dB under its peak level, or at MAX_RING_S at most,
@@ -47,6 +57,8 @@ E22 = 11404 * 2 ** ((np.arange(NB + 1) - 21) / 3)
 CHOKE_RATE = 6.91 / 0.3          # 1/s (amplitude): every band at least a 0.3 s T60 when fully closed
 OPEN_BLEND = 0.1                 # the openness over which an opened strike blends to the pedal's rate
 OPEN_AFTER = 0.03                # s: the pedal opens a strike up only from this long after it
+OPEN_EPS = 0.004                 # the pedal opens a strike up only this far above its openness (half a CC step)
+STEP_MAX = 50.0                  # 1/s: the largest log step per second an opened strike takes from its envelope
 MAX_RING_S = 8.0                 # s: the longest a TIP or EDGE strike rings
 IMPULSE_LOOK = 5                 # frames searched for the band's peak
 IMPULSE_MAX_DB = 9.0
@@ -162,18 +174,28 @@ class HiHat:
         target = np.maximum(self.rate(o_now), CHOKE_RATE * (o_strike - o_now) / max(o_strike, 1e-6))
         return np.maximum(target - self.rate(o_strike), 0.0)
 
-    def level_step(self, s_env, o_strike, o_now, dt, t_since_strike):
+    def level_step(self, s_env, o_strike, o_now, dt, t_since_strike, opened=False):
         """A ringing strike's log level step per band over dt (natural log of amplitude; see the
-        module's docstring). s_env: the captured envelope's own log step per band over dt
-        (ln E(t) - ln E(t - dt); past the end of its captured envelope -rate(o_strike) dt)."""
+        module's docstring), and whether it has opened up. s_env: the captured envelope's own log
+        step per band over dt (ln E(t) - ln E(t - dt); past the end of its captured envelope
+        -rate(o_strike) dt; not finite where either end is 0). opened: whether the strike had
+        opened up before this step (False at the strike). Returns (step, opened)."""
         s_env = np.asarray(s_env, float)
-        if o_now < o_strike:
-            return s_env - self.choke_rate(o_strike, o_now) * dt
-        if o_now > o_strike and t_since_strike >= OPEN_AFTER:
+        opening = o_now > o_strike + OPEN_EPS and t_since_strike >= OPEN_AFTER
+        opened = opened or opening
+        if not opened:
+            if o_now < o_strike:
+                return s_env - self.choke_rate(o_strike, o_now) * dt, False
+            return s_env, False
+        m = STEP_MAX * dt
+        s_c = np.where(np.isfinite(s_env), np.clip(s_env, -m, m), -m)
+        if opening:
             w = min(1.0, (o_now - o_strike) / OPEN_BLEND)
-            slope = (1.0 - w) * s_env + w * (-self.rate(o_now) * dt)
-            return np.minimum(slope, np.maximum(s_env, 0.0))
-        return s_env
+            slope = (1.0 - w) * s_c + w * (-self.rate(o_now) * dt)
+            return np.minimum(slope, np.maximum(s_c, 0.0)), True
+        if o_now < o_strike:
+            return s_c - self.choke_rate(o_strike, o_now) * dt, True
+        return s_c, True
 
 
 def foot_velocity(open_history, dt):
