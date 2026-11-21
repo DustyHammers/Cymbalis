@@ -233,7 +233,7 @@ jobs:
         timeout-minutes: 5
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
-          STEPS="edge sticks channel drag reset none edgereset list stick preset shoulder swish raven konstan hihat blendhidden hihatplay hihatpedal pedalchannel pedalcc konstan blendshown wheel arcs tuning wheeltuning voice raven voice swish voice profile preset voice smoke voice nova noprofile clickweights hitvariation savetuning loadtuning hihat hihattuning tuningclose tuning tuningclose"
+          STEPS="edge sticks channel drag reset none edgereset list stick preset shoulder swish raven konstan hihat blendhidden hihatplay hihatpedal hihatswing pedalchannel pedalcc konstan blendshown wheel arcs tuning wheeltuning voice raven voice swish voice profile preset voice smoke voice nova noprofile clickweights hitvariation savetuning loadtuning hihat hihattuning tuningclose tuning tuningclose"
           echo "--- VST3 ---"
           "$UITEST" "$PWD/$VST3" $STEPS
           echo "--- AU ---"

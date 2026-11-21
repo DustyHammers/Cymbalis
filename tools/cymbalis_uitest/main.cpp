@@ -33,6 +33,11 @@
 //             64, 127 and 0 again, each held 1 s: the hats and the pedal drawing must show that
 //             opening (their accessibility descriptions, "open 0.504")
 //                                                                    -> followed
+//   hihatswing (on HI-HAT, after hihatplay) a BOW hit with the pedal closed, then one with it
+//             open: a tick after each, the hats' last frame must show the hit's wobble at 0.15 of
+//             its size closed and all of it open (their accessibility description: "wobble 0.150,
+//             top tilt ... of ..."), and the bottom cymbal no tilt; the pedal closed again
+//                                                                    -> scaled
 //   pedalchannel (on HI-HAT, after hihatplay) MIDI CHANNEL set to 16 in its grid, then the pedal
 //             CC sent on channel 1 (as a keyboard's mod wheel), sweeping 0 -> 127 -> 0 in steps:
 //             after each, the hats and the pedal drawing must show its opening, and over the
@@ -435,6 +440,28 @@ private:
             juce::MidiBuffer midi;
             if (b == 0)
                 midi.addEvent (juce::MidiMessage::controllerEvent (ch, cc, value), 0);
+            buffer.clear();
+            plugin->processBlock (buffer, midi);
+        }
+        return {};
+    }
+
+    // hihatswing: the hi-hat's BOW note (the session's), velocity 110, on the session's channel,
+    // then 0.05 s rendered.
+    juce::String playBow()
+    {
+        std::unique_ptr<juce::XmlElement> xml (juce::parseXML (sessionNow()));
+        if (xml == nullptr)
+            return "no session";
+        const int ch = xml->getIntAttribute ("midiChannel", 16), note = xml->getIntAttribute ("note_hihat_BOW", -1);
+        if (note < 0)
+            return "no BOW note";
+        juce::AudioBuffer<float> buffer (juce::jmax (2, plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels()), 512);
+        for (int b = 0; b < 5; ++b)
+        {
+            juce::MidiBuffer midi;
+            if (b == 0)
+                midi.addEvent (juce::MidiMessage::noteOn (ch, note, (juce::uint8) 110), 0);
             buffer.clear();
             plugin->processBlock (buffer, midi);
         }
@@ -991,6 +1018,43 @@ private:
                         wrong << " CC " << value << ": " << text << ";";
                 }
                 return wrong.isEmpty() ? juce::String ("followed") : "not followed:" + wrong;
+            };
+        }
+        else if (name == "hihatswing")
+        {
+            // Each hit read a tick after it (the hats draw a frame at 30 Hz while a hit moves them).
+            auto seen = std::make_shared<juce::StringArray>();
+            const auto read = [this, seen] { seen->add (cymbalis::uitest::elementText (*editor, "HI-HAT")); };
+            const auto act = [this] (std::function<juce::String()> f) {
+                return [this, f] {
+                    if (actionError.isEmpty())
+                        actionError = f();
+                };
+            };
+            s.actions = { act ([this] { return sendPedal (0); }), act ([this] { return playBow(); }), read,
+                          act ([this] { return sendPedal (127); }), act ([this] { return playBow(); }), read,
+                          act ([this] { return sendPedal (0); }), wait };
+            s.key = "hi-hat wobble";
+            s.expected = "scaled";
+            s.probe = [this, seen] {
+                if (actionError.isNotEmpty())
+                    return actionError;
+                juce::String wrong;
+                const double expectShare[] = { 0.15, 1.0 };
+                for (int k = 0; k < 2; ++k)
+                {
+                    const auto text = (*seen)[k];
+                    std::printf ("      %s: %s\n", k == 0 ? "closed" : "open", text.toRawUTF8());
+                    const auto num = [&text] (const char* after) {
+                        return text.fromFirstOccurrenceOf (after, false, false).getDoubleValue();
+                    };
+                    const double share = num ("wobble "), drawn = num ("top tilt "), full = num (" of "), bottom = num ("bottom tilt ");
+                    const bool ok = std::abs (share - expectShare[k]) < 0.005 && full > 1e-5 && std::abs (drawn - share * full) <= 0.02 * full + 1e-6
+                                    && bottom <= 0.0 && text.contains ("bottom tilt ");
+                    if (! ok)
+                        wrong << (k == 0 ? " closed: " : " open: ") << text << ";";
+                }
+                return wrong.isEmpty() ? juce::String ("scaled") : "not as expected:" + wrong;
             };
         }
         else if (name == "pedalchannel")

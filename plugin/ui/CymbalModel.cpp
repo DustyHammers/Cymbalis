@@ -1078,9 +1078,10 @@ void evaluate (const Geometry& g, const Hit* hits, int numHits, double nowMs, Fr
             f.intensity = (float) ((0.4 + 0.6 * v) * k);
         }
     }
-    out.tiltX = tx;
-    out.tiltY = ty;
-    out.spinDeg = spin;
+    // The hi-hat's top cymbal shows only a share of the wobble (Frame::wobble).
+    out.tiltX = tx * out.wobble;
+    out.tiltY = ty * out.wobble;
+    out.spinDeg = spin * out.wobble;
 
     float peak = 0.0f;
     if (dented)
@@ -1269,14 +1270,22 @@ const HiHatHardware& hiHatHardware()
     return hardware;
 }
 
-void silhouette (const Camera& cam, const HardwareSolid& s, double zb, std::vector<std::array<float, 2>>& hull)
+void projectHardware (const Camera& cam, const Frame& top, double zb, double x, double y, double z, double& sx, double& sy) noexcept
+{
+    // As projectVertex: turned by the spin, then the tilt's plane.
+    const double a = top.spinDeg * pi / 180.0, c = std::cos (a), s = std::sin (a);
+    const double X = x * c - y * s, Y = x * s + y * c;
+    cam.project (X, Y, zb + z - 2.2 * (X * top.tiltX + Y * top.tiltY), sx, sy);
+}
+
+void silhouette (const Camera& cam, const Frame& top, const HardwareSolid& s, double zb, std::vector<std::array<float, 2>>& hull)
 {
     std::array<std::array<double, 2>, 98> p {};
     for (int k = 0; k < 49; ++k)
     {
         const double t = twoPi * k / 48.0;
-        cam.project (s.r * std::cos (t), s.r * std::sin (t), zb + s.z0, p[(size_t) k][0], p[(size_t) k][1]);
-        cam.project (s.r * std::cos (t), s.r * std::sin (t), zb + s.z1, p[(size_t) (49 + k)][0], p[(size_t) (49 + k)][1]);
+        projectHardware (cam, top, zb, s.r * std::cos (t), s.r * std::sin (t), s.z0, p[(size_t) k][0], p[(size_t) k][1]);
+        projectHardware (cam, top, zb, s.r * std::cos (t), s.r * std::sin (t), s.z1, p[(size_t) (49 + k)][0], p[(size_t) (49 + k)][1]);
     }
     // Andrew's monotone chain.
     std::sort (p.begin(), p.end());

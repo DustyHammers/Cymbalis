@@ -64,11 +64,13 @@
 //   - HI-HAT (bakes with a hihat block, tools/bake_hihat.py; docs/PORT_MAP.md, "Hi-hat"): every
 //     strike is an envelope strike whose band envelopes and mode weights are interpolated from
 //     the bake's knots at the strike's openness and velocity (docs/hihat_reference.py), at the
-//     strike; each mode's level is its weight x its band's envelope for the envelope's whole
-//     length, then a 10 ms fade ends the strike. The pedal (setPedal) sets the openness,
-//     smoothed; a strike more open than the pedal now is choked per band; the pedal closing
-//     fires FOOT itself. The shared oscillator carries no decay, and the pool holds kMaxPool
-//     strikes, none merged: when it is full the quietest is replaced.
+//     strike; each mode's level is its weight x its band's envelope x a gain the pedal moves.
+//     The pedal (setPedal) sets the openness, smoothed; a strike more open than the pedal now is
+//     choked per band, and a TIP or EDGE strike less open than it opens up (HiHat.level_step);
+//     the pedal closing fires FOOT itself. A TIP or EDGE strike rings on past its captured
+//     envelope at its openness's rate, to 120 dB under its peak or kHiHatMaxRingS; a FOOT ends
+//     with its envelope and a 10 ms fade. The shared oscillator carries no decay, and the pool
+//     holds kMaxPool strikes, none merged: when it is full the quietest is replaced.
 //
 // Thread use: the constructor and prepare() allocate and must not run on the audio
 // thread. strike() and process() never allocate, lock or touch files.
@@ -257,15 +259,20 @@ private:
         std::vector<float> emax;        // largest band envelope of each mode (bound for dropping)
         // Hi-hat strikes only: this strike's own band envelopes, divided by their peak (bands x
         // (maxFrames + 1) floats, frameS apart; frame hhFrames - 1 is the zero the end fade
-        // reaches), the openness it was struck at, and the pedal choke: per band the gain at
-        // hhChokeT and the extra decay rate (amplitude, 1/s) from there, the gain at hhT1 (the
-        // current block's end), and the band decay rates at its openness.
+        // reaches), the openness it was struck at, and what the pedal does to it (HiHat.level_step
+        // of docs/hihat_reference.py): per band the gain on its envelope at hhChokeT and the rate
+        // its log changed at since (1/s), the gain at hhT1 (the current block's end), the choke's
+        // extra decay rate (amplitude, 1/s), the band decay rates at its openness, and each band's
+        // peak (the envelope's, so the gain never takes a band above it).
         std::vector<float> hhEnv;
         int hhFrames = 0;
         double hhOpen = 0.0;
         bool hhChoke = false;           // struck open: the pedal can choke it
+        // TIP and EDGE (not FOOT): the pedal opening after the strike opens it up, and past its
+        // captured envelope it rings on at its openness's rate, to -120 dB or kHiHatMaxRingS.
+        bool hhOpens = false;
         double hhChokeT = 0.0, hhT1 = -1.0;
-        std::array<double, kExcitationBands> hhGain {}, hhGain1 {}, hhExtra {}, hhRate0 {};
+        std::array<double, kExcitationBands> hhGain {}, hhGain1 {}, hhExtra {}, hhRate0 {}, hhLogRate {}, hhPeak {};
         double hhScale = 0.0, hhLevel = 0.0; // its peak level (with its calibration), its loudest band now
     };
 
@@ -363,7 +370,15 @@ private:
     void hiHatClosedLevel(int articulation, double velocity, double* outDb) const noexcept;
     double hiHatEnvelopeAt(const Component& c, int band, double te) const noexcept;
     void hiHatRate(double openness, double* out) const noexcept;
-    void hiHatChoke(Component& c, double t0, double t1, double& openNow, bool& rateDone) noexcept;
+    // What the pedal does to a strike over a block (HiHat.level_step): none, the choke (closing),
+    // or opening it up, with the opening's blend weight.
+    enum class PedalStep
+    {
+        none,
+        closing,
+        opening
+    };
+    PedalStep hiHatPedalStep(Component& c, double t0, double t1, double& openNow, bool& rateDone, double& blend) noexcept;
     Component& allocateHiHat() noexcept;
     double pedalAt(double t) const noexcept;
     void footStrike() noexcept;
@@ -639,8 +654,12 @@ private:
     // raw: the closed EDGE knots); the band decay rates' knots in log (rate knots x bands);
     // scratch for a strike's envelope (bands x maxFrames); a closed TIP strike's peak level per
     // band at velocity 1 (the cascade's and damping's reference); the band rates at the pedal's
-    // openness now (hiHatChoke).
+    // openness now (hiHatPedalStep).
     bool hihat_ = false;
+    // HiHat.level_step's constants (docs/hihat_reference.py): the openness over which a ringing
+    // strike blends from its own envelope to the pedal's rate (OPEN_BLEND), how long after the
+    // strike the pedal can open it up (OPEN_AFTER), and the longest a TIP or EDGE strike rings.
+    static constexpr double kHiHatOpenBlend = 0.1, kHiHatOpenAfterS = 0.03, kHiHatMaxRingS = 8.0;
     std::vector<int8_t> hhArt_;
     int hhFootSlot_ = -1;
     std::vector<std::vector<double>> hhLnStick_, hhLnRaw_;

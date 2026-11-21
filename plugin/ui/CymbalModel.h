@@ -247,6 +247,10 @@ struct Frame
     // A vertical offset of the whole cymbal, fractions of R (the hi-hat's top cymbal, raised by
     // the pedal's opening). Set by the caller; evaluate keeps it.
     double lift = 0.0;
+    // The share of the hits' wobble (tilt and spin) the cymbal shows: 1, or on the hi-hat's top
+    // cymbal 0.15 + 0.85 o with o the pedal's opening at this frame. Set by the caller; evaluate
+    // keeps it.
+    double wobble = 1.0;
     double yTop = 0.0, yBottom = 1.0;
     struct Flash
     {
@@ -308,8 +312,12 @@ struct HiHatHardware
 };
 const HiHatHardware& hiHatHardware();
 
+// A point of the clutch or rod (x, y, z above zb) on screen, with the top cymbal's frame: its spin
+// and tilt (the clutch and rod tilt and spin with the top cymbal; zb includes the lift).
+void projectHardware (const Camera& cam, const Frame& top, double zb, double x, double y, double z, double& sx, double& sy) noexcept;
 // A solid's silhouette on screen (design units): the convex hull of its end circles (49 points
-// each, the reference's sil_cyl), its points in order around, the solid standing on zb.
-void silhouette (const Camera& cam, const HardwareSolid& s, double zb, std::vector<std::array<float, 2>>& hull);
+// each, the reference's sil_cyl), its points in order around, the solid standing on zb, with the
+// top cymbal's spin and tilt.
+void silhouette (const Camera& cam, const Frame& top, const HardwareSolid& s, double zb, std::vector<std::array<float, 2>>& hull);
 
 } // namespace cymbalis::ui::wire

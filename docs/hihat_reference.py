@@ -16,9 +16,27 @@ Model (prototype renders approved by ear in the project session, 2026-11-20):
 - The tip at an opening uses the EDGE's envelope at that opening times the per-band level
   difference between the closed tip and the closed edge at that velocity, with the closed tip's
   mode weights.
-- Pedal choke: while the pedal is more closed than at a strike, the strike is damped further at
-  each band's extra rate: max(rate(o_now), CHOKE_RATE x (o_strike - o_now) / o_strike) - rate(o_strike),
-  never negative; rate(o) is interpolated in log between the knots' measured band decay rates.
+- The pedal moves a ringing strike's decay both ways (approved by Kris, 2026-11-21: prototype
+  renders, version B). Per strike and band its level L (natural log of amplitude) is followed at
+  the control rate (at most 10 ms): L(t) = L(t - dt) + level_step(s_env, o_strike, o_now, dt,
+  t_since_strike), s_env being the captured envelope's own log step over dt (ln E(t) - ln E(t - dt),
+  as the strike reads its envelope), o_strike its openness at the strike, o_now the pedal's
+  smoothed openness now. rate(o) is interpolated in log between the knots' measured band decay rates.
+  - Closing (o_now < o_strike), the pedal choke: the strike is damped further at each band's
+    extra rate max(rate(o_now), CHOKE_RATE x (o_strike - o_now) / o_strike) - rate(o_strike),
+    never negative (choke_rate).
+  - Opening (o_now > o_strike), from OPEN_AFTER after the strike: the step blends from the
+    envelope's own to the pedal's rate, w = min(1, (o_now - o_strike) / OPEN_BLEND), slope =
+    (1 - w) s_env + w (-rate(o_now) dt), never above max(s_env, 0): opening never makes a band
+    louder (a captured bloom still shows). Fully opened (w = 1) it decays at rate(o_now) from the
+    level it had.
+  - Otherwise (o_now = o_strike, or the first OPEN_AFTER): s_env.
+  - Past the end of its captured envelope a strike takes s_env = -rate(o_strike) dt, so a hit
+    opened after it was struck rings on at the opening's rate instead of stopping when its closed
+    data ends. It ends when every band is 120 dB under its peak level, or at MAX_RING_S at most,
+    with the 10 ms end fade.
+  - The openness of a new strike is taken at its note-on. FOOT is unchanged: the plugin applies
+    only the choke to it (it is the pedal closing), and it ends with its captured envelope.
 """
 import json
 import numpy as np
@@ -27,6 +45,9 @@ NB = 22
 FR = 0.01
 E22 = 11404 * 2 ** ((np.arange(NB + 1) - 21) / 3)
 CHOKE_RATE = 6.91 / 0.3          # 1/s (amplitude): every band at least a 0.3 s T60 when fully closed
+OPEN_BLEND = 0.1                 # the openness over which an opened strike blends to the pedal's rate
+OPEN_AFTER = 0.03                # s: the pedal opens a strike up only from this long after it
+MAX_RING_S = 8.0                 # s: the longest a TIP or EDGE strike rings
 IMPULSE_LOOK = 5                 # frames searched for the band's peak
 IMPULSE_MAX_DB = 9.0
 FOOT = dict(closed_below=0.05, rearm_above=0.15, speed_window_s=0.05, full_speed=10.0, v_min=0.1)
@@ -140,6 +161,19 @@ class HiHat:
             return np.zeros(NB)
         target = np.maximum(self.rate(o_now), CHOKE_RATE * (o_strike - o_now) / max(o_strike, 1e-6))
         return np.maximum(target - self.rate(o_strike), 0.0)
+
+    def level_step(self, s_env, o_strike, o_now, dt, t_since_strike):
+        """A ringing strike's log level step per band over dt (natural log of amplitude; see the
+        module's docstring). s_env: the captured envelope's own log step per band over dt
+        (ln E(t) - ln E(t - dt); past the end of its captured envelope -rate(o_strike) dt)."""
+        s_env = np.asarray(s_env, float)
+        if o_now < o_strike:
+            return s_env - self.choke_rate(o_strike, o_now) * dt
+        if o_now > o_strike and t_since_strike >= OPEN_AFTER:
+            w = min(1.0, (o_now - o_strike) / OPEN_BLEND)
+            slope = (1.0 - w) * s_env + w * (-self.rate(o_now) * dt)
+            return np.minimum(slope, np.maximum(s_env, 0.0))
+        return s_env
 
 
 def foot_velocity(open_history, dt):

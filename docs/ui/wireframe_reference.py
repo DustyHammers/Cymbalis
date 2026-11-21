@@ -827,6 +827,11 @@ class Cymbal2:
 # editor's left column (not joined to the cymbals). Clutch, rod and pedal in grey and silver.
 # Top cymbal from Kris's photo (Hi_hat_top): partly lathed, heavily hammered. Bottom (Hi_Hat_bottom):
 # lathed all over with the hammering showing through, an unlathed band at the rim.
+# Hits (approved by Kris, 2026-11-21; hihat_draw draws the hats at rest): the hits' wobble (wobble():
+# the tilt T and the spin) is scaled by 0.15 + 0.85 x openness, the pedal's smoothed openness at each
+# frame (15 % closed, all of it fully open), so closing the pedal on a swinging top cymbal calms it.
+# Only the top cymbal swings: the top cymbal, clutch and rod tilt and spin together; the bottom
+# cymbal stays still. The modal flex and the hit flashes are as on the other cymbals.
 # =====================================================================================
 
 R_IN = 7.0     # 14" hats

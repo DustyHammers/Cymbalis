@@ -58,6 +58,10 @@ public:
         int frames = 0;
         double totalMs = 0.0, worstMs = 0.0;
         int updates = 0, hits = 0;
+        // The last frame's wobble (the hits' tilt, its size): the share drawn (the hi-hat's 0.15 +
+        // 0.85 x its opening; else 1), the top cymbal's drawn and its full tilt, and the hi-hat's
+        // bottom cymbal's (always 0: it stays still).
+        double wobble = 1.0, tiltDrawn = 0.0, tiltFull = 0.0, tiltBottom = 0.0;
     };
     Stats stats() const noexcept;
     void resetStats() noexcept;
@@ -71,6 +75,11 @@ public:
 
 private:
     struct Gpu;
+    class Accessibility;
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
+    // On the hi-hat, for screen readers (and tools/cymbalis_uitest): its opening, and the last
+    // frame's wobble (Stats).
+    juce::String hiHatDescription() const;
 
     void newOpenGLContextCreated() override;
     void renderOpenGL() override;

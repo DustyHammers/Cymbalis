@@ -1655,9 +1655,19 @@ void FastEngine::sumComponents(double t0, double t1) noexcept
         }
         if (hihat_)
         {
-            // The pedal choke over this block, then each band's envelope times it.
-            if (c.hhChoke)
-                hiHatChoke(c, t0, t1, openNow, rateDone);
+            // What the pedal does to it over this block (HiHat.level_step), then each band's
+            // envelope times its gain. A TIP or EDGE strike fades out over the end fade before
+            // kHiHatMaxRingS.
+            double blend = 0.0;
+            const PedalStep step = hiHatPedalStep(c, t0, t1, openNow, rateDone, blend);
+            const double dt = t1 - t0;
+            double fade0 = 1.0, fade1 = 1.0;
+            if (c.hhOpens)
+            {
+                const double fadeS = bake_->hihat.endFadeS;
+                fade0 = clamp01((kHiHatMaxRingS - (t0 - c.tStrike)) / fadeS);
+                fade1 = clamp01((kHiHatMaxRingS - (t1 - c.tStrike)) / fadeS);
+            }
             double level = 0.0, gain = 0.0;
             for (int band = 0; band < kExcitationBands; ++band)
             {
@@ -1676,19 +1686,36 @@ void FastEngine::sumComponents(double t0, double t1) noexcept
                     te1 = ringTime(c, band, te1);
                 }
                 double v0 = hiHatEnvelopeAt(c, band, te0), v1 = hiHatEnvelopeAt(c, band, te1);
-                if (c.hhChoke)
+                // The gain at the block's end: the choke's extra decay; or, opened up, the log
+                // step blended from the envelope's own, s, to the pedal's rate at its openness
+                // now, never above s where s rises (a captured bloom) nor 0 where it falls; the
+                // band never above its peak.
+                const double g0 = c.hhGain[bs];
+                double g1 = g0;
+                if (step == PedalStep::closing)
+                    g1 = c.hhExtra[bs] > 0.0 ? g0 * std::exp(-c.hhExtra[bs] * dt) : g0;
+                else if (step == PedalStep::opening && v0 > 0.0 && v1 > 0.0)
                 {
-                    v0 *= c.hhGain[bs];
-                    v1 *= c.hhGain1[bs];
-                    gain = std::max(gain, c.hhGain1[bs]);
+                    const double s = std::log(v1 / v0);
+                    const double slope = std::min((1.0 - blend) * s - blend * hhRateNow_[bs] * dt, std::max(s, 0.0));
+                    g1 = g0 * std::exp(slope - s);
                 }
+                if (c.hhOpens && v1 * g1 > c.hhPeak[bs])
+                    g1 = c.hhPeak[bs] / v1;
+                c.hhGain1[bs] = g1;
+                c.hhLogRate[bs] = g1 != g0 && dt > 0.0 && g0 > 0.0 && g1 > 0.0 ? std::log(g1 / g0) / dt : 0.0;
+                v0 *= g0 * fade0;
+                v1 *= g1 * fade1;
+                gain = std::max(gain, g1);
                 level = std::max(level, v1);
                 std::fill(c.em0.begin() + bandStart_[bs], c.em0.begin() + bandEnd_[bs], static_cast<float>(v0));
                 std::fill(c.em1.begin() + bandStart_[bs], c.em1.begin() + bandEnd_[bs], static_cast<float>(v1));
             }
             c.hhLevel = level * c.hhScale;
-            if (c.hhChoke && gain < 1e-6)
-                c.envWindow = std::min(c.envWindow, t1 - c.tStrike); // choked out: it ends at the next control point
+            // It ends at the next control point once every band is 120 dB under the strike's peak
+            // (FOOT: once the choke has taken 120 dB off every band).
+            if (c.hhOpens ? level < 1e-6 : (c.hhChoke && gain < 1e-6))
+                c.envWindow = std::min(c.envWindow, t1 - c.tStrike);
             continue;
         }
         const int nb = envBands_;
@@ -4280,6 +4307,7 @@ double FastEngine::hiHatEnvelope(Component& c, int art, double o, double v) noex
             }
         }
         out[nf] = 0.0f; // the end fade reaches 0 one frame after the last
+        c.hhPeak[b] = m * inv;
         envPeakS_[b] = static_cast<double>(kPeak) * h.frameS;
         std::fill(c.emax.begin() + bandStart_[b], c.emax.begin() + bandEnd_[b], static_cast<float>(m * inv));
     }
@@ -4288,11 +4316,18 @@ double FastEngine::hiHatEnvelope(Component& c, int art, double o, double v) noex
 }
 
 // A hi-hat strike's band envelope at te seconds after it: its frames interpolated linearly,
-// the first before 0, 0 from the end fade's zero on.
+// the first before 0, 0 from the end fade's zero on. A TIP or EDGE strike (hhOpens) instead
+// rings on from its last frame at its openness's band rate (HiHat.level_step: past its captured
+// envelope, s_env = -rate(o_strike) dt).
 double FastEngine::hiHatEnvelopeAt(const Component& c, int band, double te) const noexcept
 {
     const double kf = std::max(te / bake_->hihat.frameS, 0.0);
     const int last = c.hhFrames - 1;
+    if (c.hhOpens && kf >= static_cast<double>(last - 1))
+    {
+        const float* e = c.hhEnv.data() + size_t(band) * size_t(bake_->hihat.maxFrames + 1);
+        return e[last - 1] * std::exp(-c.hhRate0[size_t(band)] * (kf - static_cast<double>(last - 1)) * bake_->hihat.frameS);
+    }
     if (kf >= static_cast<double>(last))
         return 0.0;
     const int k0 = static_cast<int>(kf);
@@ -4326,12 +4361,18 @@ void FastEngine::hiHatRate(double o, double* out) const noexcept
         out[b] = std::exp(r0[b] + a * (r1[b] - r0[b]));
 }
 
-// The pedal choke of a hi-hat strike over the block t0 .. t1 (HiHat.choke_rate): its gain at t0
-// from the rate it last fell at, then per band the extra rate at the pedal's openness at t0,
-// max(rate(o), CHOKE_RATE (o_strike - o) / o_strike) - rate(o_strike), never negative, and 0
-// while the pedal is as open as at the strike or more (it never brings level back). The
-// openness and the band rates at t0 are computed once per block (openNow < 0: not yet).
-void FastEngine::hiHatChoke(Component& c, double t0, double t1, double& openNow, bool& rateDone) noexcept
+// What the pedal does to a hi-hat strike over the block t0 .. t1 (HiHat.level_step), with the
+// pedal's openness o at t0 (computed once per block: openNow < 0, not yet) and o_s the strike's:
+// first its gain at t0, from the rate its log last changed at; then
+// - closing (o < o_s), the choke (HiHat.choke_rate): per band the extra rate
+//   max(rate(o), CHOKE_RATE (o_s - o) / o_s) - rate(o_s), never negative;
+// - opening (o > o_s, TIP and EDGE, from kHiHatOpenAfterS after the strike): the blend weight
+//   w = min(1, (o - o_s) / kHiHatOpenBlend), and the band rates at o (hhRateNow_); the control
+//   loop takes each band's log step from its envelope's own towards -rate(o) dt;
+// - otherwise its gain stays.
+// The band rates at o are computed once per block (rateDone).
+FastEngine::PedalStep FastEngine::hiHatPedalStep(Component& c, double t0, double t1, double& openNow, bool& rateDone,
+                                                 double& blend) noexcept
 {
     const HiHatData& h = bake_->hihat;
     const size_t nb = size_t(kExcitationBands);
@@ -4339,34 +4380,42 @@ void FastEngine::hiHatChoke(Component& c, double t0, double t1, double& openNow,
         c.hhGain = c.hhGain1;
     else
         for (size_t b = 0; b < nb; ++b)
-            if (c.hhExtra[b] > 0.0)
-                c.hhGain[b] *= std::exp(-c.hhExtra[b] * (t0 - c.hhChokeT));
+            if (c.hhLogRate[b] != 0.0)
+                c.hhGain[b] *= std::exp(c.hhLogRate[b] * (t0 - c.hhChokeT));
     c.hhChokeT = t0;
+    c.hhT1 = t1;
+    const bool canClose = c.hhChoke;
+    if (!canClose && !c.hhOpens)
+        return PedalStep::none;
     if (openNow < 0.0)
         openNow = pedalAt(t0);
-    bool any = false;
-    if (openNow < c.hhOpen)
-    {
+    const auto rates = [&] {
         if (!rateDone)
         {
             hiHatRate(openNow, hhRateNow_.data());
             rateDone = true;
         }
+    };
+    if (canClose && openNow < c.hhOpen)
+    {
+        rates();
         const double closing = h.chokeRate * (c.hhOpen - openNow) / std::max(c.hhOpen, 1e-6);
+        bool any = false;
         for (size_t b = 0; b < nb; ++b)
         {
             c.hhExtra[b] = std::max(std::max(hhRateNow_[b], closing) - c.hhRate0[b], 0.0);
             any = any || c.hhExtra[b] > 0.0;
         }
+        return any ? PedalStep::closing : PedalStep::none;
     }
-    else
-        c.hhExtra.fill(0.0);
-    if (any)
-        for (size_t b = 0; b < nb; ++b)
-            c.hhGain1[b] = c.hhExtra[b] > 0.0 ? c.hhGain[b] * std::exp(-c.hhExtra[b] * (t1 - t0)) : c.hhGain[b];
-    else
-        c.hhGain1 = c.hhGain;
-    c.hhT1 = t1;
+    c.hhExtra.fill(0.0);
+    if (c.hhOpens && openNow > c.hhOpen && t0 - c.tStrike >= kHiHatOpenAfterS)
+    {
+        rates();
+        blend = std::min(1.0, (openNow - c.hhOpen) / kHiHatOpenBlend);
+        return PedalStep::opening;
+    }
+    return PedalStep::none;
 }
 
 // A free component slot for a hi-hat strike; with the pool full, the quietest strike's (its
@@ -4537,7 +4586,8 @@ void FastEngine::strikeHiHat(int slotIndex, double velocity, double position) no
         std::copy(envRingInv_.begin(), envRingInv_.end(), comp.envRingInv.begin());
         comp.envKeep = envRingKeepS_;
     }
-    // It ends when every band's envelope time reaches the end fade's zero.
+    // It ends when every band's envelope time reaches the end fade's zero (FOOT); a TIP or EDGE
+    // strike rings on past its envelope (hiHatEnvelopeAt) to -120 dB, or ends at kHiHatMaxRingS.
     const double end = static_cast<double>(comp.hhFrames - 1) * h.frameS;
     comp.envWindow = 0.0;
     for (size_t j = 0; j < size_t(kExcitationBands); ++j)
@@ -4556,6 +4606,9 @@ void FastEngine::strikeHiHat(int slotIndex, double velocity, double position) no
             u = u / static_cast<double>(comp.envSpeed[j]) + static_cast<double>(comp.envDelay[j]);
         comp.envWindow = std::max(comp.envWindow, u);
     }
+    comp.hhOpens = art != 2;
+    if (comp.hhOpens)
+        comp.envWindow = kHiHatMaxRingS;
 
     // Attack band gains, as on every preset (the hi-hat's articulations all take them).
     {
@@ -4590,7 +4643,8 @@ void FastEngine::strikeHiHat(int slotIndex, double velocity, double position) no
     comp.settled = false;
     comp.ptMax = 0.0;
 
-    // The pedal choke: a strike more open than the pedal later is damped further.
+    // The pedal: a strike more open than the pedal later is damped further (the choke); a TIP or
+    // EDGE strike less open than the pedal later opens up (HiHat.level_step).
     comp.hhOpen = open;
     comp.hhChoke = open > 0.0;
     comp.hhChokeT = strikeTime;
@@ -4598,7 +4652,8 @@ void FastEngine::strikeHiHat(int slotIndex, double velocity, double position) no
     comp.hhGain.fill(1.0);
     comp.hhGain1.fill(1.0);
     comp.hhExtra.fill(0.0);
-    if (comp.hhChoke)
+    comp.hhLogRate.fill(0.0);
+    if (comp.hhChoke || comp.hhOpens)
         hiHatRate(open, comp.hhRate0.data());
 #if CYMBALIS_TUNING
     onsetPeaks(comp, slotIndex);
