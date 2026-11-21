@@ -8,7 +8,7 @@ Every push to `main` runs **Actions → Build macOS (VST3 + AU)**. It builds one
 - JUCE 7.0.12, built on GitHub's `macos-15` runner with Xcode 16.4 (macOS 15.5 SDK), pinned (see "The runner and Xcode" below)
 - The Intel slice capped at SSE4.1, and the build fails if any AVX instructions appear
 - Validation with pluginval (VST3) and auval (AU, native and under Rosetta; the step installs Rosetta if the runner lacks it)
-- An editor mouse test in an AU and a VST3 host (`tools/cymbalis_uitest`): real mouse events change the MIDI channel, notes, a stick, the preset and a stick of that preset, checked in the plugin's saved state, and the scroll wheel over the knobs and boxes must change nothing; then a real click on TUNING must show the Tuning window, visible and in front of the editor and attached to its window, the wheel over its sliders and numeric boxes must change nothing, and a second click must hide it. The Tuning window opens below the editor's top right; on a screen too narrow for it to stay clear of the editor's CYMBAL box and TUNING button (the `macos-15` runner's), it covers them, and JUCE ignores a click where another window is in front, as it would a user's. The test then moves the Tuning window aside before each such click, as a user would, puts it back after it, and says so in the log, which also gives the editor's and the screen's size
+- An editor mouse test in an AU and a VST3 host (`tools/cymbalis_uitest`): real mouse events change the MIDI channel, notes, a stick, the preset and a stick of that preset, checked in the plugin's saved state, and the scroll wheel over the knobs and boxes must change nothing; dragging, double-clicking and automating each of the five knobs must move its parameter and the value the knob shows (its accessibility value), which its position arc is drawn from (`docs/UI_SPEC.md` section 6); then a real click on TUNING must show the Tuning window, visible and in front of the editor and attached to its window, the wheel over its sliders and numeric boxes must change nothing, and a second click must hide it. The Tuning window opens below the editor's top right; on a screen too narrow for it to stay clear of the editor's CYMBAL box and TUNING button (the `macos-15` runner's), it covers them, and JUCE ignores a click where another window is in front, as it would a user's. The test then moves the Tuning window aside before each such click, as a user would, puts it back after it, and says so in the log, which also gives the editor's and the screen's size
 - A hit display timing (`CymbalisUiTest hits`): processBlock at 44.1 kHz, with 256- and 128-sample blocks and the audio thread at normal priority and real-time, with the editor closed, open and idle, and open with 16 hits moving the wireframe cymbal, each case three times, then the three cases once more with HAMMERED THIN RIDE selected, and once each with SWISH, RAVEN and KONSTAN CRASH 18" (the heaviest cymbals to draw: their dented meshes, with the size of each cymbal and how long it took to build); with the CPU used besides, the editor's paint calls and the cymbal's OpenGL frames, and once a check that nothing is drawn after every hit is older than 6 s; printed to the log and the job summary. The runner's Mac has no GPU: it draws OpenGL with the Apple Software Renderer (the step prints the renderer), so its OpenGL frame times are a CPU's, not a GPU's
 - Ad-hoc code signing
 
@@ -90,6 +90,17 @@ Every preset's tuning block also switches HIT VARIATION on (`hit_variation`, wit
 | SWISH | +7.4 dBFS | −3.6 dBFS | −3.0 dBFS | +3.6 → −7.4 dBFS (BOW tip: 1.51 → 0.43) |
 
 −11 dB is the offset that puts the loudest stress peak (Swish, +7.35 dBFS) at −3 dBFS (−10.35 dB), rounded down to a whole dB. Each strike draws its own random phases, so a peak varies from run to run; Hammered Thin Ride's varies most. `tools/cymbalis_trims` measures with the bake's tuning block, output gain included. Its RMS matching is unaffected, since every preset has the same gain, but its peak limit now applies after the −11 dB, hence 0.25365 (0.9 × 10^(−11/20)) in the commands above, which gives the same trims as 0.9 did before.
+
+## The compiled-in fonts
+
+The plugin carries its fonts in its binary data (`CYMBALIS_RESOURCES` in `CMakeLists.txt`); each font's licence file stays next to it in `resources/ui/`.
+
+| Font | File | Use | Licence |
+|---|---|---|---|
+| Carlito Regular | `resources/ui/Carlito-Regular.ttf` | All drawn text, standing in for Calibri Light (`docs/UI_SPEC.md` section 1) | SIL Open Font License 1.1 (`Carlito-OFL.txt`) |
+| Pinyon Script Regular, Version 1.008 (Google Fonts release) | `resources/ui/PinyonScript-Regular.ttf` (148,956 bytes) | The DHammers logo (`docs/UI_SPEC.md` section 4), since 2026-11-17 | SIL Open Font License 1.1 (`PinyonScript-OFL.txt`) |
+
+The OFL allows embedding the fonts in the plugin and distributing them with it; the fonts themselves may not be sold on their own. Pinyon Script adds about 150 KB to the plugin. Calibri Light (`resources/ui/calibril.ttf`) is compiled in too, and used for the text, when the file exists; it is not in the repository.
 
 ## Installing a CI build
 

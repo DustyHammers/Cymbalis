@@ -1,6 +1,6 @@
 # UI specification — Cymbalis
 
-Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE added 2026-10-15, SWISH 2026-10-17, RAVEN 2026-10-27, KONSTAN CRASH 18" 2026-10-28. Layout v2 (mockup v2: a larger, higher photo area, MIDI CHANNEL under CYMBAL, Velocity Sensitivity and Volume in a bottom row) approved by Kris 2026-10-25; the Pan parameter and its knob added 2026-10-25 at Kris's request; the hit display (section 10) approved by Kris 2026-10-25. Layout v3 (mockup v3: the MIDI CHANNEL box and the TUNING button swapped) approved by Kris 2026-10-25. The wireframe cymbal (section 11), replacing the photos and the 2D hit marks, approved by Kris 2026-10-27; its second round (NOVA RIDE, HAMMERED THIN RIDE and SMOKE FLAT RIDE) 2026-10-28, and its third (SWISH) and fourth (RAVEN) the same day. All coordinates are in 1536×1024 design units. `docs/ui/reference_mockup.png` shows the original artwork (layout v1).
+Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE added 2026-10-15, SWISH 2026-10-17, RAVEN 2026-10-27, KONSTAN CRASH 18" 2026-10-28. Layout v2 (mockup v2: a larger, higher photo area, MIDI CHANNEL under CYMBAL, Velocity Sensitivity and Volume in a bottom row) approved by Kris 2026-10-25; the Pan parameter and its knob added 2026-10-25 at Kris's request; the hit display (section 10) approved by Kris 2026-10-25. Layout v3 (mockup v3: the MIDI CHANNEL box and the TUNING button swapped) approved by Kris 2026-10-25. The wireframe cymbal (section 11), replacing the photos and the 2D hit marks, approved by Kris 2026-10-27; its second round (NOVA RIDE, HAMMERED THIN RIDE and SMOKE FLAT RIDE) 2026-10-28, and its third (SWISH) and fourth (RAVEN) the same day. The bottom row moved under the cymbal (section 3), a position arc on all five knobs (section 6) and the DHammers logo (section 4) approved by Kris 2026-11-17. All coordinates are in 1536×1024 design units. `docs/ui/reference_mockup.png` shows the original artwork (layout v1).
 
 ## 1. Assets (`resources/ui/`)
 
@@ -14,6 +14,10 @@ Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE add
 | `Raven.png` (712×712, transparent) | RAVEN photo, a top-down view made from Kris's angled photo (`docs/BASELINE_MANIFEST.md`, Raven): reference only |
 | `knob.png` (128×11648) | Knob filmstrip: 91 frames of 128×128, about 7 o'clock to 5 o'clock, frame 45 at 12 o'clock |
 | `calibril.ttf` | Calibri Light, used for all drawn text. If it is missing, use Carlito Regular (SIL OFL, include its licence file) until Kris adds it |
+| `Carlito-Regular.ttf`, `Carlito-OFL.txt` | Carlito Regular (same metrics as Calibri), drawing all text until `calibril.ttf` is added; SIL Open Font License 1.1, its licence file next to it |
+| `PinyonScript-Regular.ttf`, `PinyonScript-OFL.txt` | Pinyon Script Regular (Version 1.008, the Google Fonts release), the DHammers logo only (section 4); SIL Open Font License 1.1, which allows embedding it in the plugin, its licence file next to it. Added 2026-11-17 |
+
+The fonts compiled into the plugin are Carlito Regular and Pinyon Script Regular (and Calibri Light once `calibril.ttf` exists); `docs/BUILDS.md` lists them with their licences.
 
 Since 2026-10-27 the five photos are references only: they stay in `resources/ui/` (their MD5s in `docs/BASELINE_MANIFEST.md` are unchanged) but are not compiled into the plugin. The editor draws each preset's cymbal as a wireframe instead (section 11).
 
@@ -26,7 +30,7 @@ Since 2026-10-27 the five photos are references only: they stay in `resources/ui
 
 ## 3. Layout
 
-Layout v3, approved by Kris 2026-10-25 (mockup v3): layout v2 with the MIDI CHANNEL box and the TUNING button swapped. Left column: the CYMBAL box and, under it, the TUNING button. Top right: the MIDI CHANNEL box. Centre: the cymbal (the photo until 2026-10-27; now the wireframe cymbal, section 11). Bottom row: Velocity Sensitivity, Volume and Pan. Right column: the rows and the blend knobs, as in layout v1.
+Layout v3, approved by Kris 2026-10-25 (mockup v3): layout v2 with the MIDI CHANNEL box and the TUNING button swapped. Left column: the CYMBAL box and, under it, the TUNING button. Top right: the MIDI CHANNEL box. Centre: the cymbal (the photo until 2026-10-27; now the wireframe cymbal, section 11). Bottom row: Velocity Sensitivity, Volume and Pan, under the cymbal since 2026-11-17, with the DHammers logo in the left column. Right column: the rows and the blend knobs, as in layout v1.
 
 | Element | Position | Notes |
 |---|---|---|
@@ -34,10 +38,12 @@ Layout v3, approved by Kris 2026-10-25 (mockup v3): layout v2 with the MIDI CHAN
 | CYMBAL preset dropdown | box 61,371, 277×62 | Shows the preset name, e.g. **NOVA RIDE**. Changing preset changes the name, the cymbal and the sound. A name too wide to sit centred clear of the arrow is centred between the box's left edge and the arrow, with tighter letter spacing where it needs it (HAMMERED THIN RIDE, KONSTAN CRASH 18") |
 | MIDI CHANNEL dropdown | box 1404,30, 110×36 (centred on x 1459), top right, above the column headers | Channels 1–16, in a 4×4 grid that opens below the box (box bottom + 3), right-aligned with its right edge, so it stays inside the window. The channel number is left-aligned, its ink 12 units in from the box's left edge (where a long preset name starts), in the preset name's font, size and colour. Its label is on the same line, to the left (section 4). Layout v2: 61,501, 277×62 under the CYMBAL box, grid above it; layout v1: 632,936 |
 | TUNING button | box 61,501, 277×62 (the CYMBAL box's size), under the CYMBAL box | Tuning code only (`CYMBALIS_WITH_TUNING`, `docs/TUNING.md`); in a lean build this place is empty. Outlined like the preset and channel boxes (section 5). **TUNING** centred, drawn like the preset name; no arrow and no label above it. Its Tuning window still opens where it did in layout v2: below 1404,30, 110×36 (the button's layout v2 place, now the MIDI CHANNEL box), right-aligned with it. Layout v2: 1404,30, 110×36 |
-| Bottom row | x 39–1161 in thirds (39–413, 413–787, 787–1161), knob centres at y 881 (the height of Blend Position 2) | Each knob is centred in its third |
-| Velocity Sensitivity knob | centre 226,881 (first third) | See section 9. Layout v1: 201,641 |
-| Volume knob | centre 600,881 (second third) | See section 9. Layout v1: 199,881 |
-| Pan knob | centre 974,881 (third third) | See section 9. Frame 45 (12 o'clock) at centre, 0 at full left, 90 at full right. End labels L and R (section 4) instead of −/+ marks |
+| Bottom row | under the divider at y 757 (x 39–1161), knob centres at y 881 (the height of Blend Position 2) | Since 2026-11-17 the three knobs are 300 apart, grouped under the cymbal and centred on its centre x 787 (the wireframe cymbal's camera centre, section 11), Volume under it. Each label and its −/+ or L/R marks moved with its knob. Until then (layouts v2 and v3) each knob was centred in a third of x 39–1161 (39–413, 413–787, 787–1161) |
+| Velocity Sensitivity knob | centre 487,881 | See section 9. Until 2026-11-17: 226,881; layout v1: 201,641 |
+| Volume knob | centre 787,881, under the cymbal's centre | See section 9. Until 2026-11-17: 600,881; layout v1: 199,881 |
+| Pan knob | centre 1087,881 | See section 9. Frame 45 (12 o'clock) at centre, 0 at full left, 90 at full right. End labels L and R (section 4) instead of −/+ marks. Until 2026-11-17: 974,881 |
+| Knob position arcs | around each of the five knobs, radius 63 from its centre | Section 6. They reach 64.25 from the centre, past the filmstrip's 128×128 |
+| DHammers logo | ink centred at 199.5,950: in the left column under the CYMBAL box and the TUNING button (their centre x 199.5), level with the bottom row's −/+ and L/R marks | Section 4. Not clickable, drawn above the background |
 | Hit display | on the wireframe cymbal, under every control | Each strike moves the cymbal and flashes where it struck, and the row that played it lights (sections 10 and 11) |
 | Blend Position 1 knob (BELL ↔ BOW) | centre 1349,642 | |
 | Blend Position 2 knob (BOW ↔ EDGE) | centre 1350,881 | |
@@ -46,7 +52,7 @@ Layout v3, approved by Kris 2026-10-25 (mockup v3): layout v2 with the MIDI CHAN
 | MIDI note box (under MIDI NOTE) | x1424, 66×25, 2 px border `#463C30` | Note name + number, e.g. `C3 60` |
 | Preset and channel boxes, TUNING button | 2 px border `#534739` | Dropdown arrow: 13×9 triangle `#999489` at 306,398 (CYMBAL) and 1484,44 (MIDI CHANNEL); the TUNING button has none |
 | Divider lines (1 px, `#353231`) | horizontal 39→1161 at y757, above the bottom row; vertical x1188, y110→850 | Layout v1's lines at y869 (338→1161 and the short 39→58) are gone |
-| −/+ marks (1 px, `#695E52`) | Under each bottom-row knob, at fixed offsets from its centre (cx, cy): − at cx−81, cy+81 (11 px); + centred at cx+73, cy+82 (10×9). Vel: − at 145,962; + centred 299,963. Vol: − at 519,962; + centred 673,963 | The offsets are layout v1's |
+| −/+ marks (1 px, `#695E52`) | Under each bottom-row knob, at fixed offsets from its centre (cx, cy): − at cx−81, cy+81 (11 px); + centred at cx+73, cy+82 (10×9). Vel: − at 406,962; + centred 560,963. Vol: − at 706,962; + centred 860,963 | The offsets are layout v1's. Until 2026-11-17: Vel − at 145,962, + centred 299,963; Vol − at 519,962, + centred 673,963 |
 
 The artwork had the BELL note box at y138 and the BELL2/BOW2 stick boxes at x1266. These are aligned to y140 and x1265 in the drawn version.
 
@@ -57,17 +63,17 @@ All dropdowns, pop-up menus and value text are drawn by JUCE (custom LookAndFeel
 
 Measured from Kris's original artwork. "Top-left" is the top-left corner of the ink. Sizes and spacing were derived with Carlito (same metrics as Calibri) and should be checked once in JUCE against the original artwork.
 
-Layout v2 (2026-10-25) moved VELOCITY SENSITIVITY, VOLUME and MIDI CHANNEL, and layout v3 (2026-10-25) moved MIDI CHANNEL again, to the left of its box at the top right; their text, font, size, spacing and colour are unchanged. Each is centred horizontally (the editor centres it by its ink width, so it stays centred with Calibri Light too; the left edges given are Carlito's). PAN, L and R (2026-10-25) are centred the same way; PAN is drawn like VOLUME.
+Layout v2 (2026-10-25) moved VELOCITY SENSITIVITY, VOLUME and MIDI CHANNEL, and layout v3 (2026-10-25) moved MIDI CHANNEL again, to the left of its box at the top right; their text, font, size, spacing and colour are unchanged. Each is centred horizontally (the editor centres it by its ink width, so it stays centred with Calibri Light too; the left edges given are Carlito's). PAN, L and R (2026-10-25) are centred the same way; PAN is drawn like VOLUME. On 2026-11-17 VELOCITY SENSITIVITY, VOLUME, PAN, L and R moved with their knobs (section 3), keeping their offsets; their text, font, size, spacing and colour are unchanged.
 
 The CYMBALIS logo and "BRONZE MODELING INSTRUMENT" are part of the background image and are not drawn.
 
 | Text | Ink top-left | Font size (px) | Letter spacing (px) | Colour |
 |---|---|---|---|---|
 | CYMBAL | 160, 348 | 17.1 | 3.45 | `#A7A7A4` |
-| VELOCITY SENSITIVITY | centred on x 226 (left 120.1), top 784 | 17.1 | 3.09 | `#A09C99` |
-| VOLUME | centred on x 600 (left 560.8), top 784 | 17.1 | 3.40 | `#A09C99` |
-| PAN | centred on x 974, top 784 | 17.1 | 3.40 | `#A09C99` |
-| L · R (under Pan) | centred on x 901 · 1047, top 958 | 15.6 | — | `#695E52` |
+| VELOCITY SENSITIVITY | centred on x 487 (left 381.1), top 784. Until 2026-11-17: x 226 (left 120.1) | 17.1 | 3.09 | `#A09C99` |
+| VOLUME | centred on x 787 (left 747.8), top 784. Until 2026-11-17: x 600 (left 560.8) | 17.1 | 3.40 | `#A09C99` |
+| PAN | centred on x 1087, top 784. Until 2026-11-17: x 974 | 17.1 | 3.40 | `#A09C99` |
+| L · R (under Pan) | centred on x 1014 · 1160 (Pan's centre ∓ 73), top 958. Until 2026-11-17: x 901 · 1047 | 15.6 | — | `#695E52` |
 | MIDI CHANNEL | on its box's line, to its left: ink right edge at x 1384, centred vertically on the box (centre y 48). Layout v2: centred over its box at x 199.5, top 478 | 17.1 | 3.11 | `#A7A7A4` |
 | STICK ARTICULATION | 1201, 98 | 17.1 | 3.29 | `#A7A7A4` |
 | MIDI NOTE | 1424, 98 | 17.1 | 3.00 | `#A7A7A4` |
@@ -79,6 +85,8 @@ The CYMBALIS logo and "BRONZE MODELING INSTRUMENT" are part of the background im
 | BOW · EDGE (under Blend 2) | 1249, 958 · 1409, 958 | 15.6 | 2.88 · 2.83 | `#695E52` |
 
 Values drawn inside boxes use the same font in `#A7A7A4`; secondary values (note number) use `#695E52`. The TUNING button's text is drawn like the preset name: 17.1, spacing 3.2, `#A7A7A4`, centred.
+
+**DHammers logo** (approved by Kris 2026-11-17): the text "DHammers" in Pinyon Script Regular (section 1), not Calibri Light, at em size 48 (the font's units per em scaled to 48 design units). Its ink measures about 215 × 34 (Pinyon Script's outlines give 214.9 × 33.6; the approved mockup about 216 × 34) and is centred at 199.5, 950, so it spans about x 92–307 and y 933–967. It is filled with a vertical gradient over the ink's height, from `#8E7550` at the top to `#4A3D2D` at the bottom: a dark bronze gold, darker than the other gold accents. It is drawn above the background with the other labels, takes no clicks and has no hover state.
 
 CENTER and CENTER2 are drawn like the other row labels but with tighter letter spacing. At the other labels' spacing (about 3), CENTER2 would reach x 1277, into the stick box at x 1265; at 1.5 and 0.0 both end about 7.5 units clear of it.
 
@@ -99,12 +107,22 @@ CENTER and CENTER2 are drawn like the other row labels but with tighter letter s
 | "BRONZE" subtitle gradient | `#4C433B` → `#76624C` |
 | Subtitle "MODELING INSTRUMENT" | `#5C5F5F` |
 | Wireframe cymbal (section 11) | rose dark `#704A3A`, rose light `#DEB096`, lathe `#CDA06E`, gold `#ECC88C`, hot `#FFEED7`, flash `#FFF5E6` |
+| Knob position arcs (section 6) | track `#1C1A18`; the lit part from dark bronze `#5A4A36` to bright gold `#ECC88C` |
+| DHammers logo (section 4) | gradient `#8E7550` (top) → `#4A3D2D` (bottom) |
 | Hit display (section 10) | a lit row's label `#A5A299`, its stick and note box borders `#76624C`. The 2D marks' colours (spot `#FFFFFF` → `#FFF1D6` → `#E9C88F` → `#C29A5B`, rings, edge arcs) went with the marks on 2026-10-27 |
 
 Hover, open and selected states use only colours from this table.
 
 ## 6. Interactions
 - **Knobs:** vertical drag; double-click resets to the default.
+- **Knob position arcs** (approved by Kris 2026-11-17): each of the five knobs (Velocity Sensitivity, Volume, Pan, Blend Position 1 and Blend Position 2) has a thin arc around it that shows its position. It is a second indicator; the filmstrip's pointer stays.
+  - Geometry: centred on the knob, radius 63 to the middle of the line, line width 2.5, butt (flat) ends. Angles are measured clockwise from 12 o'clock; the sweep is 300°, from −150° (7 o'clock) to +150° (5 o'clock), the knob's own range.
+  - Track: the whole sweep in `#1C1A18`, drawn first, just above the background, so it is barely visible.
+  - Lit part, unipolar knobs (Velocity Sensitivity, Volume, Blend Position 1 and 2): from −150° to −150° + 300°·p, where p is the knob's position 0–1, the value that picks the filmstrip frame (for Volume the knob position, not the dB). Its colour at angle a goes from `#5A4A36` at −150° to `#ECC88C` at +150°, interpolated in sRGB by (a + 150)/300, so the line brightens toward its lit end and a full knob ends in bright gold.
+  - Lit part, bipolar knob (Pan): from 0° (12 o'clock) to 300°·(p − 0.5), to the left or right. Its colour at angle a goes from `#5A4A36` at the centre to `#ECC88C` at full left or right, by |a|/150. At the centre nothing is lit.
+  - Drawing: the line's stroked outline is the clip; inside it, wedges of at most 1°, each filled with the colour at its middle angle and overlapping the next by half a step, so the colour changes continuously with no steps or gaps; the first and last wedges reach 1° past the ends, so the clip alone makes the anti-aliased edges and the flat ends. It is drawn as vectors in design units under the editor's one transform (section 2), so at the screen's own resolution, Retina included.
+  - Behaviour: drawn from the knob's value, so it follows a drag, a double-click to the default, the host's automation and preset and session loads. A knob repaints only its own component.
+  - Not clipped: the line's outer edge is at radius 64.25, past the filmstrip's 128×128. Each knob's component is 136×136 (4 units around the filmstrip, which is still drawn 128×128 at the same centre); only the filmstrip's 128×128 takes the mouse, as before.
 - **No mouse wheel:** the mouse wheel and trackpad scrolling change no value anywhere in the editor: not the knobs, the note boxes or the dropdowns. A value changes only by a deliberate click and drag, a menu choice or MIDI learn (and the host's automation of the five parameters). The wheel still scrolls the note list.
 - **MIDI note box:** vertical drag changes the note. A click opens a menu: MIDI LEARN, RESET DEFAULT, NONE (unassign) and a scrollable list of every note, C-2 (0) to G8 (127), each with its number; the current note is outlined and in view. No separate Learn button is added.
 - **Stick box:** where the preset has both stick versions, a click opens a TIP / SHOULDER popup. In every preset the bell and bow rows (BELL, BOW, BELL2, BOW2) have both; section 8 lists what each plays. EDGE is SHOULDER only in every preset: its box shows SHOULDER and opens nothing. In every preset BELL and BOW start on TIP and BELL2 and BOW2 on SHOULDER (section 8, "Default sticks"). Which rows offer the choice comes from the slot table (`StickDisplay::choice` in `plugin/SlotTable.h`). Each preset keeps its own choices: picking SHOULDER on a row in one preset leaves the other presets' rows as they are. The choices are saved with the session (section 9); they are not automatable parameters.

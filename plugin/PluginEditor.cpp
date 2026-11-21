@@ -30,7 +30,11 @@ const juce::Rectangle<int> kNoteBox (1424, 0, 66, 25);
 const juce::Rectangle<int> kPresetBox (61, 371, 277, 62);
 const juce::Rectangle<int> kChannelBox (1404, 30, 110, 36); // top right, above the column headers (y 98)
 constexpr float kChannelLabelRight = 1384.0f; // MIDI CHANNEL ends here, on the box's line, to its left
-constexpr float kKnobLabelTop = 784.0f;       // Velocity Sensitivity and Volume, centred on their knobs
+constexpr float kKnobLabelTop = 784.0f;       // Velocity Sensitivity, Volume and Pan, centred on their knobs
+// The DHammers logo (UI_SPEC section 4): Pinyon Script at em size 48, its ink centred under
+// the CYMBAL and TUNING boxes, level with the bottom row's -/+ and L/R marks.
+constexpr float kLogoSize = 48.0f;
+const juce::Point<float> kLogoCentre (199.5f, 950.0f);
 #if CYMBALIS_TUNING
 const juce::Rectangle<int> kLogo (40, 80, 390, 130); // the CYMBALIS logo and its tagline in the background
 const juce::Rectangle<int> kTuningButton (61, 501, 277, 62); // under the CYMBAL box, its size
@@ -115,7 +119,55 @@ private:
 #endif
 
 // =====================================================================================
-Knob::Knob (const Assets& a) : assets (a)
+namespace
+{
+// The position arc (UI_SPEC section 6): radius to the middle of the line, line width, and
+// the sweep, the knob's own range, in degrees each side of 12 o'clock.
+constexpr float kArcRadius = 63.0f;
+constexpr float kArcWidth = 2.5f;
+constexpr float kArcSweep = 150.0f;
+
+juce::Point<float> onCircle (juce::Point<float> c, float radius, float degrees)
+{
+    const float a = juce::degreesToRadians (degrees); // clockwise from 12 o'clock
+    return { c.x + radius * std::sin (a), c.y - radius * std::cos (a) };
+}
+
+// The arc from `from` to `to` (degrees clockwise from 12 o'clock, in either order), with butt
+// ends, its colour changing along it: `colourAt` (an angle) for each step of at most 1
+// degree. The line is the arc's outline, as a clip, filled step by step; each step reaches
+// half a step into the next, which is drawn over it, and the first and last reach past the
+// ends, so the clip alone draws the line's edges and ends: no seams between steps.
+template <typename ColourAt>
+void paintArc (juce::Graphics& g, juce::Point<float> c, float from, float to, ColourAt colourAt)
+{
+    const float lo = std::min (from, to), hi = std::max (from, to);
+    if (hi - lo < 1.0e-3f)
+        return;
+    juce::Path arc, line;
+    arc.addCentredArc (c.x, c.y, kArcRadius, kArcRadius, 0.0f, juce::degreesToRadians (lo), juce::degreesToRadians (hi), true);
+    juce::PathStrokeType (kArcWidth, juce::PathStrokeType::curved, juce::PathStrokeType::butt).createStrokedPath (line, arc);
+    juce::Graphics::ScopedSaveState state (g);
+    g.reduceClipRegion (line);
+    const int steps = std::max (1, (int) std::ceil (hi - lo));
+    const float step = (hi - lo) / (float) steps;
+    const float reach = kArcRadius + kArcWidth; // past the line's outer edge
+    for (int i = 0; i < steps; ++i)
+    {
+        const float a0 = i == 0 ? lo - 1.0f : lo + step * (float) i;
+        const float a1 = i == steps - 1 ? hi + 1.0f : lo + step * ((float) i + 1.5f);
+        juce::Path wedge;
+        wedge.startNewSubPath (c);
+        wedge.lineTo (onCircle (c, reach, a0));
+        wedge.lineTo (onCircle (c, reach, a1));
+        wedge.closeSubPath();
+        g.setColour (colourAt (lo + step * ((float) i + 0.5f)));
+        g.fillPath (wedge);
+    }
+}
+} // namespace
+
+Knob::Knob (const Assets& a, bool isBipolar) : assets (a), bipolar (isBipolar)
 {
     setSliderStyle (juce::Slider::RotaryVerticalDrag);
     setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
@@ -123,15 +175,34 @@ Knob::Knob (const Assets& a) : assets (a)
     setScrollWheelEnabled (false); // only a drag (or double-click, or the host) changes a value
 }
 
+bool Knob::hitTest (int x, int y)
+{
+    return getLocalBounds().reduced (margin).contains (x, y); // the filmstrip's square, as before the arc
+}
+
 void Knob::paint (juce::Graphics& g)
 {
-    if (! assets.knobStrip.isValid())
-        return;
-    const int frame = juce::jlimit (0, Assets::knobFrames - 1,
-                                    juce::roundToInt (valueToProportionOfLength (getValue()) * (Assets::knobFrames - 1)));
-    const int s = Assets::knobFrameSize;
-    g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
-    g.drawImage (assets.knobStrip, 0, 0, getWidth(), getHeight(), 0, frame * s, s, s);
+    // p: the knob's position 0-1, which picks the filmstrip frame and lights the arc.
+    const float p = (float) juce::jlimit (0.0, 1.0, valueToProportionOfLength (getValue()));
+    if (assets.knobStrip.isValid())
+    {
+        const int frame = juce::jlimit (0, Assets::knobFrames - 1, juce::roundToInt (p * (float) (Assets::knobFrames - 1)));
+        const int s = Assets::knobFrameSize;
+        g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
+        g.drawImage (assets.knobStrip, margin, margin, s, s, 0, frame * s, s, s);
+    }
+
+    // The arc: the track over the whole sweep, then the lit part. Unipolar: from 7 o'clock
+    // by p, dark bronze at 7 o'clock to bright gold at 5 o'clock. Bipolar: from 12 o'clock to
+    // the knob's side, dark bronze at the centre to bright gold at either end.
+    const auto c = getLocalBounds().toFloat().getCentre();
+    paintArc (g, c, -kArcSweep, kArcSweep, [] (float) { return palette::arcTrack; });
+    const auto gold = [] (float t) { return palette::arcDark.interpolatedWith (palette::arcBright, juce::jlimit (0.0f, 1.0f, t)); };
+    if (bipolar)
+        paintArc (g, c, 0.0f, 2.0f * kArcSweep * (p - 0.5f), [&gold] (float a) { return gold (std::abs (a) / kArcSweep); });
+    else
+        paintArc (g, c, -kArcSweep, -kArcSweep + 2.0f * kArcSweep * p,
+                  [&gold] (float a) { return gold ((a + kArcSweep) / (2.0f * kArcSweep)); });
 }
 
 // =====================================================================================
@@ -556,13 +627,13 @@ private:
 Content::Content (CymbalisProcessor& p)
     : processor (p),
       knobSpecs { {
-          // The bottom row: x 39-1161 in thirds, a knob centred in each (Velocity Sensitivity,
-          // Volume, Pan). Their labels are centred in the constructor.
-          { CymbalisProcessor::paramVelocitySensitivity, { 226.0f, 881.0f }, "VELOCITY SENSITIVITY", { 0.0f, kKnobLabelTop }, 3.09f, palette::knobLabel },
-          { CymbalisProcessor::paramVolumeDb, { 600.0f, 881.0f }, "VOLUME", { 0.0f, kKnobLabelTop }, 3.40f, palette::knobLabel },
+          // The bottom row: Velocity Sensitivity, Volume and Pan, 300 apart under the cymbal,
+          // Volume under its centre (x 787). Their labels are centred in the constructor.
+          { CymbalisProcessor::paramVelocitySensitivity, { 487.0f, 881.0f }, "VELOCITY SENSITIVITY", { 0.0f, kKnobLabelTop }, 3.09f, palette::knobLabel },
+          { CymbalisProcessor::paramVolumeDb, { 787.0f, 881.0f }, "VOLUME", { 0.0f, kKnobLabelTop }, 3.40f, palette::knobLabel },
           { CymbalisProcessor::paramBlend1, { 1349.0f, 642.0f }, "BLEND POSITION 1", { 1269.0f, 545.0f }, 3.18f, palette::label },
           { CymbalisProcessor::paramBlend2, { 1350.0f, 881.0f }, "BLEND POSITION 2", { 1270.0f, 783.0f }, 2.98f, palette::label },
-          { CymbalisProcessor::paramPan, { 974.0f, 881.0f }, "PAN", { 0.0f, kKnobLabelTop }, 3.40f, palette::knobLabel },
+          { CymbalisProcessor::paramPan, { 1087.0f, 881.0f }, "PAN", { 0.0f, kKnobLabelTop }, 3.40f, palette::knobLabel },
       } },
       presetBox (assets, { 306.0f - (float) kPresetBox.getX(), 398.0f - (float) kPresetBox.getY() }),
       channelBox (assets, { 1484.0f - (float) kChannelBox.getX(), 44.0f - (float) kChannelBox.getY() }, DropdownBox::Align::left)
@@ -584,6 +655,16 @@ Content::Content (CymbalisProcessor& p)
         repaint (rowLabelArea (s));
     };
 
+    // The DHammers logo's outline, its ink centred on kLogoCentre.
+    if (assets.logoTypeface != nullptr)
+    {
+        juce::GlyphArrangement ga;
+        ga.addLineOfText (assets.logoFont (kLogoSize), "DHammers", 0.0f, 0.0f);
+        ga.createPath (logoPath);
+        const auto ink = logoPath.getBounds();
+        logoPath.applyTransform (juce::AffineTransform::translation (kLogoCentre.x - ink.getCentreX(), kLogoCentre.y - ink.getCentreY()));
+    }
+
     // Velocity Sensitivity, Volume and Pan: each label centred on its knob.
     for (size_t i : { size_t (0), size_t (1), size_t (4) })
     {
@@ -594,8 +675,9 @@ Content::Content (CymbalisProcessor& p)
     for (size_t i = 0; i < knobs.size(); ++i)
     {
         auto& spec = knobSpecs[i];
-        knobs[i] = std::make_unique<Knob> (assets);
-        const int s = Assets::knobFrameSize;
+        knobs[i] = std::make_unique<Knob> (assets, juce::String (spec.paramId) == CymbalisProcessor::paramPan);
+        // The filmstrip's 128 x 128 at the knob's centre, and the arc's margin around it.
+        const int s = Knob::size;
         knobs[i]->setBounds (juce::roundToInt (spec.centre.x) - s / 2, juce::roundToInt (spec.centre.y) - s / 2, s, s);
         attachments[i] = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
             processor.parameters(), spec.paramId, *knobs[i]);
@@ -965,10 +1047,19 @@ void Content::paintLabels (juce::Graphics& g)
     small ("BOW", 1249.0f, 958.0f, 2.88f);
     small ("EDGE", 1409.0f, 958.0f, 2.83f);
 
-    // L and R under Pan, each centred on its x.
+    // L and R under Pan, each centred 73 units either side of its knob.
     const auto rowFont = assets.font (kRowSize);
-    for (auto [text, x] : { std::pair<const char*, float> { "L", 901.0f }, { "R", 1047.0f } })
+    const float panX = knobSpecs[4].centre.x;
+    for (auto [text, x] : { std::pair<const char*, float> { "L", panX - 73.0f }, { "R", panX + 73.0f } })
         drawInkText (g, rowFont, text, { x - inkBounds (rowFont, text).getWidth() * 0.5f, 958.0f }, palette::secondary);
+
+    // The DHammers logo: a vertical gradient over its ink, top to bottom.
+    if (! logoPath.isEmpty())
+    {
+        const auto ink = logoPath.getBounds();
+        g.setGradientFill (juce::ColourGradient::vertical (palette::logoTop, ink.getY(), palette::logoBottom, ink.getBottom()));
+        g.fillPath (logoPath);
+    }
 }
 
 void Content::paintRows (juce::Graphics& g)

@@ -11,6 +11,14 @@ namespace cymbalis::uitest
 void click (juce::Component& target, juce::Point<float> p);
 void putBack();
 
+// Two clicks at `p` (the second a double-click), as click().
+void doubleClick (juce::Component& target, juce::Point<float> p);
+
+// The value text of the slider at `p` (a point in `target`'s coordinates) in the native window
+// that holds `target`, as the window's accessibility elements give it: the value the slider
+// shows. Otherwise what failed.
+juce::String sliderText (juce::Component& target, juce::Point<float> p);
+
 // Presses at `from`, moves to `to` in steps and releases there.
 void drag (juce::Component& target, juce::Point<float> from, juce::Point<float> to);
 
