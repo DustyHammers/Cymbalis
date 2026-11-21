@@ -126,6 +126,14 @@ struct CymbalTuning
     bool hitVariation = false;
     double hitPositionSpread = 0.04;   // position units (0 edge, 0.5 bow, 1 bell), 0 .. 0.15
     double hitVelocitySpreadPct = 3.0; // %, 0 .. 15
+    // HI-HAT (docs/TUNING.md; bakes with a hihat block), at a strike's openness o at its note-on:
+    // TIP OPEN LEVEL, how much of the closed tip/edge level difference an open TIP strike drops
+    // at full opening ((1 - value x o) x the difference, %, 0 .. 100); TIP OPEN TICK, the TIP's
+    // stick click raised by value x o (dB, 0 .. 12); RING FLOOR, each band's decay rate at least
+    // value x the median of the 22 at that openness (TIP and EDGE; %, 0 .. 200, 0: none).
+    double hhTipOpenLevel = 0.0;
+    double hhTipOpenTickDb = 0.0;
+    double hhRingFloor = 100.0;
     // Energy cascade (FastEngine): while a band rings above the threshold, energy moves from
     // it into the bands above it. Amount 0: off. Bands are indices 0 .. 21 (as the band gains).
     double cascadeAmount = 0.0;        // 0 .. 1
@@ -189,6 +197,10 @@ constexpr const char* kHitVariationKey = "hit_variation"; // on / off; its sprea
 constexpr const char* kHitPositionSpreadKey = "hit_position_spread";
 constexpr const char* kHitVelocitySpreadKey = "hit_velocity_spread_pct";
 constexpr double kHitPositionSpreadMax = 0.15, kHitVelocitySpreadMax = 15.0;
+constexpr const char* kHhTipOpenLevelKey = "hh_tip_open_level";  // TIP OPEN LEVEL, %
+constexpr const char* kHhTipOpenTickKey = "hh_tip_open_tick_db"; // TIP OPEN TICK, dB
+constexpr const char* kHhRingFloorKey = "hh_ring_floor";         // RING FLOOR, %
+constexpr double kHhTipOpenLevelMax = 100.0, kHhTipOpenTickMax = 12.0, kHhRingFloorMax = 200.0;
 // The bake's per-mode stereo gains, written by tools/apply_tuning.py (BakeData::gainL/gainR).
 constexpr const char* kStereoKey = "stereo";
 constexpr const char* kRehitWeightsKey = "rehit_damp_weights"; // {articulation id: weight}

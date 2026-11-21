@@ -815,7 +815,10 @@
     "applied_by": "tools/bake_hihat.py",
     "cymbal": {
       "output_gain_db": -11.0,
-      "hit_variation": true
+      "hit_variation": true,
+      "hh_tip_open_level": 60.0,
+      "hh_tip_open_tick_db": 4.0,
+      "hh_ring_floor": 100.0
     }
   }
 }
