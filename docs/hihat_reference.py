@@ -28,6 +28,13 @@ Model (prototype renders approved by ear in the project session, 2026-11-20):
   knot's), and the per-band difference swings by up to 13 dB between neighbouring bands (taken
   from the closed captures' first 100 ms), which over a long open ring sounded like a comb filter:
   open hats, the tip above all, sounded phasey and shifted in pitch.
+- The open-hat options (Tuning window values, all off by default: Kris, 2026-11-21). FREE RING
+  (free_ring): the fully open knot plays as a single free cymbal, its weights from
+  hihat_weights_free.json (the partials lasting at least 0.4 s: the top cymbal ringing; the capture
+  still has the bottom cymbal in it) and its stick envelope smoothed (free_envelope). TIP MODES
+  (tip_modes_db): an open TIP knot's weights lean towards the modes a tip strike favours
+  (tip_modes); each band keeps its norm. MAX OPEN (pedal_openness): the openness the pedal reaches
+  at CC 127.
 - Between two knots the envelope and levels are interpolated in log, but the mode weights are the
   nearer knot's alone (the upper one from halfway; between closed and the first open knot, the
   closed side's are the closed knots' at v). Neighbouring knots share few modes (the 0.75 and 1.0
@@ -92,6 +99,8 @@ OPEN_EPS = 0.004                 # the pedal opens a strike up only this far abo
 STEP_MAX = 50.0                  # 1/s: the largest log step per second an opened strike takes from its envelope
 FLOOR = 1e-6                     # an envelope under this share of the strike's peak (-120 dB) is at its floor
 MAX_RING_S = 8.0                 # s: the longest a TIP or EDGE strike rings
+FREE_PCT, FREE_SPAN, FREE_KEEP, FREE_FLOOR = 75, 31, 5, 1.5e-9   # FREE RING's envelope smoothing (free_envelope)
+TIP_MODES_EPS = 0.001            # TIP MODES: the mode weights' ratio (w_tip + eps) / (w_edge + eps)
 IMPULSE_LOOK = 5                 # frames searched for the band's peak
 IMPULSE_MAX_DB = 9.0
 FOOT = dict(closed_below=0.05, rearm_above=0.15, speed_window_s=0.05, full_speed=10.0, v_min=0.1)
@@ -114,6 +123,12 @@ class HiHat:
         self.rate_knots = [('edge_closed_v3', 0.0), ('edge_open_25', 0.25), ('edge_open_50', 0.5),
                            ('edge_open_75', 0.75), ('edge_open_100', 1.0)]
         self.rates = np.array([self._band_rate(self.raw[k]) for k, _ in self.rate_knots])
+        # FREE RING (a Tuning window option, off by default; Kris, 2026-11-21): the fully open knot
+        # as a single free-ringing cymbal, its weights from hihat_weights_free.json and its stick
+        # envelope smoothed (free_envelope).
+        free = json.load(open(f'{root}/data/hihat_weights_free.json'))['weights']
+        self.w_free = {'edge_open_100': np.array(free['edge_open_100_free'])}
+        self.stick_free = {k: free_envelope(self.stick[k]) for k in self.w_free}
 
     # ---------------------------------------------------------------- preparation (the bake)
     @staticmethod
@@ -172,10 +187,13 @@ class HiHat:
             e = e * (10 ** ((self.closed_level(art, v) - self.closed_level(art, vs[i0])) / 20))[:, None]
         return e, w
 
-    def envelope(self, art, o, v, n, tip_open_level=0.0):
+    def envelope(self, art, o, v, n, tip_open_level=0.0, free_ring=False, tip_modes_db=0.0):
         """Band envelopes (NB x n frames of 10 ms) and mode weights for a strike.
         art: 'tip' | 'edge' | 'foot'; o: openness 0..1 at the strike; v: velocity 0..1;
-        tip_open_level: TIP OPEN LEVEL, 0..1 (the module's docstring)."""
+        tip_open_level: TIP OPEN LEVEL, 0..1 (the module's docstring); free_ring: FREE RING, the
+        fully open knot as a single free cymbal (its free weights and smoothed envelope);
+        tip_modes_db: TIP MODES, 0..20 dB (an open TIP knot's weights favour the modes a tip
+        strike favours)."""
         if art == 'foot':
             return self._closed('edge', v, n, self.raw)
         opens = [k for k in self.knots.values() if k['openness'] > 0]
@@ -185,13 +203,18 @@ class HiHat:
             if i == 0:
                 return self._closed(art, v, n, self.stick)
             k = opens[i - 1]
-            e = self._pad(self.stick[k['id']], n) * (10 ** ((self.closed_level('edge', v) - self.closed_level('edge', k['velocity'])) / 20))[:, None]
+            free = free_ring and k['id'] in self.w_free
+            stick = self.stick_free[k['id']] if free else self.stick[k['id']]
+            w = self.w_free[k['id']] if free else self.w[k['id']]
+            e = self._pad(stick, n) * (10 ** ((self.closed_level('edge', v) - self.closed_level('edge', k['velocity'])) / 20))[:, None]
             if art == 'tip':
                 d = self.closed_level('tip', v) - self.closed_level('edge', v)
                 d_fit = np.polyval(np.polyfit(np.arange(NB), d, 1), np.arange(NB))
                 keep = 1.0 - tip_open_level * k['openness']
                 e = e * (10 ** (keep * d_fit / 20))[:, None]
-            return e, self.w[k['id']]
+                if tip_modes_db > 0:
+                    w = self.tip_modes(w, v, tip_modes_db)
+            return e, w
         if o <= 0:
             return knot(0)
         j = min(max(int(np.searchsorted(xs, o)) - 1, 0), len(xs) - 2)
@@ -199,6 +222,22 @@ class HiHat:
         e0, w0 = knot(j); e1, w1 = knot(j + 1)
         # The envelope between the two knots; the mode weights of the nearer one alone.
         return np.exp((1 - a) * np.log(e0) + a * np.log(e1)), (w1 if a >= 0.5 else w0)
+
+    def tip_modes(self, w, v, db):
+        """TIP MODES: an open TIP knot's weights w times, per mode, r = (w_tip + eps) / (w_edge + eps),
+        w_tip and w_edge the closed TIP's and closed EDGE's weights at v (interpolated over velocity
+        as _closed does), r clamped to +-db dB; then each band back to w's norm in it, so the band
+        totals stay and only which modes ring inside a band changes."""
+        _, wt = self._closed('tip', v, 1, self.stick)
+        _, we = self._closed('edge', v, 1, self.stick)
+        r = np.clip((wt + TIP_MODES_EPS) / (we + TIP_MODES_EPS), 10 ** (-db / 20), 10 ** (db / 20))
+        out = w * r
+        for b in range(NB):
+            m = self.band == b
+            n0, n1 = np.linalg.norm(w[m]), np.linalg.norm(out[m])
+            if n1 > 0:
+                out[m] *= n0 / n1
+        return out
 
     def rate(self, o, ring_floor=1.0):
         """Each band's decay rate (amplitude, 1/s) at openness o, interpolated in log between the
@@ -248,6 +287,35 @@ class HiHat:
             slope = (1.0 - w) * s_c + w * (-self.rate(o_now, ring_floor) * dt)
             return np.minimum(slope, np.maximum(s_c, 0.0)), True, o_ref
         return s_c, True, o_ref
+
+
+def free_envelope(e):
+    """FREE RING's envelope of the fully open knot (in the bake): per band, in log amplitude (the floor
+    1e-9 for silence), a FREE_PCT-th percentile filter over FREE_SPAN frames (centred, the edges
+    repeated); the first FREE_KEEP frames kept as they are; from frame FREE_KEEP on, each frame at
+    most the one before it (a running minimum, the last kept frame included), so the band never
+    rises; values under FREE_FLOOR (the floor) set to 0. The fully open capture still has the bottom
+    cymbal in it: its level pulses at about 1 and 4 Hz, which the free cymbal does not."""
+    from scipy.ndimage import percentile_filter
+    L = np.log(np.maximum(e, 1e-9))
+    F = percentile_filter(L, FREE_PCT, size=(1, FREE_SPAN), mode='nearest')
+    F[:, :FREE_KEEP] = L[:, :FREE_KEEP]
+    for k in range(FREE_KEEP, F.shape[1]):
+        F[:, k] = np.minimum(F[:, k], F[:, k - 1])
+    out = np.exp(F)
+    out[:, :FREE_KEEP] = e[:, :FREE_KEEP]
+    out[:, FREE_KEEP - 1:] = np.minimum.accumulate(out[:, FREE_KEEP - 1:], axis=1)   # exactly, after the exp
+    tail = out[:, FREE_KEEP:]
+    tail[tail < FREE_FLOOR] = 0.0
+    return out
+
+
+def pedal_openness(cc, max_open=1.0):
+    """The openness the pedal CC (0..127) asks for: MAX OPEN (a Tuning window value, 0.75..1, 1 by
+    default; Kris, 2026-11-21) scales it, o = cc / 127 x max_open, before the smoothing. Every
+    openness rule (the knots, the choke, the opening, FOOT's thresholds) and the hats' drawing use
+    the scaled openness."""
+    return cc / 127.0 * max_open
 
 
 def foot_velocity(open_history, dt):

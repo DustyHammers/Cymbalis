@@ -314,6 +314,9 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
     hhTipOpenLevel_ = b.tuning.cymbal.hhTipOpenLevel * 0.01;
     hhTipOpenTickDb_ = b.tuning.cymbal.hhTipOpenTickDb;
     hhRingFloor_ = b.tuning.cymbal.hhRingFloor * 0.01;
+    hhFreeRing_ = b.tuning.cymbal.hhFreeRing;
+    hhTipModesDb_ = b.tuning.cymbal.hhTipModesDb;
+    hhMaxOpen_ = b.tuning.cymbal.hhMaxOpen * 0.01;
     {
         // HIT VARIATION's stream: two outputs of a copy of the render stream (the strike
         // phases are not touched), mixed with constants, as its state.
@@ -3197,6 +3200,15 @@ void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecayS
     hhTipOpenLevel_ = c.hhTipOpenLevel * 0.01; // the hi-hat's tip and ring floor, from the next strike
     hhTipOpenTickDb_ = c.hhTipOpenTickDb;
     hhRingFloor_ = c.hhRingFloor * 0.01;
+    hhFreeRing_ = c.hhFreeRing; // FREE RING and TIP MODES from the next strike
+    hhTipModesDb_ = c.hhTipModesDb;
+    if (c.hhMaxOpen * 0.01 != hhMaxOpen_)
+    {
+        // MAX OPEN: the pedal moves to where it asks for at the new scale.
+        hhMaxOpen_ = c.hhMaxOpen * 0.01;
+        if (hihat_)
+            setPedal(pedalRaw_);
+    }
     // EDGE VOICE FROM BOW: the table computed off the audio thread for this value, from the
     // next strike (a strike takes its coupling at the strike).
     if (velw != nullptr && ! velw_.empty() && c.edgeVoiceFromBow != voicePercent_)
@@ -4136,11 +4148,16 @@ void FastEngine::setupHiHat()
     };
     hhLnStick_.clear();
     hhLnRaw_.clear();
+    hhLnStickFree_.clear();
     for (const auto& k : h.knots)
     {
         hhLnStick_.push_back(lnOf(k.stick));
         hhLnRaw_.push_back(k.raw.empty() ? std::vector<double>() : lnOf(k.raw));
+        hhLnStickFree_.push_back(k.stickFree.empty() ? std::vector<double>() : lnOf(k.stickFree));
     }
+    hhWTip_.assign(size_t(n_), 0.0);
+    hhWEdge_.assign(size_t(n_), 0.0);
+    hhWMod_.assign(size_t(n_), 0.0);
     hhLnRate_.resize(h.rates.size());
     for (size_t i = 0; i < h.rates.size(); ++i)
         hhLnRate_[i] = std::log(h.rates[i]);
@@ -4210,6 +4227,27 @@ double FastEngine::hiHatEnvelope(Component& c, int art, double o, double v) noex
                 w[i] += coef * x[i];
     };
     double lv[kExcitationBands], lk[kExcitationBands], lc[kExcitationBands];
+    // The closed knots' mode weights of articulation a at v, interpolated over velocity as closed()
+    // does (TIP MODES).
+    auto closedWeights = [&](int a, double* out) {
+        const double* vs = h.closedVelocity;
+        int i0 = 0, i1 = 0;
+        double t = 0.0;
+        if (v <= vs[0])
+            i0 = i1 = 0;
+        else if (v >= vs[2])
+            i0 = i1 = 2;
+        else
+        {
+            i0 = v < vs[1] ? 0 : 1;
+            i1 = i0 + 1;
+            t = (v - vs[i0]) / (vs[i1] - vs[i0]);
+        }
+        const auto& w0 = h.knots[size_t(h.closed[a][i0])].weights;
+        const auto& w1 = h.knots[size_t(h.closed[a][i1])].weights;
+        for (size_t m = 0; m < n; ++m)
+            out[m] = (1.0 - t) * w0[m] + t * w1[m];
+    };
     // HiHat._closed(a, v): between the two closed knots around v in log, or the nearest one
     // moved by the closed level law outside 0.3 .. 1.0; with weight `share` in the strike's
     // envelope and `wshare` in its mode weights.
@@ -4257,13 +4295,17 @@ double FastEngine::hiHatEnvelope(Component& c, int art, double o, double v) noex
         j = std::min(j, nOpen - 1);
         const double a = (o - xAt(j)) / (xAt(j + 1) - xAt(j));
         bool haveEdgeLevel = false;
-        // An open knot with weight `share` in the envelope and `wshare` in the mode weights.
+        // An open knot with weight `share` in the envelope and `wshare` in the mode weights. FREE
+        // RING: the knot that has a free version (the fully open one) plays it, its smoothed
+        // envelope and free weights.
         auto openKnot = [&](int i, double share, double wshare) {
             if (share == 0.0)
                 return;
             const int k = h.open[size_t(i - 1)];
             const HiHatKnot& knot = h.knots[size_t(k)];
-            addTerm(hhLnStick_[size_t(k)], knot.frames, share);
+            const bool freeRing = hhFreeRing_ && !knot.weightsFree.empty();
+            const std::vector<double>& knotWeights = freeRing ? knot.weightsFree : knot.weights;
+            addTerm(freeRing ? hhLnStickFree_[size_t(k)] : hhLnStick_[size_t(k)], knot.frames, share);
             // Moved from its own velocity to v by the closed EDGE's level change.
             if (!haveEdgeLevel)
             {
@@ -4302,8 +4344,36 @@ double FastEngine::hiHatEnvelope(Component& c, int art, double o, double v) noex
                 const double keep = 1.0 - hhTipOpenLevel_ * knot.openness;
                 for (size_t b = 0; b < nb; ++b)
                     constant[b] += share * keep * (md + slope * (static_cast<double>(b) - mb)) * (kLn10 / 20.0);
+                // TIP MODES: the knot's weights lean towards the modes a tip strike favours, per mode
+                // r = (w_tip + 0.001) / (w_edge + 0.001) of the closed TIP's and EDGE's weights at v,
+                // clamped to +-value dB; each band back to the knot's own norm in it.
+                if (hhTipModesDb_ > 0.0 && wshare != 0.0)
+                {
+                    closedWeights(0, hhWTip_.data());
+                    closedWeights(1, hhWEdge_.data());
+                    const double hi = std::pow(10.0, hhTipModesDb_ / 20.0), lo = 1.0 / hi;
+                    for (size_t m = 0; m < n; ++m)
+                        hhWMod_[m] = knotWeights[m] * std::min(std::max((hhWTip_[m] + 0.001) / (hhWEdge_[m] + 0.001), lo), hi);
+                    for (size_t b = 0; b < nb; ++b)
+                    {
+                        double n0 = 0.0, n1 = 0.0;
+                        for (int m = bandStart_[b]; m < bandEnd_[b]; ++m)
+                        {
+                            n0 += knotWeights[size_t(m)] * knotWeights[size_t(m)];
+                            n1 += hhWMod_[size_t(m)] * hhWMod_[size_t(m)];
+                        }
+                        if (n1 > 0.0)
+                        {
+                            const double g = std::sqrt(n0 / n1);
+                            for (int m = bandStart_[b]; m < bandEnd_[b]; ++m)
+                                hhWMod_[size_t(m)] *= g;
+                        }
+                    }
+                    addWeights(hhWMod_, wshare);
+                    return;
+                }
             }
-            addWeights(knot.weights, wshare);
+            addWeights(knotWeights, wshare);
         };
         // The envelope between the two knots; the mode weights of the nearer one (the upper from
         // halfway). Between closed and the first open knot the closed side's are the closed
@@ -4547,7 +4617,9 @@ void FastEngine::setPedal(double openness, bool immediate) noexcept
 {
     if (!hihat_)
         return;
-    const double target = clamp01(openness);
+    // MAX OPEN: the openness the pedal reaches at its top, from the next pedal value.
+    pedalRaw_ = clamp01(openness);
+    const double target = pedalRaw_ * hhMaxOpen_;
     const double t = timeSeconds();
     const double now = pedalAt(t);
     // Within a segment the openness moves monotonically, so it peaked at one of its ends.

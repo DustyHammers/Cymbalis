@@ -515,6 +515,11 @@ private:
     // The hi-hat's tuning (docs/TUNING.md), from the next strike: TIP OPEN LEVEL and RING FLOOR
     // as fractions, TIP OPEN TICK in dB.
     double hhTipOpenLevel_ = 0.0, hhTipOpenTickDb_ = 0.0, hhRingFloor_ = 1.0;
+    // The hi-hat's open-hat options (docs/TUNING.md): FREE RING and TIP MODES (dB) from the next
+    // strike; MAX OPEN (a fraction) scales the pedal (setPedal), and pedalRaw_ is the last openness
+    // the pedal asked for before it.
+    bool hhFreeRing_ = false;
+    double hhTipModesDb_ = 0.0, hhMaxOpen_ = 1.0, pedalRaw_ = 0.0;
     Pcg64 hitRng_;
     int envBands_ = 0;                        // envelope bands: the NPZ data's, or the hi-hat's 22
     std::vector<double> bandVal0_, bandVal1_; // per band, scratch for one block
@@ -680,7 +685,8 @@ private:
     static constexpr double kHiHatOpenEps = 0.004, kHiHatStepMax = 50.0, kHiHatFloor = 1e-6;
     std::vector<int8_t> hhArt_;
     int hhFootSlot_ = -1;
-    std::vector<std::vector<double>> hhLnStick_, hhLnRaw_;
+    std::vector<std::vector<double>> hhLnStick_, hhLnRaw_, hhLnStickFree_; // FREE RING's: the knots that have it
+    std::vector<double> hhWTip_, hhWEdge_, hhWMod_; // TIP MODES' scratch: closed TIP and EDGE weights at v, the result
     std::vector<double> hhLnRate_, hhLog_, hhExp_;
     std::array<double, kExcitationBands> hhRefPeak_ {}, hhRateNowRaw_ {};
     double hhRateMedianNow_ = 0.0;

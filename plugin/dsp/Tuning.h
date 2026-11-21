@@ -134,6 +134,13 @@ struct CymbalTuning
     double hhTipOpenLevel = 0.0;
     double hhTipOpenTickDb = 0.0;
     double hhRingFloor = 100.0;
+    // HI-HAT open-hat options (docs/TUNING.md; all off by default): FREE RING, the fully open knot
+    // as a single free cymbal (its free weights and smoothed envelope); TIP MODES, how far an open
+    // TIP knot's mode weights lean towards the modes a tip strike favours (dB, 0 .. 20, 0: off);
+    // MAX OPEN, the openness the pedal reaches at CC 127 (%, 75 .. 100).
+    bool hhFreeRing = false;
+    double hhTipModesDb = 0.0;
+    double hhMaxOpen = 100.0;
     // Energy cascade (FastEngine): while a band rings above the threshold, energy moves from
     // it into the bands above it. Amount 0: off. Bands are indices 0 .. 21 (as the band gains).
     double cascadeAmount = 0.0;        // 0 .. 1
@@ -201,6 +208,10 @@ constexpr const char* kHhTipOpenLevelKey = "hh_tip_open_level";  // TIP OPEN LEV
 constexpr const char* kHhTipOpenTickKey = "hh_tip_open_tick_db"; // TIP OPEN TICK, dB
 constexpr const char* kHhRingFloorKey = "hh_ring_floor";         // RING FLOOR, %
 constexpr double kHhTipOpenLevelMax = 100.0, kHhTipOpenTickMax = 12.0, kHhRingFloorMax = 200.0;
+constexpr const char* kHhFreeRingKey = "hh_free_ring";    // FREE RING, on / off
+constexpr const char* kHhTipModesKey = "hh_tip_modes_db"; // TIP MODES, dB
+constexpr const char* kHhMaxOpenKey = "hh_max_open";      // MAX OPEN, %
+constexpr double kHhTipModesMax = 20.0, kHhMaxOpenMin = 75.0, kHhMaxOpenMax = 100.0;
 // The bake's per-mode stereo gains, written by tools/apply_tuning.py (BakeData::gainL/gainR).
 constexpr const char* kStereoKey = "stereo";
 constexpr const char* kRehitWeightsKey = "rehit_damp_weights"; // {articulation id: weight}

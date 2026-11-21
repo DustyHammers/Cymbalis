@@ -96,8 +96,11 @@
 //                TICK's at 0.65 and RING FLOOR's a fifth along        -> the three moved
 //                (TIP OPEN LEVEL to 5-50 % from 60, TIP OPEN TICK to above 6 dB from 4, RING
 //                FLOOR to 5-80 % from 100)
-//   nohihatvalues (on any preset but HI-HAT) look for TIP OPEN LEVEL, TIP OPEN TICK and RING
-//                FLOOR down the list                                  -> none
+//   hihatopen    (on HI-HAT) click FREE RING's switch, TIP MODES' slider halfway along and MAX
+//                OPEN's a fifth of the way along                      -> the three moved
+//                (FREE RING on, TIP MODES above 4 dB from 0, MAX OPEN to 75-95 % from 100)
+//   nohihatvalues (on any preset but HI-HAT) look for TIP OPEN LEVEL, TIP OPEN TICK, RING FLOOR,
+//                FREE RING, TIP MODES and MAX OPEN down the list      -> none
 //
 //   nova      click the CYMBAL box, then NOVA RIDE (the first)       -> preset nova_ride
 //   smoke     click the CYMBAL box, then SMOKE FLAT RIDE (the second) -> preset smoke_flat_ride
@@ -1181,6 +1184,9 @@ private:
                     { "TIP OPEN LEVEL (share of the closed tip/edge gap an open tip drops at full opening)", "shown" },
                     { "TIP OPEN TICK (the tip's stick click raised at full opening)", "shown" },
                     { "RING FLOOR (each band's decay rate at least this share of the median; 0 = off)", "shown" },
+                    { "FREE RING (the fully open hats as a single free cymbal)", "shown" },
+                    { "TIP MODES (an open tip favours the modes a tip strike favours; 0 = off)", "shown" },
+                    { "MAX OPEN (the openness the pedal reaches at CC 127)", "shown" },
                     { "STICK CLICK bow weight", "none" },
                     { "POSITION SPREAD (0 edge, 0.5 bow, 1 bell)", "none" },
                     { "Bow brightness vs velocity (tau_ref): TIP", "none" },
@@ -1228,10 +1234,43 @@ private:
                 return moved ? juce::String ("moved") : values;
             };
         }
+        else if (name == "hihatopen")
+        {
+            s.actions = { [this] {
+                             actionError = cymbalis::uitest::clickTuningButton (*editor, "FREE RING (the fully open hats as a single free cymbal)", true);
+                         },
+                          wait,
+                          [this] {
+                              if (actionError.isEmpty())
+                                  actionError = cymbalis::uitest::clickTuningSlider (*editor, "TIP MODES", 0.5f);
+                          },
+                          wait,
+                          [this] {
+                              if (actionError.isEmpty())
+                                  actionError = cymbalis::uitest::clickTuningSlider (*editor, "MAX OPEN", 0.2f);
+                          },
+                          wait, wait };
+            s.key = "hi-hat open options";
+            s.expected = "moved";
+            s.probe = [this] {
+                if (actionError.isNotEmpty())
+                    return actionError;
+                const auto c = currentTuning (sessionNow())["effective"]["cymbal"];
+                const auto& freeRing = c["hh_free_ring"];
+                const auto& modes = c["hh_tip_modes_db"];
+                const auto& maxOpen = c["hh_max_open"];
+                const auto values = "hh_free_ring " + freeRing.toString() + ", hh_tip_modes_db " + modes.toString() + ", hh_max_open "
+                                    + maxOpen.toString();
+                std::printf ("      %s\n", values.toRawUTF8());
+                const bool moved = freeRing.isBool() && (bool) freeRing && ! modes.isVoid() && (double) modes > 4.0 && (double) modes <= 20.0
+                                   && ! maxOpen.isVoid() && (double) maxOpen >= 75.0 && (double) maxOpen <= 95.0;
+                return moved ? juce::String ("moved") : values;
+            };
+        }
         else if (name == "nohihatvalues")
         {
             s.actions = { [this] {
-                             for (const char* row : { "TIP OPEN LEVEL", "TIP OPEN TICK", "RING FLOOR" })
+                             for (const char* row : { "TIP OPEN LEVEL", "TIP OPEN TICK", "RING FLOOR", "FREE RING", "TIP MODES", "MAX OPEN" })
                              {
                                  const auto got = cymbalis::uitest::tuningShows (*editor, row);
                                  std::printf ("      \"%s\": %s\n", row, got.toRawUTF8());

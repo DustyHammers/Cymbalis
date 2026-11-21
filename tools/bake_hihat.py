@@ -18,10 +18,12 @@ The bake has the format of tools/bake_preset.py, so the plugin's loader reads it
     0.0, the EDGE row) and FOOT (foot, the pedal; no row), each with its stick click
     (STICK_CLICK) and no contact, onset ramp, velocity table or NPZ data;
   * the "hihat" block: per knot its stick envelope, its raw envelope (the closed EDGE knots:
-    FOOT plays them), its mode weights and its level per band; the band decay rates at
+    FOOT plays them), its mode weights and its level per band (the fully open knot also its FREE
+    RING weights, from hihat_weights_free.json, and its smoothed stick envelope); the band decay rates at
     openness 0 (the closed EDGE V3) to 1; the choke rate, the FOOT rules, the pedal smoothing;
   * a tuning block: the output gain of every preset (-11 dB), HIT VARIATION on, and the hi-hat's
-    TIP OPEN LEVEL 60 %, TIP OPEN TICK +4 dB and RING FLOOR 100 % (docs/TUNING.md).
+    TIP OPEN LEVEL 60 %, TIP OPEN TICK +4 dB and RING FLOOR 100 %, and FREE RING off, TIP MODES 0 dB
+    and MAX OPEN 100 % (docs/TUNING.md).
 
 Level trims are measured afterwards with tools/cymbalis_trims and stored with
 tools/set_level_trims.py (docs/BUILDS.md); re-baking drops them.
@@ -51,7 +53,8 @@ WANDER_RATE_HZ = 1.5
 TAU_REF_MS = 0.2               # unused: the hi-hat's strikes do not take the hertz velocity law
 PRESET_DIR = 'presets/hihat'
 SOURCES = ['presets/hihat/HiHat_A60.json', 'presets/hihat/data/hihat_envelopes.json',
-           'presets/hihat/data/hihat_weights.json', 'docs/hihat_reference.py']
+           'presets/hihat/data/hihat_weights.json', 'docs/hihat_reference.py',
+           'presets/hihat/data/hihat_weights_free.json']
 # The stick click per articulation (Kris, 2026-11-20): gain, band (Hz), length and decay (ms).
 # The gains are set so that on a closed hit at velocity 1.0 the click's first-3 ms RMS is 3 dB
 # under the cymbal's own (mean power over 256 hits, measured with FastEngine; docs/PORT_MAP.md,
@@ -154,6 +157,8 @@ def bake():
             'raw': enc(h.raw[kid]) if closed_edge else None,  # FOOT plays the closed EDGE's own rise
             'weights': enc(h.w[kid]),
             'level_db': enc(h.lvl[kid]),
+            # FREE RING (a Tuning window option): the fully open knot as a single free cymbal.
+            **({'stick_free': enc(h.stick_free[kid]), 'weights_free': enc(h.w_free[kid])} if kid in h.w_free else {}),
         })
     hihat = {
         'format': 'cymbalis-hihat-1',
@@ -208,7 +213,8 @@ def bake():
                   'open knot\'s mode weights. Position weights 1, no drift.'],
         'tuning': {'format': 'cymbalis-tuning', 'version': 1, 'applied_by': 'tools/bake_hihat.py',
                    'cymbal': {'output_gain_db': -11.0, 'hit_variation': True, 'hh_tip_open_level': 60.0,
-                              'hh_tip_open_tick_db': 4.0, 'hh_ring_floor': 100.0}},
+                              'hh_tip_open_tick_db': 4.0, 'hh_ring_floor': 100.0, 'hh_free_ring': False,
+                              'hh_tip_modes_db': 0.0, 'hh_max_open': 100.0}},
     }
 
 
