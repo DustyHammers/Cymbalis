@@ -38,7 +38,8 @@ enum class Needs
     noVelocityTables, // presets whose bow has no velocity participation table (602, Bettis, Swish)
     envelope,         // presets with an NPZ band envelope, on or switched off (602, Bettis, Swish)
     bandEnvelope,     // strikes that follow band envelopes: the NPZ presets' edge, the hi-hat
-    positions         // strikes at a position on the cymbal (every preset but the hi-hat)
+    positions,        // strikes at a position on the cymbal (every preset but the hi-hat)
+    hihat             // the hi-hat only
 };
 
 bool applies (Needs needs, const BakeData& bake);

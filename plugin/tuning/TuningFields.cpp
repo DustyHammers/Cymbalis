@@ -33,6 +33,7 @@ bool applies (Needs needs, const BakeData& b)
         case Needs::envelope: return b.edgeNpz.present; // the tuning can switch the envelope on
         case Needs::bandEnvelope: return b.edgeNpz.present || b.hihat.present;
         case Needs::positions: return ! b.hihat.present;
+        case Needs::hihat: return b.hihat.present;
         case Needs::noVelocityTables:
             if (b.hihat.present)
                 return false; // the hi-hat's strikes do not take the hertz velocity law
@@ -71,6 +72,9 @@ const std::vector<Field>& cymbalFields()
         { "tau_ref_ms", "Bow brightness vs velocity (tau_ref)", "ms", Group::cymbal, Needs::noVelocityTables, 0.05, 8.0, 2, &C::tauRefMs, false, Scope::hertz },
         { "ring_length", "Ring length (x t60_scale)", "x", Group::cymbal, Needs::always, 0.5, 2.0, 2, &C::ringLength, true },
         { "edge_ring_keep_ms", "Kept onset (ring length acts after it)", "ms", Group::cymbal, Needs::bandEnvelope, 0.0, 300.0, 0, &C::edgeRingKeepMs, false, Scope::envelope },
+        { kHhTipOpenLevelKey, "TIP OPEN LEVEL (share of the closed tip/edge gap an open tip drops at full opening)", "%", Group::cymbal, Needs::hihat, 0.0, kHhTipOpenLevelMax, 0, &C::hhTipOpenLevel, false },
+        { kHhTipOpenTickKey, "TIP OPEN TICK (the tip's stick click raised at full opening)", "dB", Group::cymbal, Needs::hihat, 0.0, kHhTipOpenTickMax, 1, &C::hhTipOpenTickDb, false },
+        { kHhRingFloorKey, "RING FLOOR (each band's decay rate at least this share of the median; 0 = off)", "%", Group::cymbal, Needs::hihat, 0.0, kHhRingFloorMax, 0, &C::hhRingFloor, false },
 
         { kHitPositionSpreadKey, "POSITION SPREAD (0 edge, 0.5 bow, 1 bell)", "", Group::hitVariation, Needs::positions, 0.0, kHitPositionSpreadMax, 3, &C::hitPositionSpread, false },
         { kHitVelocitySpreadKey, "VELOCITY SPREAD", "%", Group::hitVariation, Needs::always, 0.0, kHitVelocitySpreadMax, 1, &C::hitVelocitySpreadPct, false },
@@ -471,6 +475,10 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
     if (! (t.cymbal.hitPositionSpread >= 0.0 && t.cymbal.hitPositionSpread <= kHitPositionSpreadMax)
         || ! (t.cymbal.hitVelocitySpreadPct >= 0.0 && t.cymbal.hitVelocitySpreadPct <= kHitVelocitySpreadMax))
         return "The tuning file's hit_position_spread must lie in 0 to 0.15 and hit_velocity_spread_pct in 0 to 15 %.";
+    if (! (t.cymbal.hhTipOpenLevel >= 0.0 && t.cymbal.hhTipOpenLevel <= kHhTipOpenLevelMax)
+        || ! (t.cymbal.hhTipOpenTickDb >= 0.0 && t.cymbal.hhTipOpenTickDb <= kHhTipOpenTickMax)
+        || ! (t.cymbal.hhRingFloor >= 0.0 && t.cymbal.hhRingFloor <= kHhRingFloorMax))
+        return "The tuning file's hh_tip_open_level must lie in 0 to 100 %, hh_tip_open_tick_db in 0 to 12 dB and hh_ring_floor in 0 to 200 %.";
     for (size_t s = 0; s < b.slots.size(); ++s)
         for (double w : { t.articulations[s].stickBowWeight, t.articulations[s].stickBellWeight, t.articulations[s].stickEdgeWeight })
             if (! (w >= 0.0 && w <= kStickWeightMax))

@@ -92,6 +92,12 @@
 //   hihattuning  (on HI-HAT) the list shows the values that act on it and not the others
 //                (stick click weights, position spread, EDGE VOICE FROM BOW, tau_ref)
 //                                                                    -> as expected
+//   hihatvalues  (on HI-HAT) click TIP OPEN LEVEL's slider a fifth of the way along, TIP OPEN
+//                TICK's at 0.65 and RING FLOOR's a fifth along        -> the three moved
+//                (TIP OPEN LEVEL to 5-50 % from 60, TIP OPEN TICK to above 6 dB from 4, RING
+//                FLOOR to 5-80 % from 100)
+//   nohihatvalues (on any preset but HI-HAT) look for TIP OPEN LEVEL, TIP OPEN TICK and RING
+//                FLOOR down the list                                  -> none
 //
 //   nova      click the CYMBAL box, then NOVA RIDE (the first)       -> preset nova_ride
 //   smoke     click the CYMBAL box, then SMOKE FLAT RIDE (the second) -> preset smoke_flat_ride
@@ -1172,6 +1178,9 @@ private:
                     { "STICK CLICK gain (0 = none)", "shown" },
                     { "Kept onset (ring length acts after it): TIP, EDGE, FOOT", "shown" },
                     { "VELOCITY SPREAD", "shown" },
+                    { "TIP OPEN LEVEL (share of the closed tip/edge gap an open tip drops at full opening)", "shown" },
+                    { "TIP OPEN TICK (the tip's stick click raised at full opening)", "shown" },
+                    { "RING FLOOR (each band's decay rate at least this share of the median; 0 = off)", "shown" },
                     { "STICK CLICK bow weight", "none" },
                     { "POSITION SPREAD (0 edge, 0.5 bow, 1 bell)", "none" },
                     { "Bow brightness vs velocity (tau_ref): TIP", "none" },
@@ -1187,6 +1196,57 @@ private:
                 }
                 return juce::String ("as expected");
             };
+        }
+        else if (name == "hihatvalues")
+        {
+            s.actions = { [this] { actionError = cymbalis::uitest::clickTuningSlider (*editor, "TIP OPEN LEVEL", 0.2f); },
+                          wait,
+                          [this] {
+                              if (actionError.isEmpty())
+                                  actionError = cymbalis::uitest::clickTuningSlider (*editor, "TIP OPEN TICK", 0.65f);
+                          },
+                          wait,
+                          [this] {
+                              if (actionError.isEmpty())
+                                  actionError = cymbalis::uitest::clickTuningSlider (*editor, "RING FLOOR", 0.2f);
+                          },
+                          wait, wait };
+            s.key = "hi-hat values";
+            s.expected = "moved";
+            s.probe = [this] {
+                if (actionError.isNotEmpty())
+                    return actionError;
+                const auto c = currentTuning (sessionNow())["effective"]["cymbal"];
+                const auto& level = c["hh_tip_open_level"];
+                const auto& tick = c["hh_tip_open_tick_db"];
+                const auto& floor = c["hh_ring_floor"];
+                const auto values = "hh_tip_open_level " + level.toString() + ", hh_tip_open_tick_db " + tick.toString() + ", hh_ring_floor "
+                                    + floor.toString();
+                std::printf ("      %s\n", values.toRawUTF8());
+                const bool moved = ! level.isVoid() && (double) level >= 5.0 && (double) level <= 50.0 && ! tick.isVoid() && (double) tick > 6.0
+                                   && (double) tick <= 12.0 && ! floor.isVoid() && (double) floor >= 5.0 && (double) floor <= 80.0;
+                return moved ? juce::String ("moved") : values;
+            };
+        }
+        else if (name == "nohihatvalues")
+        {
+            s.actions = { [this] {
+                             for (const char* row : { "TIP OPEN LEVEL", "TIP OPEN TICK", "RING FLOOR" })
+                             {
+                                 const auto got = cymbalis::uitest::tuningShows (*editor, row);
+                                 std::printf ("      \"%s\": %s\n", row, got.toRawUTF8());
+                                 if (got != "none")
+                                 {
+                                     actionError = juce::String (row) + ": " + got;
+                                     return;
+                                 }
+                             }
+                             actionError = "none";
+                         },
+                          wait };
+            s.key = "hi-hat values";
+            s.expected = "none";
+            s.probe = [this] { return actionError; };
         }
         else if (name == "konstan")
         {

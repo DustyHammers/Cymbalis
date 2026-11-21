@@ -20,7 +20,8 @@ The bake has the format of tools/bake_preset.py, so the plugin's loader reads it
   * the "hihat" block: per knot its stick envelope, its raw envelope (the closed EDGE knots:
     FOOT plays them), its mode weights and its level per band; the band decay rates at
     openness 0 (the closed EDGE V3) to 1; the choke rate, the FOOT rules, the pedal smoothing;
-  * a tuning block: the output gain of every preset (-11 dB) and HIT VARIATION on.
+  * a tuning block: the output gain of every preset (-11 dB), HIT VARIATION on, and the hi-hat's
+    TIP OPEN LEVEL 60 %, TIP OPEN TICK +4 dB and RING FLOOR 100 % (docs/TUNING.md).
 
 Level trims are measured afterwards with tools/cymbalis_trims and stored with
 tools/set_level_trims.py (docs/BUILDS.md); re-baking drops them.
@@ -206,7 +207,8 @@ def bake():
                   'T60 of each mode: ln(1000) / the fully open knot\'s decay rate of its band; exc_norm: the fully '
                   'open knot\'s mode weights. Position weights 1, no drift.'],
         'tuning': {'format': 'cymbalis-tuning', 'version': 1, 'applied_by': 'tools/bake_hihat.py',
-                   'cymbal': {'output_gain_db': -11.0, 'hit_variation': True}},
+                   'cymbal': {'output_gain_db': -11.0, 'hit_variation': True, 'hh_tip_open_level': 60.0,
+                              'hh_tip_open_tick_db': 4.0, 'hh_ring_floor': 100.0}},
     }
 
 

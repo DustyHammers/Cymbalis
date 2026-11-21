@@ -15,7 +15,12 @@ Model (prototype renders approved by ear in the project session, 2026-11-20):
   rise (it is the pedal closing the cymbals, not a stick).
 - The tip at an opening uses the EDGE's envelope at that opening times the per-band level
   difference between the closed tip and the closed edge at that velocity, with the closed tip's
-  mode weights.
+  mode weights. TIP OPEN LEVEL (tip_open_level, a Tuning window value, 0 .. 1: Kris, 2026-11-21)
+  takes part of that difference off on open hats: each open knot's tip at the knot's openness x
+  uses (1 - tip_open_level x) x the difference, so the tip between knots follows it smoothly in o
+  (0, or a closed strike: as captured). The gap grows with velocity (the closed tip is about 4.5 dB
+  under the closed edge at 0.6 and 10.9 dB at 1.0), so a hard tip on open hats sat 7-8 dB under
+  the edge at every opening.
 - The pedal moves a ringing strike's decay both ways (approved by Kris, 2026-11-21: prototype
   renders, version B; the opened state, the threshold and the clamp: Kris, 2026-11-21, the pedal
   bursts fix; the floor rule, the choke from the highest opening and the rate floor: Kris,
@@ -27,9 +32,10 @@ Model (prototype renders approved by ear in the project session, 2026-11-20):
   `opened` whether the strike has opened up and o_ref the highest openness the pedal has opened
   it to (False and o_strike at the strike; level_step returns both), at_floor per band whether
   either end of the step has the envelope under FLOOR of the strike's peak (or 0). rate(o) is
-  interpolated in log between the knots' measured band decay rates, each band at least the median
-  of the 22 there (closed 7.3 per second, a 0.95 s T60; 1.5-3.1 open): the lowest bands' own rates
-  (0.5-1.05 per second for band 0) would ring on for seconds.
+  interpolated in log between the knots' measured band decay rates, each band at least ring_floor
+  x the median of the 22 there (RING FLOOR, a Tuning window value, 0 .. 2, 1 = 100 %, taken at a
+  strike's note-on: at 1, closed 7.3 per second, a 0.95 s T60, and 1.5-3.1 open; 0: the raw
+  rates): the lowest bands' own rates (0.5-1.05 per second for band 0) would ring on for seconds.
   - A strike that has not opened up follows its envelope: closing (o_now < o_strike), the pedal
     choke damps it further at each band's extra rate max(rate(o_now), CHOKE_RATE x (o_strike -
     o_now) / o_strike) - rate(o_strike), never negative (choke_rate); otherwise s_env.
@@ -57,8 +63,8 @@ Model (prototype renders approved by ear in the project session, 2026-11-20):
     data ends. It ends when every band is 120 dB under its peak level, or at MAX_RING_S at most,
     with the 10 ms end fade.
   - The openness of a new strike is taken at its note-on. FOOT is unchanged: the plugin applies
-    only the choke to it (it is the pedal closing), with the raw band rates (rate(o, floored=False)),
-    and it ends with its captured envelope.
+    only the choke to it (it is the pedal closing), with the raw band rates (rate(o, 0)), and it
+    ends with its captured envelope.
 """
 import json
 import numpy as np
@@ -76,7 +82,9 @@ MAX_RING_S = 8.0                 # s: the longest a TIP or EDGE strike rings
 IMPULSE_LOOK = 5                 # frames searched for the band's peak
 IMPULSE_MAX_DB = 9.0
 FOOT = dict(closed_below=0.05, rearm_above=0.15, speed_window_s=0.05, full_speed=10.0, v_min=0.1)
-# The stick tick per articulation (the plugin's stick click; see the prompt for its values)
+# The stick tick per articulation (the plugin's stick click; see the prompt for its values). TIP OPEN
+# TICK (tip_open_tick_db, a Tuning window value, 0 .. 12 dB) raises the TIP's by tip_open_tick_db x
+# o_strike dB: the cymbal behind it grows with the opening, the captured click did not.
 
 
 class HiHat:
@@ -151,9 +159,10 @@ class HiHat:
             e = e * (10 ** ((self.closed_level(art, v) - self.closed_level(art, vs[i0])) / 20))[:, None]
         return e, w
 
-    def envelope(self, art, o, v, n):
+    def envelope(self, art, o, v, n, tip_open_level=0.0):
         """Band envelopes (NB x n frames of 10 ms) and mode weights for a strike.
-        art: 'tip' | 'edge' | 'foot'; o: openness 0..1 at the strike; v: velocity 0..1."""
+        art: 'tip' | 'edge' | 'foot'; o: openness 0..1 at the strike; v: velocity 0..1;
+        tip_open_level: TIP OPEN LEVEL, 0..1 (the module's docstring)."""
         if art == 'foot':
             return self._closed('edge', v, n, self.raw)
         opens = [k for k in self.knots.values() if k['openness'] > 0]
@@ -165,7 +174,8 @@ class HiHat:
             k = opens[i - 1]
             e = self._pad(self.stick[k['id']], n) * (10 ** ((self.closed_level('edge', v) - self.closed_level('edge', k['velocity'])) / 20))[:, None]
             if art == 'tip':
-                g = 10 ** ((self.closed_level('tip', v) - self.closed_level('edge', v)) / 20)
+                keep = 1.0 - tip_open_level * k['openness']
+                g = 10 ** (keep * (self.closed_level('tip', v) - self.closed_level('edge', v)) / 20)
                 _, wt = self._closed('tip', v, 1, self.stick)
                 return e * g[:, None], wt
             return e, self.w[k['id']]
@@ -176,24 +186,25 @@ class HiHat:
         e0, w0 = knot(j); e1, w1 = knot(j + 1)
         return np.exp((1 - a) * np.log(e0) + a * np.log(e1)), (1 - a) * w0 + a * w1
 
-    def rate(self, o, floored=True):
+    def rate(self, o, ring_floor=1.0):
         """Each band's decay rate (amplitude, 1/s) at openness o, interpolated in log between the
-        rate knots; floored, each at least the median of the 22 there (TIP and EDGE; FOOT's choke
-        takes the raw rates)."""
+        rate knots, each at least ring_floor x the median of the 22 there (RING FLOOR, 0..2; TIP and
+        EDGE take the strike's; FOOT's choke takes 0, the raw rates)."""
         xs = [x for _, x in self.rate_knots]
         r = np.exp(np.array([np.interp(o, xs, np.log(self.rates[:, b])) for b in range(NB)]))
-        return np.maximum(r, np.median(r)) if floored else r
+        return np.maximum(r, ring_floor * np.median(r))
 
-    def choke_rate(self, o_from, o_now, floored=True):
+    def choke_rate(self, o_from, o_now, ring_floor=1.0):
         """Extra amplitude decay rate per band (1/s) for a ringing strike closing from o_from (its
         openness at the strike; once opened up, the highest it was opened to) while the pedal is
         at o_now."""
         if o_now >= o_from:
             return np.zeros(NB)
-        target = np.maximum(self.rate(o_now, floored), CHOKE_RATE * (o_from - o_now) / max(o_from, 1e-6))
-        return np.maximum(target - self.rate(o_from, floored), 0.0)
+        target = np.maximum(self.rate(o_now, ring_floor), CHOKE_RATE * (o_from - o_now) / max(o_from, 1e-6))
+        return np.maximum(target - self.rate(o_from, ring_floor), 0.0)
 
-    def level_step(self, s_env, o_strike, o_now, dt, t_since_strike, opened=False, o_ref=None, at_floor=None):
+    def level_step(self, s_env, o_strike, o_now, dt, t_since_strike, opened=False, o_ref=None, at_floor=None,
+                   ring_floor=1.0):
         """A ringing TIP or EDGE strike's log level step per band over dt (natural log of amplitude;
         see the module's docstring), whether it has opened up and the highest openness the pedal
         has opened it to. s_env: the captured envelope's own log step per band over dt
@@ -201,25 +212,26 @@ class HiHat:
         finite where either end is 0). opened, o_ref: as returned by the previous step (False and
         o_strike, or None, at the strike). at_floor: per band, whether either end of the step has
         the envelope under FLOOR of the strike's peak (E < FLOOR x E.max() over the strike's
-        envelope; None: none). Returns (step, opened, o_ref)."""
+        envelope; None: none). ring_floor: RING FLOOR at the strike's note-on (rate). Returns
+        (step, opened, o_ref)."""
         s_env = np.asarray(s_env, float)
         o_ref = o_strike if o_ref is None else o_ref
         opening = o_now > o_strike + OPEN_EPS and t_since_strike >= OPEN_AFTER
         if not (opened or opening):
             if o_now < o_strike:
-                return s_env - self.choke_rate(o_strike, o_now) * dt, False, o_ref
+                return s_env - self.choke_rate(o_strike, o_now, ring_floor) * dt, False, o_ref
             return s_env, False, o_ref
         m = STEP_MAX * dt
         floor = ~np.isfinite(s_env) if at_floor is None else (np.asarray(at_floor, bool) | ~np.isfinite(s_env))
-        s_c = np.where(floor, -self.rate(o_strike) * dt, np.clip(np.where(np.isfinite(s_env), s_env, 0.0), -m, m))
+        s_c = np.where(floor, -self.rate(o_strike, ring_floor) * dt, np.clip(np.where(np.isfinite(s_env), s_env, 0.0), -m, m))
         if opened and o_now < o_ref - OPEN_EPS:
             w_ref = min(1.0, (o_ref - o_strike) / OPEN_BLEND)
-            slope = (1.0 - w_ref) * s_c - w_ref * self.rate(o_ref) * dt - self.choke_rate(o_ref, o_now) * dt
+            slope = (1.0 - w_ref) * s_c - w_ref * self.rate(o_ref, ring_floor) * dt - self.choke_rate(o_ref, o_now, ring_floor) * dt
             return slope, True, o_ref
         if opening:
             o_ref = max(o_ref, o_now)
             w = min(1.0, (o_now - o_strike) / OPEN_BLEND)
-            slope = (1.0 - w) * s_c + w * (-self.rate(o_now) * dt)
+            slope = (1.0 - w) * s_c + w * (-self.rate(o_now, ring_floor) * dt)
             return np.minimum(slope, np.maximum(s_c, 0.0)), True, o_ref
         return s_c, True, o_ref
 
