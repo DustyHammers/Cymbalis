@@ -155,8 +155,34 @@ Built 2026-10-28 in the project session from Kris's SPEAR captures (Bow V1-V6, E
 - **The bell is inferred, not captured.** On NOVA RIDE, RAVEN and HAMMERED THIN RIDE the bell excites the same modes as the bow with a consistent tilt in absolute frequency (less below 1.3 kHz, more at 2.5-9 kHz), concentrated in a few modes whose choice nothing measured predicts. The builder applies that tilt (eased below 1.5 kHz), an extra tilt putting the bell's centroid at 0.7 x the bow's, and a per-mode scatter from Nova's and Raven's bells (seed 3) widened to make the bell purer than theirs; chosen by ear by Kris, 2026-10-28. Shaping values in `data/konstan_build_info.json` (`bell_shaping`). Real bell captures would replace it.
 - SPEAR level targets in `data/konstan_build_info.json`: EDGE +13.5 dB above BOW (Edge V7 against Bow V6); BELL +4.72 dB, RAVEN's measured value (the bell is inferred).
 - Build-up (LF and MF) as Bettis and Swish; wander, stick click and NL off. No velocity tables: bell and bow use the hertz law (v^2).
-- `hihat_weights_free.json` (added 2026-11-21, Kris: "version C"): the fully open knot (V7) as a single free-ringing cymbal, its mode weights from the SPEAR partials lasting at least 0.4 s only, each partial to its nearest mode, no floor (237 modes above 0.05, against 510). The fully open capture still has the bottom cymbal in it: its level pulses at about 1 and 4 Hz and its partials are short-lived (about 7,200 tracks in 1.5 s); the long partials are the top cymbal ringing.
 - No photo: the plugin draws the wireframe (`docs/ui/wireframe_reference.py`, `konstan`).
+
+# Extra Paper Thin Ride 24"
+
+Built 2026-11-21 in the project session from Kris's SPEAR captures (Bell V1-V3 and Bow V1-V3 with the stick tip, Edge V1, V2, V3, V5 and V6 with the shoulder) by `build_preset.py --low-wash` (kept in the project with its documentation, `SPEAR_Preset_Builder.md`, not in this repo). SPEAR files excluded. No baseline render check: the plugin is the reference (see `CLAUDE.md`).
+
+| File | MD5 |
+|---|---|
+| `presets/paperthin/PaperThin_Baseline1.json` | `988d5b6d272d5a462148349c6e5466ac` |
+| `presets/paperthin/data/paperthin_bell_excitation_ratios.json` | `a6a2df38a43f9c2bb1d7dcebd48032d5` |
+| `presets/paperthin/data/paperthin_build_info.json` | `e407d86e9947f928cf3e470e147c6f43` |
+| `presets/paperthin/data/paperthin_edge_benv_trigger.json` | `92ec523cac9f161935a417885ed71969` |
+| `presets/paperthin/data/paperthin_edge_excitation_ratios_neutral.json` | `a34d663d99d8c5f033d9d00921665ccf` |
+| `presets/paperthin/data/paperthin_edge_npz_data.json` | `881e4f5da69bee34f5ba2729f3c3b8cd` |
+| `presets/paperthin/data/paperthin_edge_vel_tilt.json` | `fc7686341b09dca7b61a0b06ba9d4fb3` |
+| `presets/paperthin/data/paperthin_fingerprint.json` | `0a883ff28f94b365165aca054cef271e` |
+| `presets/paperthin/data/paperthin_pkt_data.json` | `15f19b8ac0c879f643c96289ff24761c` |
+
+## Notes
+
+- Bettis format, as RAVEN and KONSTAN: fingerprint (900 modes), measured bell ratios, neutral edge ratios, NPZ edge (3 velocities) in the plugin's 22 bands with `edge_rms_correction`, edge pk_t by velocity, edge velocity tilt, and the all-zero trigger file that switches the NPZ envelope on.
+- Mode bank: 781 modes seen in at least 2 bow captures and 119 edge-only modes, with up to 24 edge modes in each band below 400 Hz (`--low-wash`, the crash wash).
+- **Edge captures used: V1, V2 and V6** (velocities 0.066, 0.283, 1.0 from their levels). Edge V5 is quieter than Edge V3, so the velocities would not rise in order; Edge V3 starts with a strong 283 Hz swell that, with each NPZ envelope normalised to its loudest band, made a medium edge render 3.6 dB quieter than a soft one. With V1, V2 and V6 the rendered edge rises evenly with velocity. The top velocities still bunch (0.6 to 1.0 about 1 dB rendered, against 11 dB from V2 to V6 in the captures), as RAVEN's do.
+- **T60 refit from the bow captures, as KONSTAN** (see its notes): partials within ±0.6 % in Bow V1-V3, a dB slope from 0.3 to 3 s, the median where at least two captures fit, limited to x1/3-x3. 655 of the 781 bow modes refitted (median x2.6); the others keep their T60 after V19's cap. Meant to be baked **without** the cap: 350 are above it. The cymbal rings long: the measured band decays (T60, loud bow captures) are 10-27 s from 180 Hz to 2 kHz.
+- **Bell measured,** not inferred: Bell V1-V3 against the upper half of the bow captures (V2, V3).
+- SPEAR level targets in `data/paperthin_build_info.json`: BELL +8.69 dB and EDGE +15.77 dB above BOW (the loudest captures, first 500 ms).
+- Build-up (LF and MF) as Bettis and Swish; wander, stick click and NL off. No velocity tables: bell and bow use the hertz law (v^2).
+- No photo: the plugin draws the wireframe (`docs/ui/wireframe_reference.py`, `paperthin`), from Kris's photos of 2026-11-21.
 
 # HI-HAT (GF A60, 14")
 
@@ -175,4 +201,5 @@ Built 2026-11-20 in the project session from Kris's SPEAR captures of a pair of 
 - Ten knots (`HiHat_A60.json`): closed TIP and EDGE at velocities 0.3 / 0.6 / 1.0 (V1-V3), and EDGE at openness 0.25 / 0.5 / 0.75 / 1.0 (V4-V7). The open captures' velocities are matched by attack level (first 20 ms) to the closed edge: V4 and V5 about V2 (0.6), V6 and V7 about V3 (1.0). V4 and V5 measure almost the same (level and decay).
 - Per knot: the band envelope (22 plugin bands, 10 ms frames, the SPEAR band amplitude from the first frame with a partial) and each mode's weight within its band (unit norm per band; SPEAR energy within 0.4 % of the mode in the first 300 ms, floored at 8 % of the band's strongest).
 - What the captures show: closed hits fade 20 dB in about 0.1 s in the upper bands, with a low body around 150-300 Hz; open hits ring 2-2.5 s (V4, V5) to 4-6 s (V6, V7) and lose the low body. SPEAR shows every strike rising over 20-40 ms (its analysis window), which sounds like the pedal closing the cymbals rather than a stick: the stick articulations replace that rise (`docs/hihat_reference.py`); the FOOT articulation keeps it.
+- `hihat_weights_free.json` (added 2026-11-21, Kris: "version C"): the fully open knot (V7) as a single free-ringing cymbal, its mode weights from the SPEAR partials lasting at least 0.4 s only, each partial to its nearest mode, no floor (237 modes above 0.05, against 510). The fully open capture still has the bottom cymbal in it: its level pulses at about 1 and 4 Hz and its partials are short-lived (about 7,200 tracks in 1.5 s); the long partials are the top cymbal ringing.
 - No photo: the plugin draws the wireframe (`docs/ui/wireframe_reference.py`, HI-HAT section).

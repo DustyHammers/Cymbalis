@@ -1,0 +1,100 @@
+{
+  "velocities": {
+    "bell": {
+      "1": 0.076,
+      "2": 0.19,
+      "3": 1.0
+    },
+    "bow": {
+      "1": 0.292,
+      "2": 0.569,
+      "3": 1.0
+    },
+    "edge": {
+      "1": 0.066,
+      "2": 0.283,
+      "6": 1.0
+    }
+  },
+  "spear_level_vs_bow_db": {
+    "bell": 8.69,
+    "edge": 15.77
+  },
+  "spear_level_note": "RMS of the first 500 ms of the loudest capture of each articulation, relative to the loudest bow",
+  "bell_inferred": false,
+  "bell_shaping": null,
+  "modes": 900,
+  "freq_range_hz": [
+    38.1094,
+    19106.3269
+  ],
+  "t60_band_factor": [
+    6.0,
+    6.0,
+    6.0,
+    1.824,
+    0.925,
+    1.621,
+    1.014,
+    0.975,
+    1.544,
+    1.33,
+    2.773,
+    1.013,
+    1.072,
+    1.015,
+    1.096,
+    1.002,
+    1.04,
+    1.009,
+    0.999,
+    1.039,
+    0.978,
+    0.984
+  ],
+  "t60_band_measured_s": [
+    115.558,
+    62.243,
+    60.401,
+    21.74,
+    27.626,
+    15.381,
+    14.132,
+    17.515,
+    16.697,
+    17.649,
+    14.339,
+    13.538,
+    12.125,
+    10.774,
+    9.423,
+    7.262,
+    5.761,
+    4.57,
+    3.706,
+    2.679,
+    1.712,
+    1.15
+  ],
+  "t60_fitted_fraction": 0.707,
+  "edge_envelope_frames": 685,
+  "edge_band_env_onset_s": 14.2,
+  "edge_captures_used": [
+    "Edge V1",
+    "Edge V2",
+    "Edge V6"
+  ],
+  "edge_captures_left_out": {
+    "Edge V3": "its strong 283 Hz swell made a medium edge render quieter than a soft one",
+    "Edge V5": "quieter than Edge V3 (velocities out of order)"
+  },
+  "t60_refit": {
+    "method": "KONSTAN's: partials within +-0.6 % in Bow V1-V3, dB slope 0.3-3 s, median where two or more fit, x1/3-x3; others keep their T60 after V19's cap",
+    "bow_modes": 781,
+    "refitted": 655,
+    "median_change": 2.56,
+    "above_cap": 350,
+    "bake": "uncapped (T60_UNCAPPED)"
+  },
+  "low_wash": true
+}
