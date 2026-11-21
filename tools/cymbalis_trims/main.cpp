@@ -1,7 +1,8 @@
 // cymbalis_trims — level trims measured with FastEngine, the plugin's own engine.
 //
 //   cymbalis_trims --bake BAKE.json [--reference NOVA_BAKE.json] [--velocity V] [--window S]
-//                  [--spear-target SLOT=DB ...] [--peak-limit P] [--peak-hits N] [--json TRIMS.json]
+//                  [--spear-target SLOT=DB ...] [--peak-limit P] [--peak-hits N] [--same-as SLOT=SOURCE ...]
+//                  [--json TRIMS.json]
 //
 // For every slot of the bake (one per overlay: each row and stick choice of the plugin
 // plays one of them), a fresh engine with no level trim plays one strike of velocity V
@@ -22,6 +23,11 @@
 //
 // A trim is the level at the slot's own position, so HIT VARIATION (docs/TUNING.md) is
 // switched off while measuring: every strike plays at the slot's position and velocity V.
+//
+// --same-as SLOT=SOURCE gives SLOT the trim of SOURCE (a slot without --same-as), so that it
+// keeps its level relative to SOURCE: the hi-hat's TIP and FOOT keep their captured level
+// relative to EDGE. Its strike is measured all the same (its level vs BOW is reported). On the
+// hi-hat every strike is closed (the pedal at rest).
 //
 // The trims are printed and, with --json, written for tools/set_level_trims.py, which stores
 // them in the bake. The audio is only measured in memory; nothing is written but the JSON.
@@ -105,6 +111,7 @@ int main(int argc, char** argv)
     double velocity = 0.9, windowSeconds = 1.0, peakLimit = 0.0;
     int peakHits = 1024;
     std::map<std::string, double> targets;
+    std::map<std::string, std::string> sameAs;
     bool usage = false;
     for (int i = 1; i < argc; ++i)
     {
@@ -123,13 +130,20 @@ int main(int argc, char** argv)
             if (eq == std::string::npos || eq == 0) usage = true;
             else targets[t.substr(0, eq)] = std::stod(t.substr(eq + 1));
         }
+        else if (a == "--same-as" && i + 1 < argc)
+        {
+            const std::string t = argv[++i];
+            const auto eq = t.find('=');
+            if (eq == std::string::npos || eq == 0 || eq + 1 == t.size()) usage = true;
+            else sameAs[t.substr(0, eq)] = t.substr(eq + 1);
+        }
         else usage = true;
     }
     if (usage || bakePath.empty() || !(velocity > 0.0) || !(windowSeconds > 0.0) || peakLimit < 0.0 || peakHits < 1)
     {
         std::fprintf(stderr, "usage: cymbalis_trims --bake BAKE.json [--reference NOVA_BAKE.json] [--velocity V] "
                              "[--window S] [--spear-target SLOT=DB ...] [--peak-limit P] [--peak-hits N] "
-                             "[--json TRIMS.json]\n");
+                             "[--same-as SLOT=SOURCE ...] [--json TRIMS.json]\n");
         return 2;
     }
     try
@@ -149,6 +163,11 @@ int main(int argc, char** argv)
         for (const auto& t : targets)
             if (bake->slotIndex(t.first) < 0)
                 throw std::runtime_error("--spear-target names a slot the bake does not have: " + t.first);
+        for (const auto& t : sameAs)
+            if (bake->slotIndex(t.first) < 0 || bake->slotIndex(t.second) < 0 || sameAs.count(t.second) != 0 ||
+                targets.count(t.first) != 0)
+                throw std::runtime_error("--same-as " + t.first + "=" + t.second +
+                                         ": both slots must exist, the source must have its own trim, and the slot no SPEAR target");
 
         int ref = -1;
         for (int k = 0; k < static_cast<int>(refBake->slots.size()); ++k)
@@ -193,6 +212,14 @@ int main(int argc, char** argv)
                 }
             }
             r.levelDb = r.capped ? r.gainDb + 20.0 * std::log10(r.rms / refRms) : r.target;
+        }
+        // --same-as: the source's trim, and the level vs BOW that gives.
+        for (const auto& t : sameAs)
+        {
+            auto& r = res[size_t(bake->slotIndex(t.first))];
+            r.gainDb = res[size_t(bake->slotIndex(t.second))].gainDb;
+            r.capped = false;
+            r.levelDb = r.gainDb + 20.0 * std::log10(r.rms / refRms);
         }
         const std::string refName =
             (referencePath.empty() ? std::string() : std::string("Nova ")) + refBake->slots[size_t(ref)].name;
@@ -241,8 +268,10 @@ int main(int argc, char** argv)
                 const auto& r = res[size_t(k)];
                 std::fprintf(f, "    \"%s\": {\"position\": %.17g, \"rms\": %.17g, \"gain_db\": %.17g, \"level_db\": %.17g",
                              s.name.c_str(), s.position, r.rms, r.gainDb, r.levelDb);
-                if (!targets.empty())
+                if (!targets.empty() && sameAs.count(s.name) == 0)
                     std::fprintf(f, ", \"spear_target_db\": %.17g", r.target);
+                if (const auto same = sameAs.find(s.name); same != sameAs.end())
+                    std::fprintf(f, ", \"same_as\": \"%s\"", same->second.c_str());
                 if (measurePeaks)
                     std::fprintf(f, ", \"peak\": %.17g, \"first_hit_peak\": %.17g", r.peak * gain(r.gainDb),
                                  r.firstPeak * gain(r.gainDb));

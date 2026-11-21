@@ -180,6 +180,113 @@ void readEdgeNpz(const json::Value& z, size_t numModes, EdgeNpz& out, std::vecto
                                       : std::string(", no band envelope")));
 }
 
+// The hi-hat block written by tools/bake_hihat.py (docs/PORT_MAP.md, "Hi-hat").
+void readHiHat(const json::Value& h, const BakeData& b, HiHatData& out, std::vector<std::string>& rep)
+{
+    const size_t n = size_t(b.numModes), nb = size_t(kExcitationBands);
+    if (h.at("format").string() != "cymbalis-hihat-1")
+        throw BakeError("hihat: unknown format '" + h.at("format").string() + "'");
+    if (static_cast<size_t>(h.at("bands").number()) != nb)
+        throw BakeError("hihat: the envelopes must have the engine's " + std::to_string(nb) + " bands");
+    out.present = true;
+    out.frameS = h.at("frame_s").number();
+    // Each mode's envelope band is its one-third-octave band, rising with the mode index.
+    const auto band = readArray(h.at("mode_band"), "hihat.mode_band", {n}, rep);
+    for (size_t i = 0; i < n; ++i)
+    {
+        if (static_cast<int>(band[i]) != excitationBand(b.freqHz[i]))
+            throw BakeError("hihat.mode_band: mode " + std::to_string(i) + " is not in its one-third-octave band");
+        if (i > 0 && band[i] < band[i - 1])
+            throw BakeError("hihat.mode_band must rise with the mode index");
+    }
+    for (const auto& k : h.at("knots").array())
+    {
+        HiHatKnot knot;
+        knot.id = k.at("id").string();
+        const std::string art = k.at("articulation").string();
+        if (art != "tip" && art != "edge")
+            throw BakeError("hihat knot " + knot.id + ": articulation must be tip or edge");
+        knot.articulation = art == "tip" ? 0 : 1;
+        knot.openness = k.at("openness").number();
+        knot.velocity = k.at("velocity").number();
+        knot.frames = static_cast<int>(k.at("frames").number());
+        if (knot.frames < 1 || !(knot.openness >= 0.0 && knot.openness <= 1.0) || !(knot.velocity > 0.0 && knot.velocity <= 1.0))
+            throw BakeError("hihat knot " + knot.id + ": frames, openness or velocity out of range");
+        const std::string name = "hihat.knots." + knot.id;
+        knot.stick = readArray(k.at("stick"), name + ".stick", {nb, size_t(knot.frames)}, rep);
+        if (!k.at("raw").isNull())
+            knot.raw = readArray(k.at("raw"), name + ".raw", {nb, size_t(knot.frames)}, rep);
+        knot.weights = readArray(k.at("weights"), name + ".weights", {n}, rep);
+        const auto lvl = readArray(k.at("level_db"), name + ".level_db", {nb}, rep);
+        std::copy(lvl.begin(), lvl.end(), knot.levelDb.begin());
+        for (double x : knot.stick)
+            if (!(x >= 0.0) || !std::isfinite(x))
+                throw BakeError(name + ".stick: envelopes must be finite and >= 0");
+        out.maxFrames = std::max(out.maxFrames, knot.frames);
+        out.knots.push_back(std::move(knot));
+    }
+    for (size_t i = 0; i < out.knots.size(); ++i)
+    {
+        const auto& k = out.knots[i];
+        if (k.openness == 0.0)
+        {
+            int v = -1;
+            for (int j = 0; j < 3; ++j)
+                if (k.velocity == out.closedVelocity[j])
+                    v = j;
+            if (v < 0 || out.closed[k.articulation][v] >= 0)
+                throw BakeError("hihat knot " + k.id + ": closed knots need velocities 0.3, 0.6 and 1.0, once each");
+            out.closed[k.articulation][v] = static_cast<int>(i);
+        }
+        else
+        {
+            if (k.articulation != 1)
+                throw BakeError("hihat knot " + k.id + ": an open knot must be an EDGE knot");
+            out.open.push_back(static_cast<int>(i));
+        }
+    }
+    for (int a = 0; a < 2; ++a)
+        for (int v = 0; v < 3; ++v)
+            if (out.closed[a][v] < 0)
+                throw BakeError("hihat: closed TIP and EDGE knots at velocities 0.3, 0.6 and 1.0 are needed");
+    for (int v = 0; v < 3; ++v)
+        if (out.knots[size_t(out.closed[1][v])].raw.empty())
+            throw BakeError("hihat: the closed EDGE knots need their raw envelopes (FOOT)");
+    std::sort(out.open.begin(), out.open.end(), [&](int x, int y) { return out.knots[size_t(x)].openness < out.knots[size_t(y)].openness; });
+    if (out.open.empty())
+        throw BakeError("hihat: no open EDGE knot");
+    for (size_t i = 1; i < out.open.size(); ++i)
+        if (!(out.knots[size_t(out.open[i])].openness > out.knots[size_t(out.open[i - 1])].openness))
+            throw BakeError("hihat: two open knots have the same openness");
+    const auto& r = h.at("rate_knots");
+    out.rateOpenness = readArray(r.at("openness"), "hihat.rate_knots.openness", {0}, rep);
+    const size_t nr = out.rateOpenness.size();
+    if (nr < 2 || out.rateOpenness.front() != 0.0)
+        throw BakeError("hihat.rate_knots: at least two, from openness 0");
+    for (size_t i = 1; i < nr; ++i)
+        if (!(out.rateOpenness[i] > out.rateOpenness[i - 1]))
+            throw BakeError("hihat.rate_knots.openness must be ascending");
+    out.rates = readArray(r.at("rates"), "hihat.rate_knots.rates", {nr, nb}, rep);
+    for (double x : out.rates)
+        if (!(x > 0.0) || !std::isfinite(x))
+            throw BakeError("hihat.rate_knots.rates must be positive");
+    out.chokeRate = h.at("choke_rate").number();
+    const auto& f = h.at("foot");
+    out.footClosedBelow = f.at("closed_below").number();
+    out.footRearmAbove = f.at("rearm_above").number();
+    out.footWindowS = f.at("speed_window_s").number();
+    out.footFullSpeed = f.at("full_speed").number();
+    out.footMinVelocity = f.at("v_min").number();
+    out.pedalSmoothS = h.at("pedal_smoothing_s").number();
+    out.endFadeS = h.at("end_fade_s").number();
+    if (!(out.frameS > 0.0) || !(out.chokeRate > 0.0) || !(out.footWindowS > 0.0) || !(out.footFullSpeed > 0.0) ||
+        !(out.footClosedBelow < out.footRearmAbove) || !(out.pedalSmoothS > 0.0) || !(std::fabs(out.endFadeS - out.frameS) < 1e-12))
+        throw BakeError("hihat: frame length, choke rate, foot or pedal settings out of range (the end fade is one frame)");
+    rep.push_back("hi-hat       " + std::to_string(out.knots.size()) + " knots (" + std::to_string(out.open.size()) +
+                  " open), up to " + std::to_string(out.maxFrames) + " frames of " + fmt("%.3f s", out.frameS) +
+                  fmt(", choke %.4g/s", out.chokeRate));
+}
+
 // Mechanisms present in the Python engine but not implemented here (PORT_MAP stages 3+).
 std::vector<std::string> unsupportedMechanisms(const json::Value& e)
 {
@@ -488,6 +595,13 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
         }
         else if (e0.at("edge_band_env").boolean())
             rep.push_back("edge env     edge band envelope without NPZ data: no effect, as in Python");
+        // The hi-hat (tools/bake_hihat.py): its strike model, not a V19 preset.
+        if (const json::Value* hh = root.find("hihat"); hh != nullptr && !hh->isNull())
+        {
+            if (b.edgeNpz.present || ep.contactPermode || ep.bandEnvOnset || ep.velTilt)
+                throw BakeError("hihat: the hi-hat bake must have no NPZ edge data, contact or onset ramp");
+            readHiHat(*hh, b, b.hihat, rep);
+        }
         if (ep.mfDepth > 0.0)
         {
             if (sh.at("mf_bandpass").isNull())
@@ -735,6 +849,15 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
             }
             b.slots.push_back(std::move(slot));
         }
+        if (b.hihat.present)
+            for (const char* id : {"tip", "edge", "foot"})
+            {
+                bool found = false;
+                for (const auto& s : b.slots)
+                    found = found || s.id == id;
+                if (!found)
+                    throw BakeError(std::string("hihat: the bake needs an entry with articulation id '") + id + "'");
+            }
 
         // ---- RNG streams (stage 0: exact PCG64, uniform() and choice())
         const auto& rng = root.at("rng");

@@ -73,8 +73,9 @@ juce_add_plugin(Cymbalis
 
 # ---------------------------------------------------------------------------
 # Packed presets. The JSON bakes in resources/presets/ (nl_amount 0, written by
-# tools/bake_preset.py) are the source; at build time tools/pack_bake packs each into the
-# compact form the plugin embeds (plugin/PackedBake.h, docs/BUILDS.md).
+# tools/bake_preset.py; the hi-hat's by tools/bake_hihat.py) are the source; at build time
+# tools/pack_bake packs each into the compact form the plugin embeds (plugin/PackedBake.h,
+# docs/BUILDS.md).
 # ---------------------------------------------------------------------------
 juce_add_console_app(CymbalisPackBake PRODUCT_NAME "cymbalis_pack_bake")
 target_sources(CymbalisPackBake PRIVATE tools/pack_bake/main.cpp plugin/PackedBake.cpp)
@@ -90,7 +91,7 @@ target_link_libraries(CymbalisPackBake
 )
 
 set(CYMBALIS_PACKED_PRESETS)
-foreach(preset nova_ride smoke_flat_ride hammered_thin_ride swish raven konstan)
+foreach(preset nova_ride smoke_flat_ride hammered_thin_ride swish raven konstan hihat)
     set(json "${CMAKE_CURRENT_SOURCE_DIR}/resources/presets/${preset}.bake.json")
     set(packed "${CMAKE_CURRENT_BINARY_DIR}/presets/${preset}.bake.pack")
     add_custom_command(OUTPUT "${packed}"

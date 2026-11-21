@@ -88,10 +88,11 @@ CymbalisProcessor::CymbalisProcessor()
     blend1 = apvts.getRawParameterValue (paramBlend1);
     blend2 = apvts.getRawParameterValue (paramBlend2);
     pan = apvts.getRawParameterValue (paramPan);
-    for (size_t i = 0; i < notes.size(); ++i)
-        notes[i].store (cymbalis::kSlots[i].defaultNote);
+    for (int k = 0; k < cymbalis::kNumPresets; ++k)
+        for (int i = 0; i < cymbalis::kNumSlots; ++i)
+            setSlotNote (k, i, cymbalis::defaultNote (k, i)); // the cymbals' shared notes, and the hi-hat's own
     for (size_t k = 0; k < sticks.size(); ++k)
-        for (size_t i = 0; i < notes.size(); ++i)
+        for (size_t i = 0; i < (size_t) cymbalis::kNumSlots; ++i)
             sticks[k][i].store ((int) cymbalis::kPresets[k].slots[i].defaultStick);
     parsePresets();
 #if CYMBALIS_TUNING
@@ -301,6 +302,8 @@ void CymbalisProcessor::prepareToPlay (double sampleRate, int)
         auto c = buildCymbal (target, sampleRate);
         if (c->engine != nullptr && current != nullptr && current->engine != nullptr)
             c->engine->continueFrom (*current->engine); // also from a cymbal never prepared: time 0
+        if (c->engine != nullptr)
+            c->engine->setPedal (pedalValue / 127.0, true); // the hi-hat takes the pedal where it is
         delete current;
         current = c.release();
     }
@@ -360,6 +363,8 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             {
                 if (next->engine != nullptr && current != nullptr && current->engine != nullptr)
                     next->engine->continueFrom (*current->engine);
+                if (next->engine != nullptr)
+                    next->engine->setPedal (pedalValue / 127.0, true); // the hi-hat takes the pedal where it is
                 Cymbal* old = current;
                 current = next;
                 newCymbal = true;
@@ -387,18 +392,40 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     const double b1 = blend1->load();
     const double b2 = blend2->load();
 
+    const int pedal = pedalController.load();
     int pos = 0;
     for (const auto meta : midi)
     {
         // Raw bytes, so a long (sysex) event never allocates. Only note-ons with a velocity
-        // above 0 on the selected channel count; note-off, sustain and the rest are ignored.
+        // above 0 and the pedal CC on the selected channel count; note-off, sustain and the
+        // rest are ignored.
         const juce::uint8* d = meta.data;
-        if (meta.numBytes < 3 || (d[0] & 0xf0) != 0x90 || d[2] == 0 || (d[0] & 0x0f) + 1 != ch)
+        if (meta.numBytes < 3 || (d[0] & 0x0f) + 1 != ch)
+            continue;
+        if ((d[0] & 0xf0) == 0xb0)
+        {
+            // The hi-hat pedal: its openness from its sample on (the engine smooths it).
+            if ((d[1] & 0x7f) != pedal)
+                continue;
+            pedalValue = d[2] & 0x7f;
+            if (playing && engine->isHiHat())
+            {
+                const int at = juce::jlimit (0, n, meta.samplePosition);
+                if (at > pos)
+                {
+                    engine->process (left + pos, right + pos, at - pos);
+                    pos = at;
+                }
+                engine->setPedal (pedalValue / 127.0);
+            }
+            continue;
+        }
+        if ((d[0] & 0xf0) != 0x90 || d[2] == 0)
             continue;
         const int note = d[1] & 0x7f;
         int learning = learnSlot.load();
         if (learning >= 0 && learnSlot.compare_exchange_strong (learning, -1))
-            notes[(size_t) learning].store (note);
+            setSlotNote (learning, note);
         if (! playing)
             continue;
         const double vIn = (d[2] & 0x7f) / 127.0;
@@ -486,9 +513,10 @@ void CymbalisProcessor::strikeSlots (Cymbal& c, int note, double velocity, doubl
 {
     const auto& info = cymbalis::kPresets[(size_t) c.preset];
     const auto& preset = presets[(size_t) c.preset];
+    const auto& noteRow = notes[(size_t) cymbalis::noteSet (c.preset)];
     for (size_t s = 0; s < cymbalis::kSlots.size(); ++s)
     {
-        if (notes[s].load() != note)
+        if (noteRow[s].load() != note)
             continue;
         const bool choice = info.slots[s].stick == cymbalis::StickDisplay::choice;
         const int stick = choice && sticks[(size_t) c.preset][s].load() == (int) cymbalis::Stick::shoulder ? 1 : 0;
@@ -500,7 +528,8 @@ void CymbalisProcessor::strikeSlots (Cymbal& c, int note, double velocity, doubl
             c.engine->process (left + pos, right + pos, at - pos);
             pos = at;
         }
-        const double position = cymbalis::slotPosition (cymbalis::kSlots[s], b1, b2);
+        const double position = info.blendKnobs ? cymbalis::slotPosition (cymbalis::kSlots[s], b1, b2)
+                                                : cymbalis::kSlots[s].basePosition;
         c.engine->strike (entry, velocity, position);
         // Hit display: the stick as the row's box shows it, the chosen one or its fixed one.
         const auto hitStick = choice || info.slots[s].stick != cymbalis::StickDisplay::shoulder ? (cymbalis::Stick) stick
@@ -572,10 +601,15 @@ void CymbalisProcessor::setMidiChannel (int newChannel) noexcept
     channel.store (juce::jlimit (1, 16, newChannel));
 }
 
-void CymbalisProcessor::setSlotNote (int slot, int note) noexcept
+void CymbalisProcessor::setSlotNote (int preset, int slot, int note) noexcept
 {
-    if (slot >= 0 && slot < cymbalis::kNumSlots)
-        notes[(size_t) slot].store (juce::jlimit (-1, 127, note));
+    if (preset >= 0 && preset < cymbalis::kNumPresets && slot >= 0 && slot < cymbalis::kNumSlots)
+        notes[(size_t) cymbalis::noteSet (preset)][(size_t) slot].store (juce::jlimit (-1, 127, note));
+}
+
+void CymbalisProcessor::setPedalCc (int cc) noexcept
+{
+    pedalController.store (juce::jlimit (1, 127, cc));
 }
 
 void CymbalisProcessor::setSlotStick (int preset, int slot, cymbalis::Stick stick) noexcept
@@ -599,8 +633,17 @@ void CymbalisProcessor::setEditorSize (int w, int h) noexcept
     editorHeight.store (h);
 }
 
-// The parameters, plus the session settings that are not automatable: MIDI channel,
-// note per slot, stick per slot and preset, preset and editor size (UI_SPEC section 9).
+// Session key of a row's note in a preset: the cymbals' shared notes note_BELL ..., a preset
+// with notes of its own names itself (note_hihat_BOW).
+static juce::String noteKey (int preset, int slot)
+{
+    return juce::String ("note_") + (cymbalis::kPresets[(size_t) preset].ownNotes ? juce::String (cymbalis::kPresets[(size_t) preset].id) + "_" : juce::String())
+           + cymbalis::kSlots[(size_t) slot].label;
+}
+
+// The parameters, plus the session settings that are not automatable: MIDI channel, pedal CC,
+// note per slot (the cymbals' and the hi-hat's), stick per slot and preset, preset and editor
+// size (UI_SPEC section 9).
 void CymbalisProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
@@ -610,8 +653,14 @@ void CymbalisProcessor::getStateInformation (juce::MemoryBlock& destData)
     auto* session = xml->createNewChildElement ("Session");
     session->setAttribute ("preset", cymbalis::kPresets[(size_t) presetIndex()].id);
     session->setAttribute ("midiChannel", channel.load());
-    for (size_t i = 0; i < notes.size(); ++i)
-        session->setAttribute (juce::String ("note_") + cymbalis::kSlots[i].label, notes[i].load());
+    session->setAttribute ("pedalCc", pedalController.load());
+    for (int i = 0; i < cymbalis::kNumSlots; ++i)
+        session->setAttribute (noteKey (0, i), slotNote (0, i));
+    for (int k = 0; k < cymbalis::kNumPresets; ++k)
+        if (cymbalis::kPresets[(size_t) k].ownNotes)
+            for (int i = 0; i < cymbalis::kNumSlots; ++i)
+                if (cymbalis::rowPlays (k, i))
+                    session->setAttribute (noteKey (k, i), slotNote (k, i));
     for (int k = 0; k < cymbalis::kNumPresets; ++k) // every preset's, whatever preset plays
         for (int i = 0; i < cymbalis::kNumSlots; ++i)
             if (cymbalis::hasStickChoice (k, i))
@@ -633,11 +682,14 @@ void CymbalisProcessor::setStateInformation (const void* data, int sizeInBytes)
     if (auto* session = xml->getChildByName ("Session"))
     {
         setMidiChannel (session->getIntAttribute ("midiChannel", cymbalis::kDefaultMidiChannel));
-        for (size_t i = 0; i < notes.size(); ++i)
-        {
-            const auto& slot = cymbalis::kSlots[i];
-            setSlotNote ((int) i, session->getIntAttribute (juce::String ("note_") + slot.label, slot.defaultNote));
-        }
+        setPedalCc (session->getIntAttribute ("pedalCc", cymbalis::kDefaultPedalCc));
+        for (int i = 0; i < cymbalis::kNumSlots; ++i)
+            setSlotNote (0, i, session->getIntAttribute (noteKey (0, i), cymbalis::defaultNote (0, i)));
+        // A preset with notes of its own: its rows' notes, its defaults where the session has none.
+        for (int k = 0; k < cymbalis::kNumPresets; ++k)
+            if (cymbalis::kPresets[(size_t) k].ownNotes)
+                for (int i = 0; i < cymbalis::kNumSlots; ++i)
+                    setSlotNote (k, i, session->getIntAttribute (noteKey (k, i), cymbalis::defaultNote (k, i)));
         for (int k = 0; k < cymbalis::kNumPresets; ++k)
             for (int i = 0; i < cymbalis::kNumSlots; ++i)
                 if (cymbalis::hasStickChoice (k, i))

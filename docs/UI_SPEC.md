@@ -1,6 +1,6 @@
 # UI specification — Cymbalis
 
-Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE added 2026-10-15, SWISH 2026-10-17, RAVEN 2026-10-27, KONSTAN CRASH 18" 2026-10-28. Layout v2 (mockup v2: a larger, higher photo area, MIDI CHANNEL under CYMBAL, Velocity Sensitivity and Volume in a bottom row) approved by Kris 2026-10-25; the Pan parameter and its knob added 2026-10-25 at Kris's request; the hit display (section 10) approved by Kris 2026-10-25. Layout v3 (mockup v3: the MIDI CHANNEL box and the TUNING button swapped) approved by Kris 2026-10-25. The wireframe cymbal (section 11), replacing the photos and the 2D hit marks, approved by Kris 2026-10-27; its second round (NOVA RIDE, HAMMERED THIN RIDE and SMOKE FLAT RIDE) 2026-10-28, and its third (SWISH) and fourth (RAVEN) the same day. The bottom row moved under the cymbal (section 3), a position arc on all five knobs (section 6) and the DHammers logo (section 4) approved by Kris 2026-11-17. All coordinates are in 1536×1024 design units. `docs/ui/reference_mockup.png` shows the original artwork (layout v1).
+Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE added 2026-10-15, SWISH 2026-10-17, RAVEN 2026-10-27, KONSTAN CRASH 18" 2026-10-28, HI-HAT 2026-11-20 (its sound and rows; its own UI is to come). Layout v2 (mockup v2: a larger, higher photo area, MIDI CHANNEL under CYMBAL, Velocity Sensitivity and Volume in a bottom row) approved by Kris 2026-10-25; the Pan parameter and its knob added 2026-10-25 at Kris's request; the hit display (section 10) approved by Kris 2026-10-25. Layout v3 (mockup v3: the MIDI CHANNEL box and the TUNING button swapped) approved by Kris 2026-10-25. The wireframe cymbal (section 11), replacing the photos and the 2D hit marks, approved by Kris 2026-10-27; its second round (NOVA RIDE, HAMMERED THIN RIDE and SMOKE FLAT RIDE) 2026-10-28, and its third (SWISH) and fourth (RAVEN) the same day. The bottom row moved under the cymbal (section 3), a position arc on all five knobs (section 6) and the DHammers logo (section 4) approved by Kris 2026-11-17. All coordinates are in 1536×1024 design units. `docs/ui/reference_mockup.png` shows the original artwork (layout v1).
 
 ## 1. Assets (`resources/ui/`)
 
@@ -126,9 +126,9 @@ Hover, open and selected states use only colours from this table.
 - **No mouse wheel:** the mouse wheel and trackpad scrolling change no value anywhere in the editor: not the knobs, the note boxes or the dropdowns. A value changes only by a deliberate click and drag, a menu choice or MIDI learn (and the host's automation of the five parameters). The wheel still scrolls the note list.
 - **MIDI note box:** vertical drag changes the note. A click opens a menu: MIDI LEARN, RESET DEFAULT, NONE (unassign) and a scrollable list of every note, C-2 (0) to G8 (127), each with its number; the current note is outlined and in view. No separate Learn button is added.
 - **Stick box:** where the preset has both stick versions, a click opens a TIP / SHOULDER popup. In every preset the bell and bow rows (BELL, BOW, BELL2, BOW2) have both; section 8 lists what each plays. EDGE is SHOULDER only in every preset: its box shows SHOULDER and opens nothing. In every preset BELL and BOW start on TIP and BELL2 and BOW2 on SHOULDER (section 8, "Default sticks"). Which rows offer the choice comes from the slot table (`StickDisplay::choice` in `plugin/SlotTable.h`). Each preset keeps its own choices: picking SHOULDER on a row in one preset leaves the other presets' rows as they are. The choices are saved with the session (section 9); they are not automatable parameters.
-- **Dropdowns:** the preset dropdown is a list of NOVA RIDE, SMOKE FLAT RIDE, HAMMERED THIN RIDE, SWISH, RAVEN and KONSTAN CRASH 18", below its box; the channel dropdown is a 4×4 grid below its box, right-aligned with it. A choice sets the preset or the channel.
+- **Dropdowns:** the preset dropdown is a list of NOVA RIDE, SMOKE FLAT RIDE, HAMMERED THIN RIDE, SWISH, RAVEN, KONSTAN CRASH 18" and HI-HAT, below its box; the channel dropdown is a 4×4 grid below its box, right-aligned with it. A choice sets the preset or the channel.
 - **TUNING button** (tuning code only): a click opens the Tuning window, a second click closes it; while it is open the button has the open outline `#A5A299`, and the bronze `#76624C` on hover otherwise. Cmd-click on the CYMBALIS logo opens it too (`docs/TUNING.md`).
-- **Preset switch:** the chosen preset's data is loaded into the one cymbal engine and plays from the next audio block (PORT_MAP, "602 and Bettis", decision 6). If the old cymbal is still ringing it fades out over 30 ms; it does not carry over. Notes, the MIDI channel and the knobs stay as they are; the rows play the stick choices of the chosen preset.
+- **Preset switch:** the chosen preset's data is loaded into the one cymbal engine and plays from the next audio block (PORT_MAP, "602 and Bettis", decision 6). If the old cymbal is still ringing it fades out over 30 ms; it does not carry over. Notes, the MIDI channel and the knobs stay as they are; the rows play the stick choices of the chosen preset. HI-HAT plays its own notes (section 8) and takes the pedal where it is.
 - Knob value readout while dragging: Velocity "100%", Volume "+0.0 dB", Pan "C" (or "L 35", "R 35"), Blend 1 "BELL 100 · 0 BOW", Blend 2 "BOW 100 · 0 EDGE".
 - MIDI LEARN: the next note-on on the selected channel is assigned; the box pulses "LEARN" until then; clicking elsewhere cancels.
 - Popups: background `#141313`, 2 px border `#534739`; hover outline `#76624C`; open outline `#A5A299`.
@@ -147,7 +147,7 @@ Hover, open and selected states use only colours from this table.
 
 Note naming uses the Logic/Ableton convention (60 = C3). The note number is always shown alongside the name.
 
-The default notes are the same in every preset (section 8). A new instance starts with them, and RESET DEFAULT in a note box's menu returns that row to its default. A saved session keeps the notes it stored: an EDGE saved unassigned, as every session from before 2026-10-24 has it unless a note was given, stays unassigned.
+The default notes are the same in every cymbal preset (section 8); HI-HAT has notes of its own (section 8, "HI-HAT"). A new instance starts with them, and RESET DEFAULT in a note box's menu returns that row to the current preset's default. A saved session keeps the notes it stored: an EDGE saved unassigned, as every session from before 2026-10-24 has it unless a note was given, stays unassigned.
 
 **Blend knobs have no MIDI notes of their own.** They change the character of the existing slots:
 - Blend 1 moves the BELL notes from full bell toward a bell/bow mix.
@@ -157,7 +157,7 @@ Blend 2 inherits the engine's hard bow-to-edge switch near position 0.45 (PORT_M
 
 ## 8. Slots
 
-The rows, their base positions, blends and default notes are the same in every preset; what each row plays depends on the preset. Notes are per row and are kept across presets.
+The rows, their base positions, blends and default notes are the same in every cymbal preset; what each row plays depends on the preset. Notes are per row and are kept across the cymbal presets. HI-HAT is the exception: two rows, notes of its own (below).
 
 A preset can name a row: SMOKE FLAT RIDE labels its bell rows CENTER and CENTER2 (`PresetSlot::label` in `plugin/SlotTable.h`). The name is shown only. The row keeps its notes, its MIDI behaviour and its session keys (`note_BELL`, `note_BELL2`).
 
@@ -255,6 +255,18 @@ BELL and BOW start on TIP, BELL2 and BOW2 on SHOULDER ("Default sticks" above). 
 
 BELL and BOW start on TIP, BELL2 and BOW2 on SHOULDER ("Default sticks" above). Each copy starts with its source's level trim (`docs/PORT_MAP.md`, "Konstan Crash 18"").
 
+**HI-HAT** (`resources/presets/hihat.bake.json`, made by `tools/bake_hihat.py`; added 2026-11-20; a placeholder name until Kris names it): a pair of 14" hats with a pedal (`docs/PORT_MAP.md`, "Hi-hat"). It has two rows, each with a fixed stick:
+
+| Row | Articulation | Stick box | Default note |
+|---|---|---|---|
+| BOW | tip (`TIP`) | TIP (fixed) | F#1 (42) |
+| EDGE | edge (`EDGE`) | SHOULDER (fixed) | A#1 (46) |
+
+- **No BELL, BELL2 or BOW2 rows**: the editor hides their label, stick box and note box on HI-HAT.
+- **Notes of its own.** The default notes are General MIDI's closed and open hi-hat. The hi-hat keeps its notes apart from the cymbals' (choosing it does not change the cymbals' notes, and the reverse); RESET DEFAULT gives 42 and 46. They are saved with the session as `note_hihat_BOW` and `note_hihat_EDGE` (section 9).
+- **FOOT** (the hats closed by the pedal) has no row and no note: the pedal plays it. The pedal is a MIDI CC (section 9): its value / 127 is the openness, 0 closed, 127 open; every strike takes the openness at its note-on, closing the pedal chokes what rings, and closing it from 0.15 or more to below 0.05 plays FOOT.
+- **Until the hi-hat's own UI** (a later spec): the wireframe area draws nothing on HI-HAT, the hits are not drawn, and the Blend Position knobs do nothing on it (each row strikes at its base position).
+
 ## 9. Parameters — exactly these five, no others
 Placeholder ranges until Kris revises them. At the defaults the plugin sounds the same as the Python engine.
 
@@ -277,7 +289,7 @@ EDGE always strikes at position 0.0. All five are automatable. No other paramete
 
 Pan is saved with the session like the other four; a session saved before it existed loads with pan at centre.
 
-Non-automatable state saved with the session: MIDI channel, note per slot, stick per slot and preset (rows with a choice), current preset, editor size. A session without a row's note key gives the row its default note. NOVA RIDE's sticks keep the session keys they had before the other presets offered a choice (`stick_BELL`, …); the other presets' keys name the preset (`stick_smoke_flat_ride_BELL`, `stick_hammered_thin_ride_BOW2`, `stick_swish_BOW`, …). A session without a key gives the row its default stick (section 8): a session saved before 2026-10-14 has no stick keys, and one saved from 2026-10-14 to 2026-10-17 only NOVA RIDE's, so their other rows start as a new instance's do.
+Non-automatable state saved with the session: MIDI channel, note per slot (the cymbals' `note_BELL` …, the hi-hat's own `note_hihat_BOW` and `note_hihat_EDGE`), stick per slot and preset (rows with a choice), current preset, editor size, and the hi-hat's pedal CC (`pedalCc`, 1–127, default 1, the mod wheel; read on the MIDI channel; per instance; no selector in the editor yet). A session without a row's note key gives the row its default note, and one without `pedalCc` CC 1. NOVA RIDE's sticks keep the session keys they had before the other presets offered a choice (`stick_BELL`, …); the other presets' keys name the preset (`stick_smoke_flat_ride_BELL`, `stick_hammered_thin_ride_BOW2`, `stick_swish_BOW`, …). A session without a key gives the row its default stick (section 8): a session saved before 2026-10-14 has no stick keys, and one saved from 2026-10-14 to 2026-10-17 only NOVA RIDE's, so their other rows start as a new instance's do.
 
 ## 10. Hit display
 

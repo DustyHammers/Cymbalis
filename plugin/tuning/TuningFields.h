@@ -36,7 +36,9 @@ enum class Needs
     always,
     npzEdge,          // presets with NPZ edge data (602, Bettis)
     noVelocityTables, // presets whose bow has no velocity participation table (602, Bettis, Swish)
-    envelope          // presets with an NPZ band envelope, on or switched off (602, Bettis, Swish)
+    envelope,         // presets with an NPZ band envelope, on or switched off (602, Bettis, Swish)
+    bandEnvelope,     // strikes that follow band envelopes: the NPZ presets' edge, the hi-hat
+    positions         // strikes at a position on the cymbal (every preset but the hi-hat)
 };
 
 bool applies (Needs needs, const BakeData& bake);
@@ -49,7 +51,8 @@ enum class Scope
     edge,         // entries at the edge (position 0.25 or below)
     bow,          // entries on the bow (between 0.25 and 0.75)
     bell,         // entries at the bell or centre (0.75 or above)
-    hertz         // entries off the edge without velocity tables (hertz_vel_scale)
+    hertz,        // entries off the edge without velocity tables (hertz_vel_scale)
+    envelope      // entries whose strikes follow band envelopes: at the edge with NPZ data, every one on the hi-hat
 };
 // The ids of the articulations of `bake` in `scope`, in upper case, joined by ", " (empty
 // for Scope::all).
@@ -83,7 +86,8 @@ struct ArticulationField
     double lo, hi;
     int decimals;
     double ArticulationTuning::*member;
-    bool inBands = false; // shown in the BANDS section (attack time), not with the others
+    bool inBands = false;    // shown in the BANDS section (attack time), not with the others
+    bool positional = false; // acts through the strike's position (stick click weights): not on the hi-hat
 };
 const std::vector<ArticulationField>& articulationFields();
 

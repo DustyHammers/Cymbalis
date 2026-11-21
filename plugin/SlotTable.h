@@ -1,10 +1,10 @@
 #pragma once
 
-// The five articulation rows (docs/UI_SPEC.md sections 7-8) and the six presets
+// The five articulation rows (docs/UI_SPEC.md sections 7-8) and the seven presets
 // (UI_SPEC section 8, docs/PORT_MAP.md "Live-engine decisions"). Each preset maps every
 // row to the bake entries it plays with TIP and with SHOULDER (by entry name in the
-// preset's bake, tools/bake_preset.py), or to none, says how its stick box shows and, where
-// it offers both sticks, which one a row starts with.
+// preset's bake, tools/bake_preset.py or tools/bake_hihat.py), or to none, says how its stick
+// box shows and, where it offers both sticks, which one a row starts with.
 
 #include "ui/CymbalShapes.h"
 
@@ -56,14 +56,17 @@ enum class StickDisplay
     dash      // fixed, shows a dash
 };
 
+constexpr int kRowNote = -2; // PresetSlot::defaultNote: the row's own (SlotInfo::defaultNote)
+
 struct PresetSlot
 {
-    const char* tipEntry;      // bake entry played with TIP ("" = the row is silent)
+    const char* tipEntry;      // bake entry played with TIP ("" = the row is silent: the preset has no such row)
     const char* shoulderEntry; // bake entry played with SHOULDER
     StickDisplay stick;
     Stick defaultStick;        // the stick a row with a choice starts with (Stick::none: no choice)
     const char* label = nullptr; // the row's label in this preset (nullptr: the row's own, SlotInfo::label)
     float labelSpacing = 0.0f;   // its letter spacing in design units (UI_SPEC section 4)
+    int defaultNote = kRowNote;  // a preset with notes of its own (PresetInfo::ownNotes): this row's default
 };
 
 struct PresetInfo
@@ -71,12 +74,18 @@ struct PresetInfo
     const char* id;        // saved with the session
     const char* name;      // shown in the CYMBAL box
     const char* bakeFile;  // resources/presets/; the plugin embeds its packed form (PackedBake.h)
-    const ui::CymbalShape* shape; // its wireframe cymbal (UI_SPEC section 11); shape->bell is the bell (or centre) zone
+    const ui::CymbalShape* shape; // its wireframe cymbal (UI_SPEC section 11); shape->bell is the bell (or centre) zone; nullptr: none drawn
     std::array<PresetSlot, kNumSlots> slots;
     const char* blend1Left = "BELL"; // the left end label of BLEND POSITION 1 (its right end: BOW)
+    // Notes of its own (the hi-hat): its rows keep their own notes, apart from the notes the
+    // cymbals share, with its own defaults (PresetSlot::defaultNote).
+    bool ownNotes = false;
+    // The Blend Position knobs move its rows' strike positions (slotPosition); otherwise each row
+    // strikes at its base position.
+    bool blendKnobs = true;
 };
 
-constexpr int kNumPresets = 6;
+constexpr int kNumPresets = 7;
 
 // Every EDGE row is SHOULDER only. The other rows choose TIP or SHOULDER: in every preset BELL
 // and BOW start on TIP, BELL2 and BOW2 on SHOULDER (UI_SPEC section 8; Kris, 2026-10-31).
@@ -135,9 +144,53 @@ constexpr std::array<PresetInfo, kNumPresets> kPresets {{
         { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::shoulder },
         { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::shoulder },
     }} },
+    // HI-HAT (GF A60, 14"; docs/PORT_MAP.md, "Hi-hat"; a placeholder name until Kris names it):
+    // the BOW row plays TIP and the EDGE row EDGE, each with its fixed stick, on General MIDI's
+    // closed and open hi-hat notes; no BELL, BELL2 or BOW2 rows. FOOT has no row: the pedal (a
+    // MIDI CC) plays it. No wireframe yet; the Blend Position knobs do nothing on it.
+    { "hihat", "HI-HAT", "hihat.bake.json", nullptr, {{
+        { "", "", StickDisplay::dash, Stick::none },
+        { "TIP", "TIP", StickDisplay::tip, Stick::none, nullptr, 0.0f, 42 },
+        { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none, nullptr, 0.0f, 46 },
+        { "", "", StickDisplay::dash, Stick::none },
+        { "", "", StickDisplay::dash, Stick::none },
+    }}, "BELL", true, false },
 }};
 
 constexpr int kDefaultMidiChannel = 16;
+constexpr int kDefaultPedalCc = 1; // the hi-hat pedal's MIDI CC (the mod wheel), per instance
+
+// Whether a preset has this row (an entry to play).
+inline bool rowPlays (int preset, int slot) noexcept
+{
+    return *kPresets[(size_t) preset].slots[(size_t) slot].tipEntry != 0;
+}
+
+// A row's default note in a preset: its own where the preset has notes of its own, -1 for a
+// row it does not have; else the row's.
+inline int defaultNote (int preset, int slot) noexcept
+{
+    const auto& p = kPresets[(size_t) preset];
+    if (! p.ownNotes)
+        return kSlots[(size_t) slot].defaultNote;
+    const int n = p.slots[(size_t) slot].defaultNote;
+    return rowPlays (preset, slot) && n != kRowNote ? n : -1;
+}
+
+// The note set a preset plays: 0 the notes the cymbals share, 1 those of the preset with notes
+// of its own (the hi-hat; one preset has them).
+constexpr int kNumNoteSets = 2;
+constexpr int kOwnNotePresets = [] {
+    int count = 0;
+    for (const auto& p : kPresets)
+        count += p.ownNotes ? 1 : 0;
+    return count;
+}();
+static_assert (kOwnNotePresets <= kNumNoteSets - 1, "one note set per preset with notes of its own");
+inline int noteSet (int preset) noexcept
+{
+    return kPresets[(size_t) preset].ownNotes ? 1 : 0;
+}
 
 // Whether a row offers a TIP / SHOULDER choice in a preset; that choice is saved with the
 // session, per preset.
@@ -158,7 +211,8 @@ inline const char* stickName (Stick s) noexcept
     return s == Stick::tip ? "TIP" : (s == Stick::shoulder ? "SHOULDER" : "");
 }
 
-// Strike position of a slot for the current blend knobs (UI_SPEC section 9).
+// Strike position of a slot for the current blend knobs (UI_SPEC section 9). A preset whose
+// rows the knobs do not move (PresetInfo::blendKnobs) strikes each row at its base position.
 inline double slotPosition (const SlotInfo& s, double blend1, double blend2) noexcept
 {
     switch (s.blend)

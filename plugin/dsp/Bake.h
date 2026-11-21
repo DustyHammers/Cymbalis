@@ -11,6 +11,7 @@
 #include "Pcg64.h"
 #include "Tuning.h"
 
+#include <array>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -103,6 +104,44 @@ struct EdgeNpz
     std::vector<double> voiceAlpha;
 };
 
+// The HI-HAT preset's strike model (docs/hihat_reference.py; docs/PORT_MAP.md, "Hi-hat"),
+// written by tools/bake_hihat.py from presets/hihat/. A strike's band envelopes and mode
+// weights come from these knots at the strike's openness and velocity (FastEngine).
+struct HiHatKnot
+{
+    std::string id;
+    int articulation = 0;         // 0 TIP, 1 EDGE
+    double openness = 0.0;        // 0 closed .. 1 fully open
+    double velocity = 0.0;        // the velocity it was captured at
+    int frames = 0;               // envelope frames (frameS each)
+    std::vector<double> stick;    // bands x frames: the envelope with the strike fired at full level
+    std::vector<double> raw;      // bands x frames: SPEAR's own envelope (the closed EDGE knots: FOOT)
+    std::vector<double> weights;  // per mode, unit norm per band
+    std::array<double, kExcitationBands> levelDb {}; // its level per band, first 100 ms after its peak
+};
+
+struct HiHatData
+{
+    bool present = false;
+    double frameS = 0.01;
+    std::vector<HiHatKnot> knots;
+    // Knot index of the closed TIP [0] and EDGE [1] knots at closedVelocity[0..2].
+    int closed[2][3] = { { -1, -1, -1 }, { -1, -1, -1 } };
+    double closedVelocity[3] = { 0.3, 0.6, 1.0 };
+    std::vector<int> open;              // the open EDGE knots, openness ascending
+    std::vector<double> rateOpenness;   // openness of each row of `rates`, ascending from 0
+    std::vector<double> rates;          // rateOpenness x bands: each band's decay rate (amplitude, 1/s)
+    double chokeRate = 6.91 / 0.3;      // the pedal choke's rate when fully closed (1/s)
+    // FOOT: fires when the openness falls below footClosedBelow after it was at
+    // footRearmAbove or more since the last one; its velocity is the openness drop per second
+    // over footWindowS, / footFullSpeed, within footMinVelocity .. 1.
+    double footClosedBelow = 0.05, footRearmAbove = 0.15, footWindowS = 0.05, footFullSpeed = 10.0,
+           footMinVelocity = 0.1;
+    double pedalSmoothS = 0.01;         // one-pole time constant of the pedal's openness
+    double endFadeS = 0.01;             // a strike ends with this fade after its envelope
+    int maxFrames = 0;                  // the longest knot
+};
+
 struct SlotData
 {
     std::string name;
@@ -188,6 +227,7 @@ struct BakeData
     std::vector<double> bowOnsetBandEdges;
 
     EdgeNpz edgeNpz;
+    HiHatData hihat;
 
     EngineParams params;
 

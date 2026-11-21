@@ -761,6 +761,12 @@ void Content::refresh()
         presetBox.setText (processor.presetName());
         cymbalView->setPreset (preset, shownError);
         hitTracker->setGeometry (cymbalView->geometry());
+        // Only the rows the preset has (the hi-hat has two): the others' boxes are hidden.
+        for (int s = 0; s < kNumSlots; ++s)
+        {
+            noteBoxes[(size_t) s]->setVisible (rowPlays (preset, s));
+            stickBoxes[(size_t) s]->setVisible (rowPlays (preset, s));
+        }
         repaint();
     }
     hitTracker->poll();
@@ -939,7 +945,7 @@ void Content::openNoteMenu (int slot)
         else
         {
             processor.cancelMidiLearn();
-            processor.setSlotNote (slot, action == NoteMenu::resetDefault ? kSlots[(size_t) slot].defaultNote : -1);
+            processor.setSlotNote (slot, action == NoteMenu::resetDefault ? defaultNote (processor.presetIndex(), slot) : -1);
         }
         refresh();
     };
@@ -1068,6 +1074,8 @@ void Content::paintRows (juce::Graphics& g)
     const auto& preset = kPresets[(size_t) processor.presetIndex()];
     for (size_t s = 0; s < kSlots.size(); ++s)
     {
+        if (! rowPlays (processor.presetIndex(), (int) s))
+            continue; // a row the preset does not have
         const auto& ps = preset.slots[s];
         const float spacing = ps.label != nullptr ? ps.labelSpacing : kRowLabelSpacing[s];
         drawInkText (g, assets.font (kRowSize, spacing), rowLabel (processor.presetIndex(), (int) s),

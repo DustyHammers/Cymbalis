@@ -637,7 +637,7 @@ void TuningPanel::rebuild()
                        + juce::String (slot.name) + ")");
             for (const auto& f : articulationFields())
             {
-                if (f.inBands)
+                if (f.inBands || (f.positional && bake->hihat.present)) // the hi-hat's click weights stay 1
                     continue;
                 auto row = std::make_unique<ValueRow> (f.label, f.unit, f.lo, f.hi, f.decimals, false);
                 auto* r = row.get();
