@@ -32,6 +32,7 @@ const juce::Rectangle<int> kNoteBox (1424, 0, 66, 25);
 const juce::Rectangle<int> kPedalBox (1265, 380, 99, 25);
 constexpr float kPedalLabelY = 387.0f;
 constexpr float kPedalLabelSpacing = 3.0f;
+constexpr int kPedalMenuLeft = 1196; // its grid's left: the right column's, clear of the cymbal area
 const juce::Rectangle<int> kPresetBox (61, 371, 277, 62);
 const juce::Rectangle<int> kChannelBox (1404, 30, 110, 36); // top right, above the column headers (y 98)
 constexpr float kChannelLabelRight = 1384.0f; // MIDI CHANNEL ends here, on the box's line, to its left
@@ -919,6 +920,9 @@ void Content::sliderDragEnded (juce::Slider*)
 
 void Content::showPopup (std::unique_ptr<juce::Component> panel, juce::Rectangle<int> bounds, std::function<void()> onClose)
 {
+    // A popup never overlaps the cymbal area: it is drawn with OpenGL, on top of the other
+    // components (UI_SPEC section 6). And it stays inside the window.
+    jassert (! bounds.intersects (CymbalView::area()) && getLocalBounds().contains (bounds));
     closePopup();
     popupClosed = std::move (onClose);
     popupLayer = std::make_unique<PopupLayer> ([this] { closePopup(); });
@@ -1027,21 +1031,23 @@ void Content::openStickMenu (int slot)
     showPopup (std::move (panel), b, [box] { box->setOpen (false); });
 }
 
-// The pedal's CC, 1-127: a grid like the MIDI CHANNEL box's (items 61 x 40), 10 a row, below the
-// PEDAL box and right-aligned with it.
+// The pedal's CC, 1-127: a grid drawn like the MIDI CHANNEL box's, 8 a row (16 rows, the last
+// short) of items 40 x 24, so that it fits the right column: from x 1196 (the rows' labels), just
+// below the PEDAL box (336 x 400: to x 1532 and y 808, over the hidden blend knobs' area), clear
+// of the cymbal area.
 void Content::openPedalMenu()
 {
     juce::StringArray items;
     for (int c = 1; c <= 127; ++c)
         items.add (juce::String (c));
-    auto panel = std::make_unique<PopupPanel> (assets, items, processor.pedalCc() - 1, 10, juce::Point<int> { 61, 40 });
+    auto panel = std::make_unique<PopupPanel> (assets, items, processor.pedalCc() - 1, 8, juce::Point<int> { 40, 24 });
     panel->onChoose = [this] (int i) {
         processor.setPedalCc (i + 1);
         closePopup();
         refresh();
     };
     const int w = panel->getWidth(), h = panel->getHeight();
-    const juce::Rectangle<int> b (kPedalBox.getRight() - w, kPedalBox.getBottom() + 3, w, h);
+    const juce::Rectangle<int> b (kPedalMenuLeft, kPedalBox.getBottom() + 3, w, h);
     pedalBox.setOpen (true);
     showPopup (std::move (panel), b, [this] { pedalBox.setOpen (false); });
 }

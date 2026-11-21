@@ -214,7 +214,8 @@ jobs:
       # preset and a stick of that preset, then SWISH, RAVEN and KONSTAN CRASH 18", in the
       # editor, and check the plugin's saved state; HI-HAT: its Blend Position knobs hidden, its two
       # rows and the pedal played through the host (MIDI notes and CC), the hats and the pedal drawing
-      # following the pedal CC, a pedal CC picked in the PEDAL box saved and restored; then KONSTAN
+      # following the pedal CC, also on channel 1 with MIDI CHANNEL 16 (a keyboard's mod wheel), with
+      # one FOOT on the close, a pedal CC picked in the PEDAL box saved and restored; then KONSTAN
       # again, its Blend Position knobs shown; the scroll wheel over the knobs and boxes
       # must change nothing; dragging, double-clicking and automating each of the five knobs
       # must move its parameter and the value the knob shows, which its position arc is drawn
@@ -232,7 +233,7 @@ jobs:
         timeout-minutes: 5
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
-          STEPS="edge sticks channel drag reset none edgereset list stick preset shoulder swish raven konstan hihat blendhidden hihatplay hihatpedal pedalcc konstan blendshown wheel arcs tuning wheeltuning voice raven voice swish voice profile preset voice smoke voice nova noprofile clickweights hitvariation savetuning loadtuning hihat hihattuning tuningclose tuning tuningclose"
+          STEPS="edge sticks channel drag reset none edgereset list stick preset shoulder swish raven konstan hihat blendhidden hihatplay hihatpedal pedalchannel pedalcc konstan blendshown wheel arcs tuning wheeltuning voice raven voice swish voice profile preset voice smoke voice nova noprofile clickweights hitvariation savetuning loadtuning hihat hihattuning tuningclose tuning tuningclose"
           echo "--- VST3 ---"
           "$UITEST" "$PWD/$VST3" $STEPS
           echo "--- AU ---"

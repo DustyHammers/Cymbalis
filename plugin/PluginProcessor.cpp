@@ -397,14 +397,16 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     for (const auto meta : midi)
     {
         // Raw bytes, so a long (sysex) event never allocates. Only note-ons with a velocity
-        // above 0 and the pedal CC on the selected channel count; note-off, sustain and the
-        // rest are ignored.
+        // above 0 on the selected channel, and the pedal CC on any channel, count; note-off,
+        // sustain and the rest are ignored.
         const juce::uint8* d = meta.data;
-        if (meta.numBytes < 3 || (d[0] & 0x0f) + 1 != ch)
+        if (meta.numBytes < 3)
             continue;
         if ((d[0] & 0xf0) == 0xb0)
         {
-            // The hi-hat pedal: its openness from its sample on (the engine smooths it).
+            // The hi-hat pedal, on every channel (a keyboard's mod wheel sends on its own
+            // channel, often 1, whatever the pads' channel is): its openness from its sample on
+            // (the engine smooths it).
             if ((d[1] & 0x7f) != pedal)
                 continue;
             pedalValue = d[2] & 0x7f;
@@ -420,7 +422,7 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             }
             continue;
         }
-        if ((d[0] & 0xf0) != 0x90 || d[2] == 0)
+        if ((d[0] & 0xf0) != 0x90 || d[2] == 0 || (d[0] & 0x0f) + 1 != ch)
             continue;
         const int note = d[1] & 0x7f;
         int learning = learnSlot.load();
