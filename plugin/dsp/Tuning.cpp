@@ -431,6 +431,11 @@ Tuning parseTuningBlock(const json::Value& block, const BakeData& b, const Tunin
                 t.cymbal.edgeEnvelope = kv.second.boolean();
                 continue;
             }
+            if (kv.first == kEdgeEnvHandoverKey)
+            {
+                t.cymbal.edgeEnvHandover = kv.second.boolean();
+                continue;
+            }
             if (kv.first == kHighPassKey)
             {
                 t.cymbal.highPassOn = kv.second.boolean();

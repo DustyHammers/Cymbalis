@@ -316,6 +316,7 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
     hhRingFloor_ = b.tuning.cymbal.hhRingFloor * 0.01;
     hhFreeRing_ = b.tuning.cymbal.hhFreeRing;
     hhTipModesDb_ = b.tuning.cymbal.hhTipModesDb;
+    envHandover_ = b.tuning.cymbal.edgeEnvHandover;
     hhMaxOpen_ = b.tuning.cymbal.hhMaxOpen * 0.01;
     {
         // HIT VARIATION's stream: two outputs of a copy of the render stream (the strike
@@ -1619,8 +1620,9 @@ void FastEngine::sumComponents(double t0, double t1) noexcept
             }
         }
         // After its onset window an envelope strike rings with its own decaying amplitude
-        // (line 881: past onset, normal T60). A hi-hat strike ends with its envelope (its end
-        // fade has reached 0), or once the pedal has choked it below -120 dB.
+        // (line 881: past onset, normal T60); with EDGE HAND-OVER from where its envelope
+        // left each mode (handOver). A hi-hat strike ends with its envelope (its end fade has
+        // reached 0), or once the pedal has choked it below -120 dB.
         if (c.envOn && t0 - c.tStrike >= c.envWindow)
         {
             if (hihat_)
@@ -1628,6 +1630,8 @@ void FastEngine::sumComponents(double t0, double t1) noexcept
                 c.used = false;
                 continue;
             }
+            if (c.handover)
+                handOver(c);
             c.envOn = false;
         }
         if (!c.settled)
@@ -1777,6 +1781,26 @@ void FastEngine::sumComponents(double t0, double t1) noexcept
     for (int q = 0; q < nE; ++q)
         --envList_[size_t(q)]->frameBlocksLeft;
 
+}
+
+// EDGE HAND-OVER (docs/TUNING.md; a plugin extension, the Python engine has none): where an
+// envelope strike leaves its window, at the start of a control block, each mode's amplitude
+// is E x em x fd (its coupling, band envelope and in-frame decay at the end of the last block)
+// and, from the next block on, B x D (its amplitude at the segment's reference time and its
+// own decay since then). B = E x em x fd / D makes the second continue from the first, and the
+// mode then decays by its own T60. The onset gains and the re-hit damping multiply both
+// alike. A mode whose band envelope is 0 there stays silent, and so does one whose own decay
+// has run out (D 0: a T60 so short it would be inaudible within the block).
+void FastEngine::handOver(Component& c) noexcept
+{
+    for (int o = 0; o < nPad_; ++o)
+    {
+        const size_t k = size_t(o);
+        const double d = c.D[k], v = double(c.em1[k]) * double(c.fd[k]);
+        const double s = d > 0.0 && v > 0.0 ? v / d : 0.0;
+        c.Br[k] = static_cast<float>(double(c.Er[k]) * s);
+        c.Bi[k] = static_cast<float>(double(c.Ei[k]) * s);
+    }
 }
 
 // A component's re-hit damping gain at time t: smoothstep from rhoA to rhoB over rhoT from
@@ -3005,7 +3029,7 @@ FastEngine::Component* FastEngine::cascadeComponent() noexcept
     c.order = ++componentOrder_;
     c.contactStart = sampleNow_;
     c.tStrike = timeBase_ + static_cast<double>(sampleNow_) / sr_;
-    c.onsetOn = c.rampOn = c.envOn = c.envShift = c.envRing = false;
+    c.onsetOn = c.rampOn = c.envOn = c.envShift = c.envRing = c.handover = false;
     c.settled = true;
     c.eps = std::max(1.0 - oscWash_, 0.0); // wash_damp 1: the mode's own T60
     std::fill(c.epsK.begin(), c.epsK.end(), c.eps);
@@ -3194,6 +3218,7 @@ void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecayS
     envRingKeepS_ = std::max(c.edgeRingKeepMs, 0.0) * 1e-3; // from the next strike
     frameRestart_ = c.frameDecayRestart;
     envOn_ = envBake_ && c.edgeEnvelope; // from the next strike
+    envHandover_ = c.edgeEnvHandover;    // EDGE HAND-OVER, from the next strike
     hitVar_ = c.hitVariation;               // HIT VARIATION, from the next strike
     hitPosSpread_ = c.hitPositionSpread;
     hitVelSpread_ = c.hitVelocitySpreadPct * 0.01;
@@ -3561,6 +3586,7 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     comp.envOn = envOn_ && edgeFrac > 0.1;
     comp.envWindow = envWindowS_;
     comp.frameRestart = frameRestart_;
+    comp.handover = comp.envOn && envHandover_;
     // The ring length on its envelope, kept with the strike (a later change applies from the
     // next strike); a factor above 1 lengthens the window with it (docs/TUNING.md).
     comp.envRing = comp.envOn && envRingOn_;
@@ -4732,6 +4758,7 @@ void FastEngine::strikeHiHat(int slotIndex, double velocity, double position) no
     // Its envelope, with the articulation's onset shift and the ring length, to its end.
     comp.rampOn = false;
     comp.envOn = true;
+    comp.handover = false; // a hi-hat strike ends with its envelope
     comp.frameRestart = false;
     std::fill(comp.fd.begin(), comp.fd.end(), 1.0f);
     comp.frameBlocksLeft = INT_MAX;

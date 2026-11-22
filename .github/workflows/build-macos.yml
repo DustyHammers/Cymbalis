@@ -224,19 +224,20 @@ jobs:
       # the wheel over its sliders and numeric boxes must change nothing; EDGE VOICE FROM BOW
       # must move on KONSTAN, RAVEN, SWISH, EXTRA PAPER THIN, CRASH 16", HAMMERED and SMOKE; SWISH's bow_shoulder must take
       # NOVA SHOULDER PROFILE's bow profile, EXTRA PAPER THIN's and CRASH 16"'s bell_shoulder and bow_shoulder Nova's bell and
-      # bow profiles (each preset's tuning then saved and loaded back), and NOVA RIDE must have no such button; NOVA's first articulation's
+      # bow profiles (each preset's tuning then saved and loaded back), and NOVA RIDE must have no such button; EDGE HAND-OVER
+      # must switch on and off on RAVEN and CRASH 16", and CRASH 16"'s switched value be saved and loaded back; NOVA's first articulation's
       # three STICK CLICK weights must move; HIT VARIATION's switch must flip and its two spreads
       # move (NOVA); a tuning file saved and loaded back (through
       # stand-ins for the file panels) must hold and restore the tuning; on HI-HAT the window
       # shows the values that act on it and hides the others; a second click on
       # the title hides the window, and on HI-HAT it opens and closes it again (tools/cymbalis_uitest).
-      # 65 steps in each host take about 2.6 minutes per host on the runner (59 took 4.8 minutes in
+      # 68 steps in each host take about 2.7 minutes per host on the runner (59 took 4.8 minutes in
       # all with EXTRA PAPER THIN 24"), hence 8 minutes.
       - name: Editor mouse test (AU and VST3)
         timeout-minutes: 8
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
-          STEPS="edge sticks channel drag reset none edgereset list stick preset shoulder swish raven paperthin konstan azcrash hihat blendhidden hihatplay hihatpedal hihatswing pedalchannel pedalcc konstan blendshown wheel arcs tuning wheeltuning voice raven voice swish voice profile paperthin voice ptprofile savetuning loadtuning azcrash voice azprofile savetuning loadtuning preset voice smoke voice nova noprofile nohihatvalues clickweights hitvariation savetuning loadtuning hihat hihattuning hihatvalues hihatopen savetuning loadtuning tuningclose tuning tuningclose"
+          STEPS="edge sticks channel drag reset none edgereset list stick preset shoulder swish raven paperthin konstan azcrash hihat blendhidden hihatplay hihatpedal hihatswing pedalchannel pedalcc konstan blendshown wheel arcs tuning wheeltuning voice raven voice handover swish voice profile paperthin voice ptprofile savetuning loadtuning azcrash voice azprofile handover handoverflip savetuning loadtuning preset voice smoke voice nova noprofile nohihatvalues clickweights hitvariation savetuning loadtuning hihat hihattuning hihatvalues hihatopen savetuning loadtuning tuningclose tuning tuningclose"
           echo "--- VST3 ---"
           "$UITEST" "$PWD/$VST3" $STEPS
           echo "--- AU ---"

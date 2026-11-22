@@ -236,6 +236,8 @@ juce::var cymbalObject (const BakeData& b, const Tuning& t, bool onlyChanged)
         o->setProperty (kFrameDecayRestartKey, t.cymbal.frameDecayRestart);
     if (applies (Needs::envelope, b) && (! onlyChanged || t.cymbal.edgeEnvelope != b.tuning.cymbal.edgeEnvelope))
         o->setProperty (kEdgeEnvelopeKey, t.cymbal.edgeEnvelope);
+    if (applies (Needs::envelope, b) && (! onlyChanged || t.cymbal.edgeEnvHandover != b.tuning.cymbal.edgeEnvHandover))
+        o->setProperty (kEdgeEnvHandoverKey, t.cymbal.edgeEnvHandover);
     if (! onlyChanged || t.cymbal.highPassOn != b.tuning.cymbal.highPassOn)
         o->setProperty (kHighPassKey, t.cymbal.highPassOn);
     if (! onlyChanged || t.cymbal.hitVariation != b.tuning.cymbal.hitVariation)
@@ -364,6 +366,13 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
                 if (! applies (Needs::envelope, b))
                     return juce::String (kEdgeEnvelopeKey) + ": this preset has no NPZ edge envelope.";
                 t.cymbal.edgeEnvelope = (bool) p.value;
+                continue;
+            }
+            if (key == kEdgeEnvHandoverKey)
+            {
+                if (! applies (Needs::envelope, b))
+                    return juce::String (kEdgeEnvHandoverKey) + ": this preset has no NPZ edge envelope.";
+                t.cymbal.edgeEnvHandover = (bool) p.value;
                 continue;
             }
             if (key == kHighPassKey)
@@ -506,7 +515,7 @@ bool isModified (const BakeData& b, const Tuning& t)
             return true;
     if (t.cymbal.frameDecayRestart != b.tuning.cymbal.frameDecayRestart || t.cymbal.edgeEnvelope != b.tuning.cymbal.edgeEnvelope
         || t.cymbal.highPassOn != b.tuning.cymbal.highPassOn || t.cymbal.hitVariation != b.tuning.cymbal.hitVariation
-        || t.cymbal.hhFreeRing != b.tuning.cymbal.hhFreeRing)
+        || t.cymbal.hhFreeRing != b.tuning.cymbal.hhFreeRing || t.cymbal.edgeEnvHandover != b.tuning.cymbal.edgeEnvHandover)
         return true;
     if (! sameRehitWeights (b, t.cymbal, b.tuning.cymbal))
         return true;

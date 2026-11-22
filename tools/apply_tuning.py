@@ -39,6 +39,8 @@ tuning block it already has). Then:
     tuning block;
   * HIT VARIATION (hit_variation on / off, hit_position_spread, hit_velocity_spread_pct) goes
     into the tuning block where it differs from off, 0.04 and 3 %;
+  * EDGE HAND-OVER (edge_env_handover on / off, bakes with NPZ edge data) goes into the
+    tuning block where it is on;
   * every other value that differs from the bake's own value goes into the bake's
     "tuning" block, which the plugin's bake loader applies; per-band cymbal values
     (ring_length_bands, stereo_pan_bands, stereo_width_bands) as 22 values. The plugin's own mechanisms (energy cascade
@@ -117,6 +119,7 @@ ENVELOPE_KEY = 'edge_band_envelope'   # EDGE ONSET ENVELOPE: the bake's edge_npz
 VOICE_KEY = 'edge_voice_from_bow'     # EDGE VOICE FROM BOW, %: 0 if a file has none
 HIGHPASS_KEY = 'right_highpass'       # the right channel's 120 Hz high-pass on (the bake's own) or off
 HITVAR_KEY = 'hit_variation'          # HIT VARIATION on or off (the bake's own: off)
+HANDOVER_KEY = 'edge_env_handover'    # EDGE HAND-OVER on or off (bakes with NPZ edge data; the bake's own: off)
 # The hi-hat's own values (bakes with a hihat block only): TIP OPEN LEVEL, TIP OPEN TICK, RING FLOOR,
 # FREE RING (on / off; the bake's own: off), TIP MODES, MAX OPEN.
 FREE_RING_KEY = 'hh_free_ring'
@@ -187,6 +190,7 @@ def own_values(bake):
     own[HIGHPASS_KEY] = True
     own[HITVAR_KEY] = False
     own[FREE_RING_KEY] = False
+    own[HANDOVER_KEY] = False
     for key, (neutral, _) in PLUGIN_KEYS.items():
         own[key] = neutral
     for key, (_, _, neutral) in CYMBAL_BAND_KEYS.items():
@@ -366,11 +370,11 @@ def main():
             fail(f'{VOICE_KEY}: the bake has no NPZ edge data')
         if key in HIHAT_KEYS and not bake.get('hihat'):
             fail(f'{key}: the bake is not the hi-hat')
-        if key in (RESTART_KEY, ENVELOPE_KEY, HIGHPASS_KEY, HITVAR_KEY, FREE_RING_KEY):
+        if key in (RESTART_KEY, ENVELOPE_KEY, HIGHPASS_KEY, HITVAR_KEY, FREE_RING_KEY, HANDOVER_KEY):
             if not isinstance(v, bool):
                 fail(f'{key} must be true or false')
-            if key == ENVELOPE_KEY and not bake.get('edge_npz'):
-                fail(f'{ENVELOPE_KEY}: the bake has no NPZ edge data')
+            if key in (ENVELOPE_KEY, HANDOVER_KEY) and not bake.get('edge_npz'):
+                fail(f'{key}: the bake has no NPZ edge data')
             current[key] = v
         elif key == WEIGHTS_KEY:
             if not isinstance(v, dict):
@@ -435,7 +439,7 @@ def main():
                 fail(f'unknown articulation value {aid}.{key}')
 
     # The new tuning block: what differs from the bake's own values.
-    new_cymbal = {k: current[k] for k in CYMBAL_KEYS + [RESTART_KEY, ENVELOPE_KEY, HIGHPASS_KEY, HITVAR_KEY, FREE_RING_KEY]
+    new_cymbal = {k: current[k] for k in CYMBAL_KEYS + [RESTART_KEY, ENVELOPE_KEY, HIGHPASS_KEY, HITVAR_KEY, FREE_RING_KEY, HANDOVER_KEY]
                   + list(CYMBAL_BAND_KEYS)
                   + [WEIGHTS_KEY]
                   if k in current and current[k] != own.get(k)}

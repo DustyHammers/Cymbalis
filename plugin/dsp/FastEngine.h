@@ -229,6 +229,8 @@ private:
         int frameBlocksLeft = 0;    // control blocks until the in-frame decay restarts
         double envWindow = 1.5;     // its envelope window (edge_band_env_onset_s)
         bool frameRestart = true;   // its in-frame decay restarts every frame (else: none)
+        bool handover = false;      // EDGE HAND-OVER at the strike: at the window's end it rings on
+                                    //   from its enveloped amplitude (handOver)
         // Its articulation's onset shift at the strike (docs/TUNING.md): band j's envelope
         // is read at (t - envDelay[j]) x envSpeed[j] (seconds). Only with envShift.
         bool envShift = false;
@@ -305,6 +307,7 @@ private:
     template <bool Rho>
     void sumBlock(double t0, double t1, int nS, int nO, int nR, int nE) noexcept;
     double rhoAt(const Component& c, double t) const noexcept;
+    void handOver(Component& c) noexcept; // EDGE HAND-OVER at an envelope strike's window end
     void dropQuietModes() noexcept;
     void renderKinks(float* left, float* right, int j0, int m) noexcept;
     void addKink(const Component& c, int mode, double d0, double te0) noexcept;
@@ -428,6 +431,7 @@ private:
     double remapExp_ = 0.5;    // NPZ velocity remap exponent (0.5: sqrt, line 1049)
     double envWindowS_ = 1.5;  // NPZ band envelope window after an edge strike
     bool frameRestart_ = true; // the in-frame decay restarts every 20 ms
+    bool envHandover_ = false; // EDGE HAND-OVER (docs/TUNING.md), from the next strike
     double outGain_ = 1.0, outGainTarget_ = 1.0, outGainCoef_ = 1.0; // output gain, smoothed per sample
     // Wander changes from setTuning wait for the next control point.
     bool wanderPending_ = false;

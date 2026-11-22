@@ -116,6 +116,9 @@ struct CymbalTuning
     // EDGE ONSET ENVELOPE: whether an edge strike's level follows the NPZ band envelope for
     // the window (presets with NPZ edge data; the bake's edge_npz.envelope_active).
     bool edgeEnvelope = false;
+    // EDGE HAND-OVER (presets with NPZ edge data; off: as before): at the end of an edge strike's
+    // envelope window each mode rings on from its enveloped amplitude there, by its own T60.
+    bool edgeEnvHandover = false;
     // EDGE VOICE FROM BOW, 0 .. 100 % (presets with NPZ edge data): within each envelope band
     // the edge's long-ringing modes take the bow's mode pattern (edgeVoiceVelw). 0: the bake's
     // velw.
@@ -192,6 +195,7 @@ struct CymbalKey
 const std::vector<CymbalKey>& cymbalKeys();
 constexpr const char* kFrameDecayRestartKey = "edge_frame_decay_restart";
 constexpr const char* kEdgeEnvelopeKey = "edge_band_envelope";
+constexpr const char* kEdgeEnvHandoverKey = "edge_env_handover"; // EDGE HAND-OVER, on / off
 constexpr const char* kRingBandsKey = "ring_length_bands";
 constexpr const char* kPanBandsKey = "stereo_pan_bands";
 constexpr const char* kWidthBandsKey = "stereo_width_bands";

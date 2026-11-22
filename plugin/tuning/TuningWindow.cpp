@@ -604,6 +604,7 @@ void TuningPanel::rebuild()
     highPassRow.reset();
     hitVariationRow.reset();
     freeRingRow.reset();
+    handoverRow.reset();
     bandEq.reset();
     cymbalBandRows.clear();
     list.removeAllChildren();
@@ -840,6 +841,10 @@ void TuningPanel::rebuild()
                                                           + scopeNames (Scope::edge, *bake));
                 restartRow->onChange = [this] (bool v) { change ([&] (Tuning& t) { t.cymbal.frameDecayRestart = v; }); };
                 place (*restartRow);
+                handoverRow = std::make_unique<ToggleRow> ("EDGE HAND-OVER (at the window's end each mode rings on from its "
+                                                           "enveloped level, by its own decay)");
+                handoverRow->onChange = [this] (bool v) { change ([&] (Tuning& t) { t.cymbal.edgeEnvHandover = v; }); };
+                place (*handoverRow);
             }
         }
     }
@@ -862,6 +867,8 @@ void TuningPanel::showValues()
         hitVariationRow->setValues (processor.tuning (preset).cymbal.hitVariation, bake->tuning.cymbal.hitVariation);
     if (freeRingRow != nullptr && bake != nullptr)
         freeRingRow->setValues (processor.tuning (preset).cymbal.hhFreeRing, bake->tuning.cymbal.hhFreeRing);
+    if (handoverRow != nullptr && bake != nullptr)
+        handoverRow->setValues (processor.tuning (preset).cymbal.edgeEnvHandover, bake->tuning.cymbal.edgeEnvHandover);
     modified = bake != nullptr && isModified (*bake, processor.tuning (preset));
     repaint (0, 0, getWidth(), kTopHeight);
 }

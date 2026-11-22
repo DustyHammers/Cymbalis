@@ -94,6 +94,10 @@
 //                then on bow_shoulder's                               -> bell_shoulder's band gains,
 //                attack gains and attack time are Nova's bell profile, bow_shoulder's its bow profile
 //   azprofile    (on CRASH 16") the same as ptprofile                 -> as ptprofile
+//   handover     (on a preset with an NPZ edge envelope) click EDGE HAND-OVER twice -> the value
+//                switched and back (on and off, or off and on)
+//   handoverflip (likewise) click EDGE HAND-OVER once                -> the value switched (left so,
+//                for savetuning and loadtuning to carry it)
 //   noprofile    (on NOVA RIDE) look for NOVA SHOULDER PROFILE down the list -> none
 //   hihattuning  (on HI-HAT) the list shows the values that act on it and not the others
 //                (stick click weights, position spread, EDGE VOICE FROM BOW, tau_ref)
@@ -925,6 +929,47 @@ private:
                 const bool bell = has ("bell_shoulder", cymbalis::tuning::kNovaShoulderBell);
                 const bool bow = has ("bow_shoulder", cymbalis::tuning::kNovaShoulderBow);
                 return bell && bow ? juce::String ("bell and bow profiles") : juce::String ("not the profiles");
+            };
+        }
+        else if (name == "handover" || name == "handoverflip")
+        {
+            // EDGE HAND-OVER's switch: its effective value before, after one click and (handover)
+            // after a second. The preset's tuning has changed before (voice), so the session holds
+            // it with every value.
+            static const char* const kRow = "EDGE HAND-OVER (at the window's end each mode rings on from its enveloped level, by its own decay)";
+            auto seen = std::make_shared<std::vector<juce::var>>();
+            const bool twice = name == "handover";
+            auto read = [this, seen] { seen->push_back (currentTuning (sessionNow())["effective"]["cymbal"]["edge_env_handover"]); };
+            s.actions = { [this, read] {
+                             read();
+                             actionError = cymbalis::uitest::clickTuningButton (*editor, kRow, true);
+                         },
+                          wait };
+            if (twice)
+                s.actions.insert (s.actions.end(), { [this, read] {
+                                                        read();
+                                                        if (actionError.isEmpty())
+                                                            actionError = cymbalis::uitest::clickTuningButton (*editor, kRow, true);
+                                                    },
+                                                     wait });
+            s.key = "edge_env_handover";
+            s.expected = twice ? "switched and back" : "switched";
+            s.probe = [this, seen, twice, read] {
+                if (actionError.isNotEmpty())
+                    return actionError;
+                read();
+                juce::String values;
+                for (const auto& v : *seen)
+                    values << (values.isEmpty() ? "" : " -> ") << (v.isVoid() ? juce::String ("none") : v.toString());
+                std::printf ("      edge_env_handover %s\n", values.toRawUTF8());
+                for (const auto& v : *seen)
+                    if (! v.isBool())
+                        return "not in the preset's tuning: " + values;
+                const bool a = (bool) (*seen)[0], b = (bool) (*seen)[1];
+                if (! twice)
+                    return b != a ? juce::String ("switched") : values;
+                const bool c = (bool) (*seen)[2];
+                return b != a && c == a ? juce::String ("switched and back") : values;
             };
         }
         else if (name == "noprofile")
