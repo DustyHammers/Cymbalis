@@ -159,26 +159,30 @@ Built 2026-10-28 in the project session from Kris's SPEAR captures (Bow V1-V6, E
 
 # Extra Paper Thin Ride 24"
 
-Built 2026-11-21 in the project session from Kris's SPEAR captures (Bell V1-V3 and Bow V1-V3 with the stick tip, Edge V1, V2, V3, V5 and V6 with the shoulder) by `build_preset.py --low-wash` (kept in the project with its documentation, `SPEAR_Preset_Builder.md`, not in this repo). SPEAR files excluded. No baseline render check: the plugin is the reference (see `CLAUDE.md`).
+Built 2026-11-21 in the project session from Kris's SPEAR captures (Bell V1-V3 and Bow V1-V3 with the stick tip, Edge V1, V2, V3, V5 and V6 with the shoulder) by `build_preset.py --low-wash` (kept in the project with its documentation, `SPEAR_Preset_Builder.md`, not in this repo), then reworked by ear with Kris the same day (the edge, below). SPEAR files excluded. No baseline render check: the plugin is the reference (see `CLAUDE.md`).
 
 | File | MD5 |
 |---|---|
-| `presets/paperthin/PaperThin_Baseline1.json` | `988d5b6d272d5a462148349c6e5466ac` |
-| `presets/paperthin/data/paperthin_bell_excitation_ratios.json` | `a6a2df38a43f9c2bb1d7dcebd48032d5` |
-| `presets/paperthin/data/paperthin_build_info.json` | `e407d86e9947f928cf3e470e147c6f43` |
-| `presets/paperthin/data/paperthin_edge_benv_trigger.json` | `92ec523cac9f161935a417885ed71969` |
-| `presets/paperthin/data/paperthin_edge_excitation_ratios_neutral.json` | `a34d663d99d8c5f033d9d00921665ccf` |
-| `presets/paperthin/data/paperthin_edge_npz_data.json` | `881e4f5da69bee34f5ba2729f3c3b8cd` |
-| `presets/paperthin/data/paperthin_edge_vel_tilt.json` | `fc7686341b09dca7b61a0b06ba9d4fb3` |
-| `presets/paperthin/data/paperthin_fingerprint.json` | `0a883ff28f94b365165aca054cef271e` |
-| `presets/paperthin/data/paperthin_pkt_data.json` | `15f19b8ac0c879f643c96289ff24761c` |
+| `presets/paperthin/PaperThin_Baseline1.json` | `781ed44492d75bb783ec3714aa6af2e4` |
+| `presets/paperthin/data/paperthin_bell_excitation_ratios.json` | `950e1bfaf6debc324f4aedf1bf394715` |
+| `presets/paperthin/data/paperthin_build_info.json` | `8b8acbbc4e4a173b1c955074e8e39824` |
+| `presets/paperthin/data/paperthin_edge_benv_trigger.json` | `df6358410f155bd495fca7e614288233` |
+| `presets/paperthin/data/paperthin_edge_excitation_ratios_neutral.json` | `76066fa231d4b3d2a38b375ee7615b57` |
+| `presets/paperthin/data/paperthin_edge_npz_data.json` | `ec17e1ceecad5990fccef5e4e3178223` |
+| `presets/paperthin/data/paperthin_edge_vel_tilt.json` | `3fc4c6c51a032b63bd47509730c2f910` |
+| `presets/paperthin/data/paperthin_fingerprint.json` | `ed4d79383a83784809276015f6ada6d5` |
+| `presets/paperthin/data/paperthin_pkt_data.json` | `adc7aa2818b0896c135312d83d1e1a1b` |
 
 ## Notes
 
-- Bettis format, as RAVEN and KONSTAN: fingerprint (900 modes), measured bell ratios, neutral edge ratios, NPZ edge (3 velocities) in the plugin's 22 bands with `edge_rms_correction`, edge pk_t by velocity, edge velocity tilt, and the all-zero trigger file that switches the NPZ envelope on.
-- Mode bank: 781 modes seen in at least 2 bow captures and 119 edge-only modes, with up to 24 edge modes in each band below 400 Hz (`--low-wash`, the crash wash).
-- **Edge captures used: V1, V2 and V6** (velocities 0.066, 0.283, 1.0 from their levels). Edge V5 is quieter than Edge V3, so the velocities would not rise in order; Edge V3 starts with a strong 283 Hz swell that, with each NPZ envelope normalised to its loudest band, made a medium edge render 3.6 dB quieter than a soft one. With V1, V2 and V6 the rendered edge rises evenly with velocity. The top velocities still bunch (0.6 to 1.0 about 1 dB rendered, against 11 dB from V2 to V6 in the captures), as RAVEN's do.
-- **T60 refit from the bow captures, as KONSTAN** (see its notes): partials within ±0.6 % in Bow V1-V3, a dB slope from 0.3 to 3 s, the median where at least two captures fit, limited to x1/3-x3. 655 of the 781 bow modes refitted (median x2.6); the others keep their T60 after V19's cap. Meant to be baked **without** the cap: 350 are above it. The cymbal rings long: the measured band decays (T60, loud bow captures) are 10-27 s from 180 Hz to 2 kHz.
+- Bettis format, as RAVEN and KONSTAN: fingerprint (900 modes), measured bell ratios, neutral edge ratios, NPZ edge (3 rows) in the plugin's 22 bands with `edge_rms_correction`, edge pk_t by velocity, edge velocity tilt, and the all-zero trigger file that switches the NPZ envelope on.
+- Mode bank from the bow captures and Edge V3, V5 and V6: 771 modes seen in at least 2 bow captures and 129 edge-only modes, with up to 24 edge modes in each band below 400 Hz (`--low-wash`, the crash wash).
+- **The edge (Kris, by ear, 2026-11-21, "C"; this replaces the first version of this branch, which used Edge V1, V2 and V6):**
+  - **Edge V1 and V2 left out:** their onset is as bright as the bow's (centroid 3.7-4.5 kHz in the first 150 ms, the bow 4.3-5.4), and they sounded like a tip.
+  - **Rows V5, V3, V6 at velocities 0.536, 0.649 and 1.0**, set so each row renders at its recorded level relative to the loudest (V5 0.552, V3 0.606, V6 1.0). The levels' order differs from the V numbers: V5 is quieter than V3.
+  - **Every row uses Edge V5's mode weights (velw).** The loud recordings light up a different set of partials, which Kris heard as a different articulation at high velocity.
+  - **The V3 and V6 rows keep each band's level and decay but build up to the band's peak as Bettis's edge does at 0.67 and 1.0** (per band: Bettis's normalised rise up to its peak, then the row's own decay from its peak). As recorded, V3's upper bands peaked within 20-60 ms (a ping) and V6's low bands within 20 ms (a thump); on Bettis the upper bands swell over 200-300 ms at high velocity.
+- **T60 refit from the bow captures, as KONSTAN** (see its notes): 653 of the 771 bow modes refitted (median x3.0, the x3 limit); the others keep their T60 after V19's cap. Meant to be baked **without** the cap: 327 are above it. The cymbal rings long: the measured band decays are 10-27 s from 180 Hz to 2 kHz.
 - **Bell measured,** not inferred: Bell V1-V3 against the upper half of the bow captures (V2, V3).
 - SPEAR level targets in `data/paperthin_build_info.json`: BELL +8.69 dB and EDGE +15.77 dB above BOW (the loudest captures, first 500 ms).
 - Build-up (LF and MF) as Bettis and Swish; wander, stick click and NL off. No velocity tables: bell and bow use the hertz law (v^2).
