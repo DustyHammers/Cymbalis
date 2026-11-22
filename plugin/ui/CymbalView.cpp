@@ -176,7 +176,9 @@ vec3 colourAt (vec3 e, out vec2 p)
         return kGold * (0.55 + 0.40 * ytl) * aKind.y; // edge lines
     if (aKind.x < 4.5)
         return surface * (0.50 + 0.35 * ytl) * aKind.y; // gold lathing
-    return kGold * (0.50 + 0.35 * ytl) * aKind.y;       // the dented mesh's gold lathing
+    if (aKind.x < 5.5)
+        return kGold * (0.50 + 0.35 * ytl) * aKind.y;   // the dented mesh's gold lathing
+    return kCopper * aKind.w * (0.45 + 0.35 * ytl) * aKind.y; // grooves in a copper zone (copperK)
 }
 void main()
 {
@@ -1043,7 +1045,7 @@ void CymbalView::renderOpenGL()
             glUniform2f (Gpu::at (p, "uTilt"), (float) f.tiltX, (float) f.tiltY);
             glUniform1f (Gpu::at (p, "uSpin"), (float) (f.spinDeg * kPi / 180.0));
             glUniform1f (Gpu::at (p, "uLift"), (float) f.lift);
-            glUniform3f (Gpu::at (p, "uCam"), (float) cam.sinE, (float) cam.cosE, (float) wire::Camera::distance);
+            glUniform3f (Gpu::at (p, "uCam"), (float) cam.sinE, (float) cam.cosE, (float) cam.distance);
             glUniform3f (Gpu::at (p, "uCentre"), (float) cam.cx, (float) cam.cy, (float) cam.scale);
             glUniform2f (Gpu::at (p, "uOrigin"), origin.x, origin.y);
             glUniform1f (Gpu::at (p, "uPx"), px);

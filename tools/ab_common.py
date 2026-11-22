@@ -66,6 +66,11 @@ PRESETS = {
         'articulations': None,
         'slots': [('BELL', None, 1.0), ('BOW', None, 0.5), ('EDGE', None, 0.0)],
     },
+    'azcrash': {
+        'preset': os.path.join(REPO, 'presets', 'azcrash', 'AzCrash_Baseline1.json'),
+        'articulations': None,
+        'slots': [('BELL', None, 1.0), ('BOW', None, 0.5), ('EDGE', None, 0.0)],
+    },
 }
 
 

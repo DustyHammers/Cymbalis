@@ -39,8 +39,9 @@ double besselJ (int m, double x);
 // radius for the cymbals, 787,430 and 270 for the hi-hat).
 struct Camera
 {
-    static constexpr double elevationDeg = 38.0, distance = 5.0;
+    static constexpr double elevationDeg = 38.0;
     double cx = 787.0, cy = 400.0, scale = 345.0;
+    double distance = 5.0; // the perspective distance, radii: 5 / CymbalShape::drawScale
     double sinE, cosE;
     Camera();
     explicit Camera (const CymbalShape& shape);
@@ -101,7 +102,8 @@ enum class SurfaceKind : std::uint8_t
     groove = 2,    // GOLD x (0.30 + 0.32 ytl) x param (the groove's intensity); 2 units
     edge = 3,      // GOLD x (0.55 + 0.40 ytl) x param (the zone's strength); 2 units
     goldLathe = 4, // the surface colour x (0.50 + 0.35 ytl) x param (lum(r))
-    goldLine = 5   // GOLD x (0.50 + 0.35 ytl) x param (lum(r) x strength): the dented mesh's lathing
+    goldLine = 5,  // GOLD x (0.50 + 0.35 ytl) x param (lum(r) x strength): the dented mesh's lathing
+    copperGroove = 6 // a groove in a copper zone: COPPER x factor (copperK) x (0.45 + 0.35 ytl) x param; 2 units
 };
 struct SurfaceVertex
 {
