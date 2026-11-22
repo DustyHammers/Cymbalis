@@ -11,6 +11,13 @@ docs/BUILDS.md has the commands for every preset. Each slot of the bake gets a
 "level_trim" object. The plugin uses only its "gain_db" (rounded to 0.01 dB here); edit
 that number to adjust a slot's level by ear. The other fields record the measurement.
 The bake is rewritten in place; nothing else in it changes.
+
+--boost SLOT=DB raises SLOT's trim by DB on top of the measured one (capped or not), for a
+slot whose velocity curve takes the boost back off below velocity 0.6: its tuning block
+must give it vel_0.6_db and vel_0.3_db of -DB (tools/apply_tuning.py, applied first), so
+its strikes at velocity 0.6 and below play exactly as with the measured trim and the extra
+level comes in between 0.6 and 1.0. --boost-reason records why. EXTRA PAPER THIN 24"'s
+EDGE (docs/PORT_MAP.md, "Extra Paper Thin Ride 24"").
 """
 import argparse
 import json
@@ -25,7 +32,19 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('bake', help='bake JSON to update in place')
     ap.add_argument('trims', help='JSON written by cymbalis_trims --json')
+    ap.add_argument('--boost', action='append', default=[], metavar='SLOT=DB',
+                    help='raise SLOT\'s trim by DB; its velocity curve must be -DB at 0.6 and 0.3')
+    ap.add_argument('--boost-reason', default='', help='why the boost (recorded in level_trim)')
     args = ap.parse_args()
+    boosts = {}
+    for b in args.boost:
+        name, _, db = b.partition('=')
+        try:
+            boosts[name] = float(db)
+        except ValueError:
+            raise SystemExit(f'--boost {b}: expected SLOT=DB')
+    if boosts and not args.boost_reason:
+        raise SystemExit('--boost needs --boost-reason')
 
     with open(args.bake) as f:
         bake = json.load(f)
@@ -33,6 +52,16 @@ def main():
         trims = json.load(f)
 
     names = [s['name'] for s in bake['slots']]
+    for name, db in boosts.items():
+        if name not in names:
+            raise SystemExit(f'--boost {name}: the bake has no such slot')
+        slot = bake['slots'][names.index(name)]
+        art = slot.get('articulation') or (slot['overlay'] if slot.get('overlay') else slot['name'].lower())
+        curve = ((bake.get('tuning') or {}).get('articulations') or {}).get(art, {})
+        if curve.get('vel_0.6_db') != -db or curve.get('vel_0.3_db') != -db:
+            raise SystemExit(f'--boost {name}={db:g}: the bake\'s tuning block must give {art} vel_0.6_db and '
+                             f'vel_0.3_db of {-db:g} (it has {curve.get("vel_0.6_db")} and {curve.get("vel_0.3_db")}); '
+                             'apply the tuning file first')
     if sorted(names) != sorted(trims['slots']):
         raise SystemExit(f'the trims are for slots {sorted(trims["slots"])}, the bake has {sorted(names)}')
     for s in bake['slots']:
@@ -67,6 +96,16 @@ def main():
                 'peak_percentile': float(trims['peak_percentile']),
                 'peak_window_s': float(trims['peak_window_s']),
             })
+        if s['name'] in boosts:
+            db = boosts[s['name']]
+            lt['gain_db'] = round(float(t['gain_db']) + db, 2)
+            lt['boost_db'] = db
+            lt['boosted_from_gain_db'] = round(float(t['gain_db']), 2)
+            lt['boost_reason'] = args.boost_reason
+            lt['level_db_with_boost'] = float(t['level_db']) + db  # at velocity 1.0
+            if 'peak' in t:
+                # The peak at velocity 1.0 with the boost (the curve is 0 dB there).
+                lt['peak_with_boost'] = float(t['peak']) * 10.0 ** (db / 20.0)
         s['level_trim'] = lt
 
     with open(args.bake, 'w') as f:

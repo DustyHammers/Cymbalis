@@ -105,7 +105,7 @@ jobs:
           BENCH=build/tools/cymbalis_bench/cymbalis_bench
           {
             echo "### Fast engine CPU on ${CPU}"
-            for PRESET in nova_ride smoke_flat_ride hammered_thin_ride swish raven konstan hihat; do
+            for PRESET in nova_ride smoke_flat_ride hammered_thin_ride swish raven paperthin konstan hihat; do
               BAKE="resources/presets/${PRESET}.bake.json"
               echo
               echo "#### ${PRESET}"
@@ -125,7 +125,7 @@ jobs:
         timeout-minutes: 15
         run: |
           BAKES=()
-          for PRESET in nova_ride smoke_flat_ride hammered_thin_ride swish raven konstan hihat; do
+          for PRESET in nova_ride smoke_flat_ride hammered_thin_ride swish raven paperthin konstan hihat; do
             BAKES+=(--bake "resources/presets/${PRESET}.bake.json")
           done
           {
@@ -211,7 +211,7 @@ jobs:
       # Real mouse events through the AU and VST3 wrappers: EDGE's default note (64) and the
       # default sticks of every preset (BELL and BOW TIP, BELL2 and BOW2 SHOULDER), then change
       # the MIDI channel, the slot notes (drag, menu, RESET DEFAULT, note list), a stick, the
-      # preset and a stick of that preset, then SWISH, RAVEN and KONSTAN CRASH 18", in the
+      # preset and a stick of that preset, then SWISH, RAVEN, EXTRA PAPER THIN 24" and KONSTAN CRASH 18", in the
       # editor, and check the plugin's saved state; HI-HAT: its Blend Position knobs hidden, its two
       # rows and the pedal played through the host (MIDI notes and CC), the hats and the pedal drawing
       # following the pedal CC, also on channel 1 with MIDI CHANNEL 16 (a keyboard's mod wheel), with
@@ -222,8 +222,9 @@ jobs:
       # from (docs/UI_SPEC.md section 6). Then click the CYMBALIS title: the Tuning window must be
       # visible, in front of the editor and attached to it;
       # the wheel over its sliders and numeric boxes must change nothing; EDGE VOICE FROM BOW
-      # must move on KONSTAN, RAVEN, SWISH, HAMMERED and SMOKE; SWISH's bow_shoulder must take
-      # NOVA SHOULDER PROFILE's bow profile, and NOVA RIDE must have no such button; NOVA's first articulation's
+      # must move on KONSTAN, RAVEN, SWISH, EXTRA PAPER THIN, HAMMERED and SMOKE; SWISH's bow_shoulder must take
+      # NOVA SHOULDER PROFILE's bow profile, EXTRA PAPER THIN's bell_shoulder and bow_shoulder Nova's bell and
+      # bow profiles (its tuning then saved and loaded back), and NOVA RIDE must have no such button; NOVA's first articulation's
       # three STICK CLICK weights must move; HIT VARIATION's switch must flip and its two spreads
       # move (NOVA); a tuning file saved and loaded back (through
       # stand-ins for the file panels) must hold and restore the tuning; on HI-HAT the window
@@ -233,7 +234,7 @@ jobs:
         timeout-minutes: 5
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
-          STEPS="edge sticks channel drag reset none edgereset list stick preset shoulder swish raven konstan hihat blendhidden hihatplay hihatpedal hihatswing pedalchannel pedalcc konstan blendshown wheel arcs tuning wheeltuning voice raven voice swish voice profile preset voice smoke voice nova noprofile nohihatvalues clickweights hitvariation savetuning loadtuning hihat hihattuning hihatvalues hihatopen savetuning loadtuning tuningclose tuning tuningclose"
+          STEPS="edge sticks channel drag reset none edgereset list stick preset shoulder swish raven paperthin konstan hihat blendhidden hihatplay hihatpedal hihatswing pedalchannel pedalcc konstan blendshown wheel arcs tuning wheeltuning voice raven voice swish voice profile paperthin voice ptprofile savetuning loadtuning preset voice smoke voice nova noprofile nohihatvalues clickweights hitvariation savetuning loadtuning hihat hihattuning hihatvalues hihatopen savetuning loadtuning tuningclose tuning tuningclose"
           echo "--- VST3 ---"
           "$UITEST" "$PWD/$VST3" $STEPS
           echo "--- AU ---"
@@ -243,7 +244,7 @@ jobs:
       # cymbal at 1536 x 1024: processBlock at 44.1 kHz (256 and 128 samples, normal and
       # real-time audio thread) with the editor closed, open and idle, and open with the hits,
       # each three times, then once more with HAMMERED THIN RIDE selected, and once each with
-      # SWISH, RAVEN and KONSTAN CRASH 18" (their dented meshes) and HI-HAT (two dented cymbals,
+      # SWISH, RAVEN, EXTRA PAPER THIN 24" and KONSTAN CRASH 18" (their dented meshes) and HI-HAT (two dented cymbals,
       # the clutch and rod, the pedal CC moving the hats and the pedal drawing);
       # the CPU used besides; the editor's paint calls and the cymbal's OpenGL frames; and
       # once, that nothing is drawn after every hit is older than 6 s.

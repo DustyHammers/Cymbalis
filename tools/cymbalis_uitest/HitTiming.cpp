@@ -397,10 +397,11 @@ HitTiming::HitTiming (std::function<void (int)> f) : finished (std::move (f))
                     steps.push_back ({ e, block, realtime, e == Editor::hits && round == 0 && ! realtime && block == kBlocks[0] });
             steps.push_back ({ Editor::none, block, realtime, false });
         }
-    // Once more with HAMMERED THIN RIDE selected, and once each with SWISH, RAVEN, KONSTAN CRASH
-    // 18" (the dented meshes) and HI-HAT (two dented cymbals, its clutch and rod, the pedal moving).
+    // Once more with HAMMERED THIN RIDE selected, and once each with SWISH, RAVEN, EXTRA PAPER THIN
+    // 24", KONSTAN CRASH 18" (the dented meshes) and HI-HAT (two dented cymbals, its clutch and rod,
+    // the pedal moving).
     for (const auto* shape : { &cymbalis::ui::kHammeredShape, &cymbalis::ui::kSwishShape, &cymbalis::ui::kRavenShape,
-                               &cymbalis::ui::kKonstanShape, &cymbalis::ui::kHiHatTopShape })
+                               &cymbalis::ui::kPaperThinShape, &cymbalis::ui::kKonstanShape, &cymbalis::ui::kHiHatTopShape })
         for (int p = 0; p < cymbalis::kNumPresets; ++p)
             if (cymbalis::kPresets[(size_t) p].shape == shape)
                 for (const auto e : { Editor::none, Editor::idle, Editor::hits })

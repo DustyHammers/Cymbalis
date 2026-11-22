@@ -145,6 +145,25 @@ CYMBALS = {
                   lines_follow_dents=True,
                   dent_zones=[(0.30, 0.70, 300, (0.016, 0.024), (0.5, 0.9), 0.8),
                               (0.70, 0.97, 260, (0.020, 0.032), (0.45, 0.85), 1.0)]),
+    # EXTRA PAPER THIN RIDE 24" (Kris 2026-11-21, from his photos 2106_top_big, 2106_db_big,
+    # 2106_profile_big and 2106_stamp_big): conical, a small defined bell (edge 2.4"), the bow a
+    # nearly straight cone to the rim; lathed all over in an even gold; hand-hammered in sparse,
+    # deep dents (a few on the bell, more towards the edge); the lathe lines run through them. At the
+    # edge two dark patina bands with a thin bright lathed ring between them.
+    # Profile from the side photo (rim to rim 960 px = 24"): bell top 2.55" above the rim, the bell's
+    # edge at 2.4" and 1.83" high, then a near-straight cone to the rim.
+    # Edge bands from the top-down photo: dark 0.945-0.975 R, a thin bright ring 0.975-0.982 R, dark
+    # 0.982 R to the rim.
+    'paperthin': dict(title='EXTRA PAPER THIN 24"', R=12.0, bell=0.20, hammer=None, hammer_zone=(0.04, 0.94),
+                  profile=[(0.0, 2.60), (0.5, 2.50), (1.0, 2.31), (1.5, 2.11), (2.0, 1.94), (2.6, 1.79), (3.2, 1.70),
+                           (4.8, 1.45), (6.6, 1.15), (8.4, 0.78), (10.2, 0.37), (11.4, 0.12), (12.0, 0.0)],
+                  lathe=[], fine_lathe=[], gold=[(0.02, 0.945), (0.975, 0.982)], gold_step=0.022,
+                  photo_lum=[0.0] * 4 + [100.0] * 196, bell_line=False, zone_edges=False, ring_step=5,
+                  dent_depth=2.6, dent_contrast=12.0, lum_gamma=1.0, lines_follow_dents=True,
+                  copper=[(0.945, 0.975), (0.982, 1.0)], copper_k=0.6, edge_lines=[0.9785],
+                  dent_zones=[(0.05, 0.18, 25, (0.014, 0.020), (0.55, 0.9), 0.8),      # a few on the bell
+                              (0.22, 0.60, 120, (0.020, 0.030), (0.5, 0.85), 1.0),
+                              (0.60, 0.93, 170, (0.024, 0.036), (0.45, 0.8), 1.0)]),
 }
 
 ROSE_DARK = np.array([58, 74, 112], np.float32)     # BGR: deep rose bronze
@@ -443,7 +462,7 @@ class Cymbal:
 # sampled finely (197 radial x 480 around) so the rings and spokes bend through each dent; the
 # lighting picks out the dent walls. The defaults are the approved values.
 # =====================================================================================
-DENTED = {'hammered', 'swish', 'raven', 'konstan'}
+DENTED = {'hammered', 'swish', 'raven', 'konstan', 'paperthin'}
 
 
 
@@ -676,7 +695,9 @@ class Cymbal2:
         for z in self.c.get('gold', []):
             for r in np.arange(z[0], z[1], self.c.get('gold_step', 0.012)):
                 self.tex.append(('G', r, self.lum(r) * self.gold_k(r)))
-        for r in sorted({r for z in self.c.get('gold', []) for r in z[:2] if 0.03 < r < 0.999} | set(self.c.get('gold_lines', []))):
+        # edge_lines (EXTRA PAPER THIN): the bright zone-edge rings to draw, in place of every gold zone's edges
+        edges = self.c['edge_lines'] if 'edge_lines' in self.c else sorted({r for z in self.c.get('gold', []) for r in z[:2] if 0.03 < r < 0.999} | set(self.c.get('gold_lines', [])))
+        for r in edges:
             self.tex.append(('E', r, self.gold_k(r)))
 
     def project(self, X, Y, Z):
@@ -760,7 +781,8 @@ class Cymbal2:
         C = np.where(self.lathe_mask[..., None], Cl, C)
         Cg = C * 0.25 + GOLD * ((0.42 + 0.48 * light) * self.lumR)[..., None]
         C = np.where(self.gold_mask[..., None], Cg, C)
-        Cc = np.minimum(COPPER * (0.95 + 0.55 * light)[..., None], 255)
+        # copper_k (EXTRA PAPER THIN 0.6): a darker patina than SWISH's copper
+        Cc = np.minimum(COPPER * self.c.get('copper_k', 1.0) * (0.95 + 0.55 * light)[..., None], 255)
         C = np.where(self.copper_mask[..., None], Cc, C)
         # dent walls: shadowed sides fade, lit sides brighten toward the highlight
         f = np.clip(1 + self.dent_contrast * dshade, 0.25, 1.9)[..., None]

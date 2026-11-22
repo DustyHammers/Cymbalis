@@ -443,6 +443,31 @@ juce::String clickTuningSlider (juce::Component& editor, const juce::String& row
     return {};
 }
 
+juce::String clickTuningButtonBeside (juce::Component& editor, const juce::String& rowName, const juce::String& text)
+{
+    juce::String error;
+    NSWindow* tuning = visibleTuningWindow (editor, error);
+    if (tuning == nil)
+        return error;
+    id row = scrollToShow (tuning, [NSString stringWithUTF8String: rowName.toRawUTF8()], true, error);
+    if (row == nil)
+        return error;
+    const NSRect r = [row accessibilityFrame];
+    NSMutableArray* all = [NSMutableArray array];
+    collectElements ([tuning contentView], all, 0);
+    for (id e in all)
+        if (showsText (e, [NSString stringWithUTF8String: text.toRawUTF8()], false))
+        {
+            const NSRect f = [e accessibilityFrame];
+            if (NSMidY (r) >= NSMinY (f) && NSMidY (r) <= NSMaxY (f))
+            {
+                clickAtScreenPoint (tuning, NSMakePoint (NSMidX (f), NSMidY (f)));
+                return {};
+            }
+        }
+    return "no button \"" + text + "\" on the row \"" + rowName + "\"";
+}
+
 juce::String clickTuningButton (juce::Component& editor, const juce::String& text, bool inList)
 {
     juce::String error;

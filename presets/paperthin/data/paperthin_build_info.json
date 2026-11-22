@@ -1,0 +1,111 @@
+{
+  "velocities": {
+    "bell": {
+      "1": 0.076,
+      "2": 0.19,
+      "3": 1.0
+    },
+    "bow": {
+      "1": 0.292,
+      "2": 0.569,
+      "3": 1.0
+    },
+    "edge": {
+      "3": 0.606,
+      "5": 0.552,
+      "6": 1.0
+    }
+  },
+  "spear_level_vs_bow_db": {
+    "bell": 8.69,
+    "edge": 15.77
+  },
+  "spear_level_note": "RMS of the first 500 ms of the loudest capture of each articulation, relative to the loudest bow",
+  "bell_inferred": false,
+  "bell_shaping": null,
+  "modes": 900,
+  "freq_range_hz": [
+    37.022,
+    19117.5351
+  ],
+  "t60_band_factor": [
+    6.0,
+    6.0,
+    6.0,
+    3.138,
+    0.93,
+    0.655,
+    2.088,
+    1.03,
+    1.528,
+    1.354,
+    1.404,
+    0.998,
+    1.168,
+    1.036,
+    1.065,
+    1.092,
+    1.034,
+    0.976,
+    0.976,
+    1.009,
+    0.946,
+    0.887
+  ],
+  "t60_band_measured_s": [
+    115.558,
+    62.243,
+    60.401,
+    21.74,
+    27.626,
+    15.381,
+    14.132,
+    17.515,
+    16.697,
+    17.649,
+    14.339,
+    13.538,
+    12.125,
+    10.774,
+    9.423,
+    7.262,
+    5.761,
+    4.57,
+    3.706,
+    2.679,
+    1.712,
+    1.15
+  ],
+  "t60_fitted_fraction": 0.749,
+  "edge_envelope_frames": 685,
+  "edge_band_env_onset_s": 14.2,
+  "edge_captures_used": [
+    "Edge V5",
+    "Edge V3",
+    "Edge V6"
+  ],
+  "edge_captures_left_out": {
+    "Edge V1": "its onset is as bright as the bow's (tip-like)",
+    "Edge V2": "its onset is as bright as the bow's (tip-like)"
+  },
+  "edge_npz_rework": {
+    "chosen": "Kris by ear, 2026-11-21 (\"C\")",
+    "velw": "every row uses Edge V5's mode weights: the loud recordings light up different partials, heard as a different articulation",
+    "envelopes": "V5 as recorded; V3 and V6 keep each band's level and decay but build up to the peak as Bettis's edge does at 0.67 and 1.0 (onset_transplant.py)",
+    "row_velocities": [
+      0.536,
+      0.649,
+      1.0
+    ],
+    "row_velocity_note": "set so each row renders at its recorded level relative to the loudest (V5 0.552, V3 0.606, V6 1.0)"
+  },
+  "low_wash": true,
+  "t60_refit": {
+    "method": "KONSTAN's: partials within +-0.6 % in Bow V1-V3, dB slope 0.3-3 s, median where two or more fit, x1/3-x3; others keep their T60 after V19's cap",
+    "bake": "uncapped (T60_UNCAPPED)",
+    "bow_modes": 771,
+    "refitted": 653,
+    "median_change": 3.0,
+    "above_cap": 327
+  }
+}

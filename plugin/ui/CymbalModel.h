@@ -78,8 +78,8 @@ enum class Metal : std::uint8_t
 
 // The colour of a line (the reference's colour(), and Cymbal2's dent light): the light from its
 // shade (the normal against the light) and ytl (1 at the cymbal's top on screen, 0 at its
-// bottom); its metal, `factor` being lum(r) x the zone's strength for gold and lum(r) for tint
-// (copper, min (COPPER x (0.95 + 0.55 light), 1), replaces the bronze); the dent light factor
+// bottom); its metal, `factor` being lum(r) x the zone's strength for gold, lum(r) for tint and
+// copperK for copper (min (COPPER x copperK x (0.95 + 0.55 light), 1), replaces the bronze); the dent light factor
 // `dent` (1: no dent); and the glow g that mixes it toward HOT.
 Rgb bronze (double shade, double ytl, Metal metal, double factor, double dent = 1.0, double glow = 0.0) noexcept;
 

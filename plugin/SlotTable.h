@@ -1,6 +1,6 @@
 #pragma once
 
-// The five articulation rows (docs/UI_SPEC.md sections 7-8) and the seven presets
+// The five articulation rows (docs/UI_SPEC.md sections 7-8) and the eight presets
 // (UI_SPEC section 8, docs/PORT_MAP.md "Live-engine decisions"). Each preset maps every
 // row to the bake entries it plays with TIP and with SHOULDER (by entry name in the
 // preset's bake, tools/bake_preset.py or tools/bake_hihat.py), or to none, says how its stick
@@ -87,7 +87,7 @@ struct PresetInfo
     bool pedal = false;
 };
 
-constexpr int kNumPresets = 7;
+constexpr int kNumPresets = 8;
 
 // Every EDGE row is SHOULDER only. The other rows choose TIP or SHOULDER: in every preset BELL
 // and BOW start on TIP, BELL2 and BOW2 on SHOULDER (UI_SPEC section 8; Kris, 2026-10-31).
@@ -131,6 +131,15 @@ constexpr std::array<PresetInfo, kNumPresets> kPresets {{
     // Raven (20" dry ride): as Bettis, no overlays; one entry per position, and the shoulder
     // copies of the bell and bow.
     { "raven", "RAVEN", "raven.bake.json", &ui::kRavenShape, {{
+        { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
+        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
+        { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },
+        { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::shoulder },
+        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::shoulder },
+    }} },
+    // Extra Paper Thin Ride 24": as Raven, no overlays; one entry per position, and the shoulder
+    // copies of the bell and bow.
+    { "paperthin", "EXTRA PAPER THIN 24\"", "paperthin.bake.json", &ui::kPaperThinShape, {{
         { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
         { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
         { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },
