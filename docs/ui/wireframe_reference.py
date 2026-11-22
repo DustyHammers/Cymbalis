@@ -28,6 +28,13 @@ History:
   every 0.028 R over the whole cymbal, following the dents), a small rounded bell (edge 2.25", top
   1.6"), hand-hammered all over the bow in shallow random dents (dent_zones), larger towards the
   edge. Its photo brightness is compressed (lum_gamma 0.35) so the evenly lathed metal stays bright.
+- 2026-11-22, approved by Kris: CRASH 16" (azcrash, new preset), from his photos and the project
+  session's mockups (round 2). Drawn at its true size: draw_scale 0.8 (16/20 of the common
+  on-screen radius, the camera distance in radii scaled by 1 / 0.8; other presets 1). Fully lathed
+  with a few faint shallow dents in the bow; a wide band of deep lathe grooves from 5.8" to 7.3" in
+  dark bronze (copper zone, copper_k 0.5), its grooves drawn in the band's colour; the bell, the
+  inner bow and the outer band an even light gold (flat photo table); no zone-edge rings
+  (edge_lines empty).
 """
 import math
 import numpy as np
@@ -164,6 +171,23 @@ CYMBALS = {
                   dent_zones=[(0.05, 0.18, 25, (0.014, 0.020), (0.55, 0.9), 0.8),      # a few on the bell
                               (0.22, 0.60, 120, (0.020, 0.030), (0.5, 0.85), 1.0),
                               (0.60, 0.93, 170, (0.024, 0.036), (0.45, 0.8), 1.0)]),
+    # 16" CRASH (Kris 2026-11-22, from his photos 950_top_big, 950_profile_big and 950_dc_big): a
+    # medium bell (edge 2.0"), a gently falling bow; lathed all over in bright gold, a few faint shallow
+    # hammer marks in the bow; a wide band of deep, bold lathe grooves from 5.8" to 7.3"; a smooth
+    # lathed band from there to the rim. Profile from the side photo (rim to rim 625 px = 16"): bell
+    # top 1.6" above the rim, the bell's edge at 2.0" and 0.88" high.
+    # Drawn at its true size (Kris 2026-11-22): draw_scale 0.8 = 16/20 of the common on-screen radius.
+    # The groove band dark bronze (copper, copper_k 0.5) with its grooves in the band's colour, the
+    # bell, the inner bow and the outer band an even light gold (Kris 2026-11-22).
+    'azcrash': dict(title='CRASH 16"', R=8.0, bell=0.25, hammer=None, hammer_zone=(0.28, 0.70), draw_scale=0.8,
+                  profile=[(0.0, 1.60), (0.5, 1.56), (1.0, 1.42), (1.5, 1.14), (2.0, 0.88), (2.6, 0.78),
+                           (4.0, 0.60), (5.5, 0.40), (7.0, 0.17), (8.0, 0.0)],
+                  lathe=[], fine_lathe=[], gold=[(0.02, 0.725), (0.915, 1.0)], gold_step=0.02,
+                  bell_grooves=(0.725, 0.915),          # the wide band of deep lathe grooves (not on the bell here)
+                  copper=[(0.725, 0.915)], copper_k=0.5, edge_lines=[],
+                  photo_lum=[0.0] * 4 + [100.0] * 196, bell_line=False, zone_edges=False, ring_step=5,
+                  dent_depth=0.7, dent_contrast=4.0, lum_gamma=1.0, lines_follow_dents=True,
+                  dent_zones=[(0.28, 0.70, 90, (0.012, 0.018), (0.55, 0.9), 0.7)]),
 }
 
 ROSE_DARK = np.array([58, 74, 112], np.float32)     # BGR: deep rose bronze
@@ -462,7 +486,7 @@ class Cymbal:
 # sampled finely (197 radial x 480 around) so the rings and spokes bend through each dent; the
 # lighting picks out the dent walls. The defaults are the approved values.
 # =====================================================================================
-DENTED = {'hammered', 'swish', 'raven', 'konstan', 'paperthin'}
+DENTED = {'hammered', 'swish', 'raven', 'konstan', 'paperthin', 'azcrash'}
 
 
 
@@ -491,6 +515,10 @@ class Cymbal2:
         self.bell_ring = int(np.argmin(np.abs(self.rf - b))); idx.add(self.bell_ring)
         self.ring_idx = sorted(idx)
         self.spoke_idx = list(range(0, nt, spoke_every))
+        # draw_scale (16" CRASH 0.8): the on-screen radius as a share of every other preset's; the
+        # camera distance, in cymbal radii, scaled by its inverse, so the cymbal is drawn smaller in the
+        # same place, seen from the same camera (default 1: as before)
+        ds = c.get('draw_scale', 1.0); scale = scale * ds; camd = camd / ds
         self.ELEV = math.radians(elev_deg); self.CX, self.CY, self.SCALE, self.CAMD = cx, cy, scale, camd
         self.pos_r = {'bell': 0.6 * b, 'bow': (b + 0.95) / 2, 'edge': 0.97}
         self.lathe_mask = np.zeros_like(self.RR, bool)
@@ -816,7 +844,10 @@ class Cymbal2:
             yt = 1 - (py - ytop) / max(ybot - ytop, 1)
             for q in range(0, len(px) - 1):
                 fq = 0.5 * (frl[q] + frl[q + 1]) if kind != 'E' else 1.0   # zone edges stay whole
-                if kind == 'g':
+                if kind == 'g' and any(z[0] <= r <= z[1] for z in self.c.get('copper', [])):
+                    # grooves in a copper (dark) zone take the zone's colour (16" CRASH)
+                    c = COPPER * self.c.get('copper_k', 1.0) * (0.45 + 0.35 * yt[q]) * inten; th = 2
+                elif kind == 'g':
                     c = GOLD * (0.30 + 0.32 * yt[q]) * inten; th = 2
                 elif kind == 'G':
                     c = GOLD * (0.50 + 0.35 * yt[q]) * inten; th = 1

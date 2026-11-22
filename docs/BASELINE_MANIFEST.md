@@ -188,6 +188,41 @@ Built 2026-11-21 in the project session from Kris's SPEAR captures (Bell V1-V3 a
 - Build-up (LF and MF) as Bettis and Swish; wander, stick click and NL off. No velocity tables: bell and bow use the hertz law (v^2).
 - No photo: the plugin draws the wireframe (`docs/ui/wireframe_reference.py`, `paperthin`), from Kris's photos of 2026-11-21.
 
+# Crash 16" (A Zildjian)
+
+Built 2026-11-22 in the project session from Kris's SPEAR captures (Bell V1 and Bow V1-V2 with the stick tip, Edge V1-V3 with the shoulder) by `build_preset.py` with the T60 refit (`refit_t60.py`; both kept in the project with their documentation, `SPEAR_Preset_Builder.md`, not in this repo), then calibrated by rendering the plugin against the recordings the captures came from (below). SPEAR files and recordings excluded. No baseline render check: the plugin is the reference (see `CLAUDE.md`).
+
+| File | MD5 |
+|---|---|
+| `presets/azcrash/AzCrash_Baseline1.json` | `303e6d9011d13409452962f8bab43685` |
+| `presets/azcrash/data/azcrash_bell_excitation_ratios.json` | `e438f54b7e349ca28a291e9767f9a20b` |
+| `presets/azcrash/data/azcrash_build_info.json` | `b1f66accd21091d51dada04d1dce7b74` |
+| `presets/azcrash/data/azcrash_edge_benv_trigger.json` | `12b196fa0d48141426c79bec6690d1bb` |
+| `presets/azcrash/data/azcrash_edge_excitation_ratios_neutral.json` | `f6f971dd825aa7e1bd89698a85ee73a4` |
+| `presets/azcrash/data/azcrash_edge_npz_data.json` | `071ebfda929f2cbcf2bdab6999c089ec` |
+| `presets/azcrash/data/azcrash_edge_vel_tilt.json` | `29e2b1d6e74224f8b757a8391b39f620` |
+| `presets/azcrash/data/azcrash_fingerprint.json` | `dc269fe3f123bd01bf07b509d83b21f0` |
+| `presets/azcrash/data/azcrash_pkt_data.json` | `a80a78f67c30fe86a34334f5bd3e9080` |
+
+## Notes
+
+- Bettis format, as RAVEN, KONSTAN and EXTRA PAPER THIN: fingerprint (900 modes: 706 from the bow captures, 194 seen only in the edge captures), measured bell ratios, neutral edge ratios, NPZ edge (3 rows) in the plugin's 22 bands with `edge_rms_correction`, edge pk_t by velocity, edge velocity tilt, and the all-zero trigger file that switches the NPZ envelope on.
+- **T60 refit from the bow captures, as KONSTAN** (see its notes): 617 modes refitted (median x2.1). Meant to be baked **without** V19's cap: 326 of the final T60s are above it.
+- **Calibrated by rendering (2026-11-22, Kris):** Kris heard the first build's edge as too high-pitched and its bow as too heavy in the low modes, though the captures are of this cymbal. The SPEAR resynthesis matched the recordings (Bow V1 = BeadSoft, Bow V2 = BeadMedium, Bell V1 = BellSoft, Edge V1-V3 = CrashSoft, CrashMedium, CrashLoud) within about 1 dB in every range; the built preset did not: the bow was short of 280-900 Hz with excess lows and highs in its tail, and the loud edge was about 5 dB short below 2.8 kHz with excess 7-18 kHz. So the plugin was rendered and compared with the recordings, and the data adjusted until they matched:
+  - **Bow:** mode exc per range from the 0.3-1.0 s spectrum (relative to the highs: 280-900 Hz up about 2.2x), T60 per range from the decay between 0.3-1.0 s and 1-3 s (changes within x0.5-2).
+  - **Bell:** the ratios of the modes the bell strikes (exc > 0) scaled per range against BellSoft, not clipped (34 above 1, at most 2.26); modes with exc 0 keep their built value.
+  - **Edge:** see the next point.
+  - **What remains:** the bow's first 150 ms lacks the strike's low thump and 4-11 kHz sizzle (one fixed decay per mode cannot make them); the bell's tail is thin at 280-900 Hz and bright on top.
+- **The edge (Kris, by ear, 2026-11-22):**
+  - **One set of mode weights (velw) on every row, Edge V2's.** Below 900 Hz the three captures' matched partials barely overlapped (similarity 0.08 between V2 and V3 below 280 Hz), and Kris heard the loudest edge as a different cymbal.
+  - **The modes below 112 Hz weighted from the SPEAR energy within ±4 % of each mode, frame by frame.** On a loud hit the lowest partial glides from about 75 to 111 Hz over the first second, so the builder's ±0.25 % match gave those modes almost no weight, and the loud edge lost its 60-100 Hz body (about 25 dB short of CrashLoud). The split between the sub-89 Hz modes and the 89-112 Hz modes is set per row.
+  - **Each row's band envelopes calibrated per band and time window** (0-0.2, 0.3-1.5 and 1.5-4 s) until the plugin matched its recording.
+  - **Rows at velocities 0.27, 0.522 and 1.0,** set so each row renders at its recording's level relative to the loudest (0.224, 0.5, 1.0: -13 and -6 dB). The edge's level rises steadily with velocity: -18, -13, -8, -5, -2.4 and 0 dB at 0.15, 0.27, 0.45, 0.6, 0.8 and 1.0.
+  - **Every row's envelope peaks at frame 1, band 7 (value 1.0).** The engine normalises a blend of two rows by the blend's peak (and the blended velw by its peak); with the rows peaking in different places, strikes between two rows came out up to about 5 dB louder than the rows themselves. With one set of velw and a shared envelope peak, they don't.
+- SPEAR level targets in `data/azcrash_build_info.json`: EDGE +18.1 dB above BOW (Edge V3 against Bow V2, first 500 ms). The only bell capture is soft (Bell V1, -9.66 dB against Bow V2, about level with the soft Bow V1): the bell trim target is -0.7 dB against BOW, as in the renders Kris heard.
+- Build-up (LF and MF) as Bettis and Swish; wander, stick click and NL off. No velocity tables: bell and bow use the hertz law (v^2).
+- No photo: the plugin draws the wireframe (`docs/ui/wireframe_reference.py`, `azcrash`), from Kris's photos of 2026-11-22.
+
 # HI-HAT (GF A60, 14")
 
 Built 2026-11-20 in the project session from Kris's SPEAR captures of a pair of 14" hats: HH Tip V1-V3 (stick tip on the bow, closed) and HH Shoulder Edge V1-V7 (stick shoulder on the edge; V1-V3 closed at three velocities, V4-V7 opened in steps, Kris 2026-11-20). SPEAR files excluded. Not a V19 preset: its own format (`cymbalis-hihat-1`), read by the hi-hat bake, with the strike model in `docs/hihat_reference.py`. No baseline render check: the plugin is the reference (see `CLAUDE.md`).
