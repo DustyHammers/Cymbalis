@@ -190,36 +190,36 @@ Built 2026-11-21 in the project session from Kris's SPEAR captures (Bell V1-V3 a
 
 # Crash 16" (A Zildjian)
 
-Built 2026-11-22 in the project session from Kris's SPEAR captures (Bell V1 and Bow V1-V2 with the stick tip, Edge V1-V3 with the shoulder) by `build_preset.py` with the T60 refit (`refit_t60.py`; both kept in the project with their documentation, `SPEAR_Preset_Builder.md`, not in this repo), then calibrated against the recordings the captures came from and its edge rebuilt by the onset specification (below), with Kris by ear the same day. SPEAR files and recordings excluded. No baseline render check: the plugin is the reference (see `CLAUDE.md`).
+Built 2026-11-22 in the project session from Kris's SPEAR captures (Bell V1 and Bow V1-V2 with the stick tip, Edge V1-V3 with the shoulder) by `build_preset.py` with the T60 refit (`refit_t60.py`; both kept in the project with their documentation, `SPEAR_Preset_Builder.md`, not in this repo), then calibrated by rendering the plugin against the recordings the captures came from (below). SPEAR files and recordings excluded. No baseline render check: the plugin is the reference (see `CLAUDE.md`).
 
 | File | MD5 |
 |---|---|
-| `presets/azcrash/AzCrash_Baseline1.json` | `6620e00f2e6a50053c40ac93cf82c641` |
+| `presets/azcrash/AzCrash_Baseline1.json` | `303e6d9011d13409452962f8bab43685` |
 | `presets/azcrash/data/azcrash_bell_excitation_ratios.json` | `e438f54b7e349ca28a291e9767f9a20b` |
-| `presets/azcrash/data/azcrash_build_info.json` | `827ea00585a06b99109f613bf5bd9677` |
-| `presets/azcrash/data/azcrash_edge_benv_trigger.json` | `5092ec7faa789dc8a7b6579705345645` |
+| `presets/azcrash/data/azcrash_build_info.json` | `b1f66accd21091d51dada04d1dce7b74` |
+| `presets/azcrash/data/azcrash_edge_benv_trigger.json` | `12b196fa0d48141426c79bec6690d1bb` |
 | `presets/azcrash/data/azcrash_edge_excitation_ratios_neutral.json` | `f6f971dd825aa7e1bd89698a85ee73a4` |
-| `presets/azcrash/data/azcrash_edge_npz_data.json` | `4d280258cecfbde5b7a1b596b75bdb9f` |
-| `presets/azcrash/data/azcrash_edge_vel_tilt.json` | `6b26a4c27bc7570d3ca0251610987986` |
-| `presets/azcrash/data/azcrash_fingerprint.json` | `ba4cc836468af826a1eac7145377130e` |
-| `presets/azcrash/data/azcrash_pkt_data.json` | `38559623da124219c1f5cfc56f1e2aba` |
+| `presets/azcrash/data/azcrash_edge_npz_data.json` | `071ebfda929f2cbcf2bdab6999c089ec` |
+| `presets/azcrash/data/azcrash_edge_vel_tilt.json` | `29e2b1d6e74224f8b757a8391b39f620` |
+| `presets/azcrash/data/azcrash_fingerprint.json` | `dc269fe3f123bd01bf07b509d83b21f0` |
+| `presets/azcrash/data/azcrash_pkt_data.json` | `a80a78f67c30fe86a34334f5bd3e9080` |
 
 ## Notes
 
 - Bettis format, as RAVEN, KONSTAN and EXTRA PAPER THIN: fingerprint (900 modes: 706 from the bow captures, 194 seen only in the edge captures), measured bell ratios, neutral edge ratios, NPZ edge (3 rows) in the plugin's 22 bands with `edge_rms_correction`, edge pk_t by velocity, edge velocity tilt, and the all-zero trigger file that switches the NPZ envelope on.
-- **T60 refit from the bow captures, as KONSTAN** (see its notes): 617 modes refitted (median x2.1). Meant to be baked **without** V19's cap.
-- **Bow and bell calibrated by rendering** against the recordings (Bow V1 = BeadSoft, Bow V2 = BeadMedium, Bell V1 = BellSoft): the SPEAR resynthesis matched the recordings within about 1 dB in every range, the built preset did not (the bow short of 280-900 Hz with excess lows and highs in its tail). Mode exc and T60 per range for the bow; the bell ratios of the modes the bell strikes (exc > 0) per range, not clipped (14 above 1, at most 2.26); modes with exc 0 keep their built value.
-- **Bow T60s limited to their band's measured decay** (`t60_band_measured_s` in `data/azcrash_build_info.json`): 247 bow modes. The calibration had stretched some, the worst four modes at 151-153 Hz to 364 s and modes near 2 kHz to 17-30 s (their band measures 6.9 s); Kris heard the bow's modes as distracting.
-- **The edge, rebuilt by the onset specification** (`ONSET_SPECIFICATION.md`, `PRESET_IMPLEMENTATION_SPEC.md`, the method Hammered Thin Ride's edge was made with; Kris, 2026-11-22). The builder departed from it in four places: band levels as root-sum-square instead of the sum of the partial amplitudes, partials banded frame by frame instead of by their mean frequency, no smoothing over the onset instead of 60 ms over the whole envelope, and mode weights from a ±0.25 % match instead of ±5 Hz. Here:
-  - **Envelopes** as the spec: per 20 ms frame, the sum of the SPEAR partial amplitudes per band by partial mean frequency, a 60 ms Gaussian over the whole envelope, normalised by the global peak.
-  - **Band levels** matched to each row's recording (CrashSoft, CrashMedium, CrashLoud) by one constant gain per band and row, found by rendering, so each envelope keeps its measured shape. Built purely by the spec, the loud edge came out 20 dB too strong at 7-18 kHz and 22 dB short in the lows (summed amplitudes make dense bands big).
-  - **Tails:** from 2.5 s each band decays at its recording's measured band decay, out to 30 s. SPEAR loses the quiet tail: from 3 s on the edge's mids and highs died 10-30 dB early.
-  - **Mode weights (velw) per row:** each band's norm from the ±5 Hz range search, the weights within the band from that row's recording (the energy near each mode in its first second).
-  - **Rows at velocities 0.42, 0.628 and 1.0,** set so each row renders at its recording's level relative to the loudest (-13 and -6 dB). The edge level rises steadily with velocity: -22, -16, -13, -10, -6, -3.6, -1.2 and 0 dB at 0.15, 0.3, 0.42, 0.5, 0.628, 0.75, 0.9 and 1.0.
-  - **Shared peaks:** every row's velw is 1.0 at mode 482 (3963.5 Hz) and its envelope 1.0 at frame 8, band 16. The engine normalises a blend of two rows (velw and envelope) by its peak; with the rows peaking in different places, strikes between two rows came out up to 6 dB louder than the rows themselves.
-- **Envelope window 30 s** (`edge_band_env_onset_s`, the envelopes run 30 s). At the end of its window an edge strike rings on from its unenveloped level: with the first version's 8.9 s window the ring came back +24 dB about 9 s after every edge hit (+40 dB with the spec envelopes). At 30 s what returns is 73 dB under the hit.
-- **Levels:** the recordings put CrashLoud 18.5 dB and CrashMedium 12.0 dB above BeadMedium (RMS, first 500 ms); the SPEAR target is EDGE +18.1 dB above BOW. With BOW at Nova's level, the 0.9 peak cap holds EDGE about level with BOW, so the plugin should keep EDGE at its capped trim and bring BOW and BELL down to it (the PR's prompt).
-- SPEAR level targets in `data/azcrash_build_info.json`. The only bell capture is soft (Bell V1, about level with the soft Bow V1): the bell trim target is -0.7 dB against BOW.
+- **T60 refit from the bow captures, as KONSTAN** (see its notes): 617 modes refitted (median x2.1). Meant to be baked **without** V19's cap: 326 of the final T60s are above it.
+- **Calibrated by rendering (2026-11-22, Kris):** Kris heard the first build's edge as too high-pitched and its bow as too heavy in the low modes, though the captures are of this cymbal. The SPEAR resynthesis matched the recordings (Bow V1 = BeadSoft, Bow V2 = BeadMedium, Bell V1 = BellSoft, Edge V1-V3 = CrashSoft, CrashMedium, CrashLoud) within about 1 dB in every range; the built preset did not: the bow was short of 280-900 Hz with excess lows and highs in its tail, and the loud edge was about 5 dB short below 2.8 kHz with excess 7-18 kHz. So the plugin was rendered and compared with the recordings, and the data adjusted until they matched:
+  - **Bow:** mode exc per range from the 0.3-1.0 s spectrum (relative to the highs: 280-900 Hz up about 2.2x), T60 per range from the decay between 0.3-1.0 s and 1-3 s (changes within x0.5-2).
+  - **Bell:** the ratios of the modes the bell strikes (exc > 0) scaled per range against BellSoft, not clipped (34 above 1, at most 2.26); modes with exc 0 keep their built value.
+  - **Edge:** see the next point.
+  - **What remains:** the bow's first 150 ms lacks the strike's low thump and 4-11 kHz sizzle (one fixed decay per mode cannot make them); the bell's tail is thin at 280-900 Hz and bright on top.
+- **The edge (Kris, by ear, 2026-11-22):**
+  - **One set of mode weights (velw) on every row, Edge V2's.** Below 900 Hz the three captures' matched partials barely overlapped (similarity 0.08 between V2 and V3 below 280 Hz), and Kris heard the loudest edge as a different cymbal.
+  - **The modes below 112 Hz weighted from the SPEAR energy within ±4 % of each mode, frame by frame.** On a loud hit the lowest partial glides from about 75 to 111 Hz over the first second, so the builder's ±0.25 % match gave those modes almost no weight, and the loud edge lost its 60-100 Hz body (about 25 dB short of CrashLoud). The split between the sub-89 Hz modes and the 89-112 Hz modes is set per row.
+  - **Each row's band envelopes calibrated per band and time window** (0-0.2, 0.3-1.5 and 1.5-4 s) until the plugin matched its recording.
+  - **Rows at velocities 0.27, 0.522 and 1.0,** set so each row renders at its recording's level relative to the loudest (0.224, 0.5, 1.0: -13 and -6 dB). The edge's level rises steadily with velocity: -18, -13, -8, -5, -2.4 and 0 dB at 0.15, 0.27, 0.45, 0.6, 0.8 and 1.0.
+  - **Every row's envelope peaks at frame 1, band 7 (value 1.0).** The engine normalises a blend of two rows by the blend's peak (and the blended velw by its peak); with the rows peaking in different places, strikes between two rows came out up to about 5 dB louder than the rows themselves. With one set of velw and a shared envelope peak, they don't.
+- SPEAR level targets in `data/azcrash_build_info.json`: EDGE +18.1 dB above BOW (Edge V3 against Bow V2, first 500 ms). The only bell capture is soft (Bell V1, -9.66 dB against Bow V2, about level with the soft Bow V1): the bell trim target is -0.7 dB against BOW, as in the renders Kris heard.
 - Build-up (LF and MF) as Bettis and Swish; wander, stick click and NL off. No velocity tables: bell and bow use the hertz law (v^2).
 - No photo: the plugin draws the wireframe (`docs/ui/wireframe_reference.py`, `azcrash`), from Kris's photos of 2026-11-22.
 
