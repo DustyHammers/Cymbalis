@@ -18,13 +18,6 @@ must give it vel_0.6_db and vel_0.3_db of -DB (tools/apply_tuning.py, applied fi
 its strikes at velocity 0.6 and below play exactly as with the measured trim and the extra
 level comes in between 0.6 and 1.0. --boost-reason records why. EXTRA PAPER THIN 24"'s
 EDGE (docs/PORT_MAP.md, "Extra Paper Thin Ride 24"").
-
---anchor SLOT keeps SLOT, whose SPEAR target the peak limit capped, at its capped trim and
-lowers every other slot by D = its SPEAR target - its capped level against BOW, so that SLOT
-sits at its target against BOW and the others keep their levels against each other (they
-all go down by D, so their peaks only fall). --anchor-reason records why. CRASH 16"'s EDGE
-(docs/PORT_MAP.md, "Crash 16""): with BOW at Nova's level the cap held EDGE about level
-with BOW, where its recordings put it 18 dB above.
 """
 import argparse
 import json
@@ -42,14 +35,7 @@ def main():
     ap.add_argument('--boost', action='append', default=[], metavar='SLOT=DB',
                     help='raise SLOT\'s trim by DB; its velocity curve must be -DB at 0.6 and 0.3')
     ap.add_argument('--boost-reason', default='', help='why the boost (recorded in level_trim)')
-    ap.add_argument('--anchor', metavar='SLOT',
-                    help='keep SLOT (capped) at its trim and lower every other slot by its target minus its capped level')
-    ap.add_argument('--anchor-reason', default='', help='why the anchor (recorded in level_trim)')
     args = ap.parse_args()
-    if args.anchor and not args.anchor_reason:
-        raise SystemExit('--anchor needs --anchor-reason')
-    if args.anchor and args.boost:
-        raise SystemExit('--anchor and --boost do not go together')
     boosts = {}
     for b in args.boost:
         name, _, db = b.partition('=')
@@ -78,14 +64,6 @@ def main():
                              'apply the tuning file first')
     if sorted(names) != sorted(trims['slots']):
         raise SystemExit(f'the trims are for slots {sorted(trims["slots"])}, the bake has {sorted(names)}')
-    lower = 0.0
-    if args.anchor:
-        a = trims['slots'].get(args.anchor)
-        if a is None:
-            raise SystemExit(f'--anchor {args.anchor}: the trims have no such slot')
-        if not a.get('capped'):
-            raise SystemExit(f'--anchor {args.anchor}: its SPEAR target was not capped, so nothing to lower to')
-        lower = float(a['spear_target_db']) - float(a['capped_level_db'])  # D, dB
     for s in bake['slots']:
         t = trims['slots'][s['name']]
         if float(t['position']) != float(s['position']):
@@ -128,21 +106,6 @@ def main():
             if 'peak' in t:
                 # The peak at velocity 1.0 with the boost (the curve is 0 dB there).
                 lt['peak_with_boost'] = float(t['peak']) * 10.0 ** (db / 20.0)
-        if args.anchor and s['name'] == args.anchor:
-            # Its capped trim stays; the others come down by D (below).
-            lt['anchor'] = True
-            lt['others_lowered_by_db'] = lower
-            lt['level_vs_bow_db'] = float(t['level_db']) + lower  # = its SPEAR target
-            lt['anchor_reason'] = args.anchor_reason
-        elif args.anchor:
-            lt['gain_db'] = round(float(t['gain_db']) - lower, 2)
-            lt['lowered_by_db'] = lower
-            lt['lowered_from_gain_db'] = round(float(t['gain_db']), 2)
-            lt['lowered_for'] = args.anchor
-            lt['anchor_reason'] = args.anchor_reason
-            lt['level_db_lowered'] = float(t['level_db']) - lower  # against the reference
-            if 'peak' in t:
-                lt['peak_lowered'] = float(t['peak']) * 10.0 ** (-lower / 20.0)
         s['level_trim'] = lt
 
     with open(args.bake, 'w') as f:
