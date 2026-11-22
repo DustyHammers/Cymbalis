@@ -577,7 +577,7 @@ These are plugin mechanisms; none is a port of Python. Kris tunes them by ear in
     - **The value.** `edge_voice_from_bow` (0–100 %, per cymbal; not a host parameter). Within each envelope band, each mode's weight α grows with its baked T60 against the band's median (0 at half the median or less, 1 at twice or more, over the modes with `exc_norm` > 0); the long-ringing modes move from the edge's velw pattern to the bow's `exc_norm` pattern by a·α, and the band is scaled back to its velw norm at every NPZ velocity. The short-ringing modes keep the edge's pattern, and the envelopes are untouched, so the crash, the onset and the velocity behaviour stay as recorded.
     - **Per strike.** `FastEngine` keeps its own velw table (the bake's at 0 %) and reads it in `npzCoupling` at the strike. A new value's table is computed off the audio thread and handed over with the other tuning values; it applies from the next strike.
     - **At 100 %**, of the 20 longest-ringing edge modes, the bow's share 14 on the 602 (was 2), 6 on Swish (was 0) and 10 on Konstan (was 2; 3 before its T60 refit). No band has α = 1 for most of its modes (the most is 43 %, the 602's 566–713 Hz band), so no band takes the bow's pattern whole.
-    - **Starting values.** Konstan starts at 100 %, Kris's choice by ear from renders in the project session (2026-10-29), with EDGE re-trimmed at 100 %; the 602, Bettis, Swish and Raven stay at 0 %. The 602 was tried at 100 % in the build and set back to 0 % by Kris by ear (2026-10-31): he prefers its edge as it was.
+    - **Starting values.** Konstan starts at 100 %, Kris's choice by ear from renders in the project session (2026-10-29), with EDGE re-trimmed at 100 %; the 602, Bettis, Swish, Raven and Extra Paper Thin stay at 0 %. The 602 was tried at 100 % in the build and set back to 0 % by Kris by ear (2026-10-31): he prefers its edge as it was.
     - **Neutral.** At 0 % every preset plays bit for bit as before (`tools/cymbalis_identity`, in memory).
     - **Cost.** None per strike or block: the table replaces the bake's. Per value change, one pass over the velw table on the message thread.
 
@@ -911,6 +911,65 @@ Added 2026-10-28. Konstan was built from Kris's SPEAR captures (`docs/BASELINE_M
 - **BELL and EDGE stay below their SPEAR targets** once capped (BELL +1.20 dB against +4.72, EDGE −0.22 dB against +13.5 at EDGE VOICE FROM BOW 100 %; decision 5).
 - **BOW peaks at 1.02 at velocity 1.0** before the output gain (99th percentile, with its trim; 1.23 before the T60 refit): BOW is never capped, by the rule.
 - **The pk_t ramps have no effect** with the envelope on (as for Raven): the edge pk_t and the edge velocity tilt are inaudible, and bow strikes never ramp. With EDGE ONSET ENVELOPE off, edge modes ramp in over up to 6.9 s (the edge pk_t's longest).
+- **The calibration does not see the envelope** (as for the other NPZ presets); the trims make up for the level.
+
+## Extra Paper Thin Ride 24"
+
+Added 2026-11-21. EXTRA PAPER THIN 24" was built from Kris's SPEAR captures (`docs/BASELINE_MANIFEST.md`, Extra Paper Thin Ride 24") in the Bettis format, as Raven and Konstan, and needs no new engine code: every mechanism it uses is one Konstan already has, its uncapped T60s included. Its preset JSON differs from Konstan's only in its data files, its edge envelope window (`edge_band_env_onset_s` 14.2 s, Konstan 7.6 s) and its `edge_rms_correction`. It is baked with `nl_amount = 0`. Every other preset bakes and plays bit for bit as before (checked: re-baked with the new tools they are identical but for `created_utc` and the build machine's Python string, the tuning blocks and trims that re-baking drops aside, and `tools/cymbalis_identity` finds the engine's output identical to main's in memory for every preset).
+
+### What Paper Thin uses
+
+| | Paper Thin (`PaperThin_Baseline1.json`) |
+|---|---|
+| Modes | 900, 38.1 Hz–19.1 kHz (none above 22.05 kHz). 781 seen in at least two bow captures; 119 seen only in the edge captures, with `exc` 0: they sound only on edge strikes, through the NPZ velw. Built with `--low-wash`: up to 24 edge modes in each band below 400 Hz, the crash wash |
+| Velocity response | `hertz_vel_scale`, `tau_ref_ms` 0.2 (no participation tables) |
+| Edge strikes (`edge_frac > 0.1`) | NPZ velw coupling (3 velocities, 0.066, 0.283 and 1.0) and the NPZ band envelope, switched on by the all-zero trigger file: 22 bands, exactly the plugin's thirds, 13.7 s of data (685 frames), 14.2 s window, `edge_rms_correction` per band, level exponent `vel_gain_power` 1.0 |
+| Bow and bell strikes | standard coupling with the neutral edge ratios (all 1) and the bell ratios, measured from Bell V1–V3 against Bow V2–V3, as position weights |
+| Onset ramp data | bow pk_t, velocity-bracketed edge pk_t (3 velocities), edge velocity tilt (4 bands) |
+| Contact | none (`permode_contact` false, `tip_contact_ms` 0): instantaneous strikes |
+| MF / LF accumulators | as Raven and Konstan (MF in boost mode, depth 0.4, tau 3 s, max 1.4, 500 Hz–4 kHz; bow 1, edge 1, bell 0.2. LF in boost mode, depth 0.2, tau 3 s, max 1.7, cutoff 1.5 kHz; bow 0.5, edge 1, bell 0.1) |
+| Wander, `vel_len_tilt`, onset gains, bloom, sparkle, stick click, attack noise, NL, edge level boost, rate jitter, hammering tilt | off |
+
+**The edge captures used: V1, V2 and V6** (`data/paperthin_build_info.json`, `edge_captures_used`; velocities 0.066, 0.283 and 1.0, from their levels). The builder left out Edge V3 and V5. V5 is quieter than V3, so the captures' velocities would not rise in order. V3 starts with a strong 283 Hz swell; since each NPZ envelope is normalised to its loudest band, a medium edge then came out 3.6 dB quieter than a soft one. With V1, V2 and V6 the edge rises evenly with velocity. The bake takes the NPZ data as it is; nothing in the plugin chooses captures.
+
+### Bake and plugin
+
+- **Bake** (`tools/bake_preset.py --preset paperthin`; `tools/ab_common.py` `PRESETS`): `BELL` (1.0), `BOW` (0.5) and `EDGE` (0.0), no overlays, and the copies `BELL_SHOULDER` (`bell_shoulder`, from `BELL`) and `BOW_SHOULDER` (`bow_shoulder`, from `BOW`) (`COPIED_ENTRIES`), as Raven and Konstan. No `ENVELOPE_ON` entry: the trigger file switches the envelope on (`edge_npz.envelope_active` true). Its T60s are baked without V19's cap (`T60_UNCAPPED` = {konstan, paperthin}; below). Every entry has the same calibration scalar, 0.1202 (0.1228 with the capped T60s). 5 slots, 900 modes.
+- **Preset** EXTRA PAPER THIN 24", id `paperthin`, after RAVEN and before KONSTAN CRASH 18" (`plugin/SlotTable.h`): RAVEN's and KONSTAN's rows (`docs/UI_SPEC.md` section 8); its wireframe cymbal `kPaperThinShape` (section 11), whose bell radius, 0.20, is the hit display's bell zone (section 10).
+
+### Live-engine decisions for Paper Thin
+
+1. **Slots.** As Raven and Konstan: BELL and BELL2 play `bell` (TIP) or `bell_shoulder` (SHOULDER); BOW and BOW2 play `bow` (TIP) or `bow_shoulder` (SHOULDER); EDGE plays `edge` (SHOULDER, fixed). BELL and BOW start on TIP, BELL2 and BOW2 on SHOULDER (`docs/UI_SPEC.md` section 8). There are no shoulder captures for the bell and bow: the copies are tip data, to be tuned by ear (`docs/TUNING.md`; they have the NOVA SHOULDER PROFILE button, the bell profile on `bell_shoulder` and the bow profile on `bow_shoulder`).
+2. **Level trims**, as for Raven and Konstan: velocity 1.0, the mean level of the first 500 ms. BOW is matched to Nova BOW (tip) and never capped. BELL and EDGE go to their SPEAR targets (`data/paperthin_build_info.json`: BELL +8.69 dB and EDGE +15.77 dB above BOW, the loudest captures), capped where one hit (99th percentile of 1024 hits) would peak above 0.9 before the output gain. `bell_shoulder` takes BELL's target; the copies come out with their sources' trims. The tuning block (below) was applied first, so the cap is `--peak-limit 0.25365` (0.9 × 10^(−11/20), `docs/BUILDS.md`): `tools/cymbalis_trims --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target BELL=8.69 --spear-target BELL_SHOULDER=8.69 --spear-target EDGE=15.77 --peak-limit 0.25365`. Each bake entry records its target, cap and reason (`slots[].level_trim`).
+
+   | Entry | SPEAR target vs BOW | Trim | Level vs BOW | Peak of one hit with trim (99th percentile), before the output gain | Capped |
+   |---|---|---|---|---|---|
+   | BOW | 0 dB | −8.25 dB | 0 dB | 0.99 | no (BOW) |
+   | BOW_SHOULDER | 0 dB (BOW's) | −8.25 dB | 0 dB | 0.99 | no (BOW's target) |
+   | BELL | +8.69 dB | +2.32 dB | +0.03 dB | 0.90 | yes (+10.98 dB would peak at 2.44) |
+   | BELL_SHOULDER | +8.69 dB (BELL's) | +2.32 dB | +0.03 dB | 0.90 | yes (as BELL) |
+   | EDGE | +15.77 dB | +4.46 dB | −0.43 dB | 0.90 | yes (+20.66 dB would peak at 5.8) |
+
+   Its spec gives `--peak-limit 0.9` and the project session's measurement, EDGE capped about +10.6 dB above BOW. That is what the trims tool gives on a bake without the tuning block, as for Konstan (decision 2 there): measured so, EDGE comes out +10.57 dB above BOW and BELL at its target, but BOW is trimmed −19.25 dB to meet Nova's BOW, which carries its −11 dB, and with the block added the whole preset would sit 11 dB under Nova. EDGE's trim, +4.46 dB, is the same either way. With `--peak-limit 0.9` and the block in place, BELL would reach its target (trim +10.98 dB) and EDGE +10.57 dB above BOW (trim +15.46 dB), with single hits peaking at up to 3.2 before the output gain, 11 dB above every other preset's cap. In `cymbalis_bench`'s pattern (60 s at 44.1 kHz) the output would peak at 1.41; with the trims above it peaks at 0.51, the other presets at 0.21–0.76. The trims are the bake's numbers, for Kris to set by ear.
+3. **Tuning block** (`tools/apply_tuning.py`), as Raven's and Konstan's: `output_gain_db` −11.0, `hit_variation` true, and on `bell`, `bow`, `bell_shoulder` and `bow_shoulder` the velocity curve that makes the Hertz law's v² linear (`vel_0.6_db` 4.437, `vel_0.3_db` 10.458). EDGE is not touched: its NPZ captures are already linear in velocity. EDGE VOICE FROM BOW is not in the block, so it starts at 0 %, as Raven's.
+4. **Seed.** The strike-phase sequence starts from Paper Thin's seed, 13 (Raven's and Konstan's too).
+5. **The bow's decay times come from its recordings, without V19's T60 cap**, as Konstan's (its decision 5).
+   - **The refit** (`docs/BASELINE_MANIFEST.md`, Extra Paper Thin Ride 24"; `data/paperthin_build_info.json`, `t60_refit`). Konstan's method, on Bow V1–V3: 655 of the 781 bow modes got T60s fitted from the captures (median ×2.56, each limited to ×1/3–×3). The fingerprint holds every mode's effective T60: the refit, or the old value after V19's cap for the others.
+   - **No cap.** `paperthin` is in `T60_UNCAPPED`, so each mode's T60 is max(fingerprint `t60` × `t60_scale`, 0.02), the contact-phase mode step is recomputed from it, and so is the calibration scalar (0.12276 → 0.12016).
+   - **What that changes in the bake.** 355 of the 900 T60s differ from the capped ones, 349 of them by more than 0.01 s. Of the other six, five (four of them edge-only modes) differ by under 0.0001 s, the fingerprint's four decimals against V19's interpolated cap, and one (9435.2 Hz) by 0.007 s. The manifest counts 350 above the cap. The bow's modes above 1 kHz have a median T60 of 2.72 s (2.30 s with the cap). 32 modes ring longer than 12 s, the longest 24.0 s at 254.9 Hz and 20.2 s at 763.7 Hz. The captures' band decays are 10–27 s from 180 Hz to 2 kHz (the manifest), so a long ring is the cymbal's.
+
+### Things in the Paper Thin data or engine that look wrong (ported as they are)
+
+- **Eleven bow modes between 1.6 and 2.8 kHz ring 15.6–19.8 s**, 3.0–4.3 × V19's cap there (4.3–5.3 s), and longer than their bands' measured decays (12.1, 10.8 and 9.4 s for 1.4–1.8, 1.8–2.3 and 2.3–2.9 kHz): for example 2388.0 Hz at 19.8 s, 1745.0 Hz at 19.4 s and 1782.3 Hz at 19.2 s. The refit limits each mode to ×3 its old T60, so their old fits were already above the cap.
+- **The lowest three bands' T60 calibration factors are exactly 6.0** (`t60_band_factor`), against measured band decays of 116, 62 and 60 s (89–141 Hz), which looks like a limit in the builder, as Konstan's band 0.
+- **`edge_rms_correction` is at its cap in the four lowest bands** (×4, 89–178 Hz). By the velw norms (mean over the three velocities) they would need about ×8.1, ×5.1, ×11.3 and ×7.5, so on edge strikes they are about 6, 2, 9 and 5.5 dB below their SPEAR level. Every band has modes, and every band has velw at all three velocities (none of Raven's or Konstan's gaps).
+- **The top velocities bunch** (the manifest): from velocity 0.6 to 1.0 the rendered edge rises about 1 dB, against 11 dB from V2 to V6 in the captures, as Raven's. With three captures, everything between 0.283 and 1.0 is one interpolation.
+- **The NPZ envelopes are a little shorter than the window**: 13.7 s of data for a 14.2 s window; the last frame is held to the window's end, as for Raven and Konstan.
+- **76 modes have bell ratio 0**, 28 of them with `exc` above 0: a bell strike leaves those out; a bow strike plays them.
+- **17 modes are below the lowest band (89 Hz)**, 15 of them excited, from 38.1 Hz.
+- **BELL and EDGE stay well below their SPEAR targets** once capped (BELL +0.03 dB against +8.69, EDGE −0.43 dB against +15.77; decision 2).
+- **BOW peaks at 0.99 at velocity 1.0** before the output gain (99th percentile, with its trim): BOW is never capped, by the rule.
+- **The pk_t ramps have no effect** with the envelope on (as for Raven and Konstan): the edge pk_t and the edge velocity tilt are inaudible, and bow strikes never ramp. With EDGE ONSET ENVELOPE off, edge modes ramp in over up to 13.25 s (the edge pk_t's longest).
 - **The calibration does not see the envelope** (as for the other NPZ presets); the trims make up for the level.
 
 ## Hi-hat

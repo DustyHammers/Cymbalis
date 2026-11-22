@@ -249,6 +249,13 @@ struct CymbalShape
     // Bell down (the hi-hat's bottom cymbal, the reference's _hh_make with invert): its heights
     // and dents mirrored, below z 0.
     bool inverted = false;
+    // 2026-11-21 (EXTRA PAPER THIN 24"): the copper colour scaled by copperK (copper_k; 1: as
+    // SWISH's); the bright zone-edge rings drawn exactly edgeLines (edge_lines) when hasEdgeLines,
+    // in place of every gold zone's edges and the goldLines.
+    double copperK = 1.0;
+    bool hasEdgeLines = false;
+    std::array<double, 2> edgeLines {};
+    int numEdgeLines = 0;
     // The hi-hat (hihat_draw): this shape is its top cymbal, which rises with the pedal and
     // carries the clutch and rod; `lower` is its bottom cymbal, drawn under it and hidden where
     // the top cymbal is in front of it. nullptr for a single cymbal.
@@ -422,6 +429,53 @@ inline constexpr CymbalShape kKonstanShape = [] {
     s.dents.zones = { { { 0.30, 0.70, 300, 0.016, 0.024, 0.5, 0.9, 0.8 },     // the bow
                         { 0.70, 0.97, 260, 0.020, 0.032, 0.45, 0.85, 1.0 } } }; // towards the edge
     s.dents.numZones = 2;
+    s.dents.linesFollowDents = true;
+    return s;
+}();
+
+// EXTRA PAPER THIN 24" (2026-11-21, approved by Kris from the project session's mockups, round 2;
+// the reference's paperthin, from his photos): conical, a small defined bell (its edge 2.4", its top
+// 2.6" above the rim), the bow a nearly straight cone to the rim; lathed all over in an even gold
+// (a flat brightness table); hand-hammered in sparse, deep dents pressed into the mesh (a few on the
+// bell, more towards the edge), the lathe lines following them; at the edge two dark patina bands
+// (copper, darker than SWISH's) with a thin bright lathed ring between them.
+inline constexpr std::array<double, 200> kPaperThinPhotoLum = [] {
+    std::array<double, 200> a {};
+    for (std::size_t k = 4; k < a.size(); ++k)
+        a[k] = 100.0;
+    return a;
+}();
+
+inline constexpr CymbalShape kPaperThinShape = [] {
+    CymbalShape s {};
+    s.key = "paperthin";
+    s.R = 12.0;
+    s.bell = 0.20;
+    s.profile = { { { 0.0, 2.60 }, { 0.5, 2.50 }, { 1.0, 2.31 }, { 1.5, 2.11 }, { 2.0, 1.94 }, { 2.6, 1.79 }, { 3.2, 1.70 },
+                    { 4.8, 1.45 }, { 6.6, 1.15 }, { 8.4, 0.78 }, { 10.2, 0.37 }, { 11.4, 0.12 }, { 12.0, 0.0 } } };
+    s.numProfile = 13;
+    s.hammer = Hammer::none;
+    s.hammerZone = { 0.04, 0.94 };
+    s.gold = { { { 0.02, 0.945, 1.0 }, { 0.975, 0.982, 1.0 } } };
+    s.numGold = 2;
+    s.zoneEdges = false;
+    s.goldStep = 0.022;
+    s.copper = { { { 0.945, 0.975 }, { 0.982, 1.0 } } }; // the two dark patina bands
+    s.numCopper = 2;
+    s.copperK = 0.6;
+    s.hasEdgeLines = true;
+    s.edgeLines = { { 0.9785 } }; // the thin bright ring between them
+    s.numEdgeLines = 1;
+    s.photoLum = &kPaperThinPhotoLum;
+    s.bellLine = false;
+    s.dented = true;
+    s.dents.ringStep = 5;
+    s.dents.depth = 2.6;
+    s.dents.contrast = 12.0;
+    s.dents.zones = { { { 0.05, 0.18, 25, 0.014, 0.020, 0.55, 0.9, 0.8 },      // a few on the bell
+                        { 0.22, 0.60, 120, 0.020, 0.030, 0.5, 0.85, 1.0 },
+                        { 0.60, 0.93, 170, 0.024, 0.036, 0.45, 0.8, 1.0 } } };
+    s.dents.numZones = 3;
     s.dents.linesFollowDents = true;
     return s;
 }();

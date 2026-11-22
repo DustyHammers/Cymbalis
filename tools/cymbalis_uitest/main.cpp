@@ -23,7 +23,8 @@
 //   shoulder  (after preset) click the BELL stick box, then SHOULDER  -> stick_hammered_thin_ride_BELL SHOULDER
 //   swish     click the CYMBAL box, then SWISH (the fourth)          -> preset swish
 //   raven     click the CYMBAL box, then RAVEN (the fifth)           -> preset raven
-//   konstan   click the CYMBAL box, then KONSTAN CRASH 18" (the sixth) -> preset konstan
+//   paperthin click the CYMBAL box, then EXTRA PAPER THIN 24" (the sixth) -> preset paperthin
+//   konstan   click the CYMBAL box, then KONSTAN CRASH 18" (the seventh) -> preset konstan
 //   hihat     click the CYMBAL box, then HI-HAT (the seventh)          -> preset hihat
 //   hihatplay (on HI-HAT) MIDI through the host into the plugin, on the session's channel and
 //             pedal CC: notes 42 and 46 (its rows' defaults, BOW and EDGE), each must sound;
@@ -88,6 +89,9 @@
 //   profile      (on SWISH) click NOVA SHOULDER PROFILE, the first in the list: bow_shoulder's
 //                                                                    -> bow_shoulder's band gains,
 //                attack gains and attack time are Nova's bow profile (ShoulderProfiles.h)
+//   ptprofile    (on EXTRA PAPER THIN 24") click NOVA SHOULDER PROFILE on bell_shoulder's row,
+//                then on bow_shoulder's                               -> bell_shoulder's band gains,
+//                attack gains and attack time are Nova's bell profile, bow_shoulder's its bow profile
 //   noprofile    (on NOVA RIDE) look for NOVA SHOULDER PROFILE down the list -> none
 //   hihattuning  (on HI-HAT) the list shows the values that act on it and not the others
 //                (stick click weights, position spread, EDGE VOICE FROM BOW, tau_ref)
@@ -879,6 +883,48 @@ private:
                 return bands && attack && soft && time ? juce::String ("bow profile") : juce::String ("not the bow profile");
             };
         }
+        else if (name == "ptprofile")
+        {
+            s.actions = { [this] {
+                             actionError = cymbalis::uitest::clickTuningButtonBeside (*editor, "Band gains, attack gains and time: Nova's bell",
+                                                                                      "NOVA SHOULDER PROFILE");
+                         },
+                          wait,
+                          [this] {
+                              if (actionError.isEmpty())
+                                  actionError = cymbalis::uitest::clickTuningButtonBeside (*editor, "Band gains, attack gains and time: Nova's bow",
+                                                                                           "NOVA SHOULDER PROFILE");
+                          },
+                          wait, wait };
+            s.key = "bell_shoulder, bow_shoulder";
+            s.expected = "bell and bow profiles";
+            s.probe = [this] {
+                if (actionError.isNotEmpty())
+                    return actionError;
+                const auto arts = currentTuning (sessionNow())["effective"]["articulations"];
+                auto same = [] (const juce::var& v, const std::array<double, cymbalis::kExcitationBands>& want) {
+                    const auto* arr = v.getArray();
+                    if (arr == nullptr || arr->size() != (int) want.size())
+                        return false;
+                    for (int j = 0; j < arr->size(); ++j)
+                        if (std::abs ((double) (*arr)[j] - want[(size_t) j]) > 1e-9)
+                            return false;
+                    return true;
+                };
+                auto has = [&] (const char* id, const cymbalis::tuning::NovaShoulderProfile& p) {
+                    const auto a = arts[id];
+                    const bool bands = same (a["band_gains_db"], p.bandDb), attack = same (a["attack_band_gains_db"], p.attackDb),
+                               soft = same (a["attack_band_gains_db_soft"], p.attackDb);
+                    const bool time = ! a["attack_time_ms"].isVoid() && std::abs ((double) a["attack_time_ms"] - p.attackMs) < 1e-9;
+                    std::printf ("      %s: band gains %s, attack gains %s / %s, attack time %s ms\n", id, bands ? p.name : "other",
+                                 attack ? p.name : "other", soft ? p.name : "other", a["attack_time_ms"].toString().toRawUTF8());
+                    return bands && attack && soft && time;
+                };
+                const bool bell = has ("bell_shoulder", cymbalis::tuning::kNovaShoulderBell);
+                const bool bow = has ("bow_shoulder", cymbalis::tuning::kNovaShoulderBow);
+                return bell && bow ? juce::String ("bell and bow profiles") : juce::String ("not the profiles");
+            };
+        }
         else if (name == "noprofile")
         {
             s.actions = { [this] { actionError = cymbalis::uitest::tuningShows (*editor, "NOVA SHOULDER PROFILE"); }, wait };
@@ -980,8 +1026,8 @@ private:
         }
         else if (name == "hihat")
         {
-            // The same list; HI-HAT is its seventh row.
-            s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + 6.0f * 40.0f + 20.0f), wait };
+            // The same list; HI-HAT is its eighth row.
+            s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + 7.0f * 40.0f + 20.0f), wait };
             s.key = "preset";
             s.expected = "hihat";
         }
@@ -1287,10 +1333,17 @@ private:
             s.expected = "none";
             s.probe = [this] { return actionError; };
         }
+        else if (name == "paperthin")
+        {
+            // The same list; EXTRA PAPER THIN 24" is its sixth row.
+            s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + 5.0f * 40.0f + 20.0f), wait };
+            s.key = "preset";
+            s.expected = "paperthin";
+        }
         else if (name == "konstan")
         {
-            // The same list; KONSTAN CRASH 18" is its sixth row.
-            s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + 5.0f * 40.0f + 20.0f), wait };
+            // The same list; KONSTAN CRASH 18" is its seventh row.
+            s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + 6.0f * 40.0f + 20.0f), wait };
             s.key = "preset";
             s.expected = "konstan";
         }

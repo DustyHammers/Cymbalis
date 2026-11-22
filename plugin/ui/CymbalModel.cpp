@@ -226,7 +226,7 @@ Rgb bronze (double shade, double ytl, Metal metal, double factor, double dent, d
         double c = dark + (bright - dark) * base;
         switch (metal)
         {
-            case Metal::copper: c = std::min (copper * (0.95 + 0.55 * light), 1.0); break;
+            case Metal::copper: c = std::min (copper * factor * (0.95 + 0.55 * light), 1.0); break;
             case Metal::tint: c = c * 0.15 + gold * (0.62 + 0.38 * light) * factor; break;
             case Metal::gold: c = c * 0.25 + gold * (0.42 + 0.48 * light) * factor; break;
             case Metal::lathe: c = c * 0.55 + lathed * (0.30 + 0.35 * light); break;
@@ -367,7 +367,10 @@ Metal Geometry::metalAt (double r, double& factor) const noexcept
     factor = 1.0;
     for (int k = 0; k < shape.numCopper; ++k)
         if (shape.copper[(size_t) k].from <= r && r <= shape.copper[(size_t) k].to)
+        {
+            factor = shape.copperK; // copper_k: its colour scaled (1 but on EXTRA PAPER THIN 24")
             return Metal::copper;
+        }
     if (shape.hasTint && shape.tint.from <= r && r <= shape.tint.to)
     {
         factor = lum (r);
@@ -747,15 +750,18 @@ void Geometry::buildSurface()
                 surface.push_back (vertexAt (r, twoPi * e / 48.0, kind, param, r));
     };
     // The edge lines: the gold zones' bounds between `low` and 0.999 (with zoneEdges), and the
-    // goldLines; GOLD x (0.55 + 0.40 ytl) x the zone's strength, 2 units.
+    // goldLines; or exactly edgeLines where the shape has them (edge_lines); GOLD x (0.55 + 0.40
+    // ytl) x the zone's strength, 2 units.
     const auto edges = [&] (double low, bool zoneBounds) {
         std::vector<double> at;
-        for (int k = 0; k < shape.numGold && zoneBounds; ++k)
+        for (int k = 0; k < shape.numGold && zoneBounds && ! shape.hasEdgeLines; ++k)
             for (double r : { shape.gold[(size_t) k].from, shape.gold[(size_t) k].to })
                 if (low < r && r < 0.999)
                     at.push_back (r);
-        for (int k = 0; k < shape.numGoldLines; ++k)
+        for (int k = 0; k < shape.numGoldLines && ! shape.hasEdgeLines; ++k)
             at.push_back (shape.goldLines[(size_t) k]);
+        for (int k = 0; k < shape.numEdgeLines && shape.hasEdgeLines; ++k)
+            at.push_back (shape.edgeLines[(size_t) k]);
         std::sort (at.begin(), at.end());
         at.erase (std::unique (at.begin(), at.end()), at.end());
         for (double r : at)

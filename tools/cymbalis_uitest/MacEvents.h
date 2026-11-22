@@ -57,6 +57,10 @@ juce::String clickTuningSlider (juce::Component& editor, const juce::String& row
 // one of the window's top bar).
 juce::String clickTuningButton (juce::Component& editor, const juce::String& text, bool inList);
 
+// Clicks the centre of the button whose text is `text` on the list row whose name starts with
+// `rowName` (for a button several rows show, such as NOVA SHOULDER PROFILE).
+juce::String clickTuningButtonBeside (juce::Component& editor, const juce::String& rowName, const juce::String& text);
+
 // "shown" when the Tuning window's list shows `text` (an exact match) somewhere down it,
 // "none" when nothing does, otherwise what failed.
 juce::String tuningShows (juce::Component& editor, const juce::String& text);

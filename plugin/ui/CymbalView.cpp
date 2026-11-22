@@ -35,7 +35,7 @@ vec3 bronze (float shade, float ytl, float metal, float factor, float dent, floa
     float light = clamp (((shade - 0.86) / 0.14) * 0.8 + 0.2 * ytl, 0.0, 1.0);
     vec3 c = kDark + (kLight - kDark) * pow (0.25 + 0.75 * light, 1.4);
     if (metal > 3.5)
-        c = min (kCopper * (0.95 + 0.55 * light), vec3 (1.0));
+        c = min (kCopper * factor * (0.95 + 0.55 * light), vec3 (1.0));
     else if (metal > 2.5)
         c = c * 0.15 + kGold * (0.62 + 0.38 * light) * factor;
     else if (metal > 1.5)
