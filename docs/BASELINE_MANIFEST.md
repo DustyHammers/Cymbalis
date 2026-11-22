@@ -201,13 +201,14 @@ Built 2026-11-22 in the project session from Kris's SPEAR captures (Bell V1 and 
 | `presets/azcrash/data/azcrash_edge_excitation_ratios_neutral.json` | `f6f971dd825aa7e1bd89698a85ee73a4` |
 | `presets/azcrash/data/azcrash_edge_npz_data.json` | `071ebfda929f2cbcf2bdab6999c089ec` |
 | `presets/azcrash/data/azcrash_edge_vel_tilt.json` | `29e2b1d6e74224f8b757a8391b39f620` |
-| `presets/azcrash/data/azcrash_fingerprint.json` | `dc269fe3f123bd01bf07b509d83b21f0` |
+| `presets/azcrash/data/azcrash_fingerprint.json` | `5f01196ae1cec10b6dfbbf8d25d0c0dc` |
 | `presets/azcrash/data/azcrash_pkt_data.json` | `a80a78f67c30fe86a34334f5bd3e9080` |
 
 ## Notes
 
 - Bettis format, as RAVEN, KONSTAN and EXTRA PAPER THIN: fingerprint (900 modes: 706 from the bow captures, 194 seen only in the edge captures), measured bell ratios, neutral edge ratios, NPZ edge (3 rows) in the plugin's 22 bands with `edge_rms_correction`, edge pk_t by velocity, edge velocity tilt, and the all-zero trigger file that switches the NPZ envelope on.
-- **T60 refit from the bow captures, as KONSTAN** (see its notes): 617 modes refitted (median x2.1). Meant to be baked **without** V19's cap: 326 of the final T60s are above it.
+- **T60 refit from the bow captures, as KONSTAN** (see its notes): 617 modes refitted (median x2.1). Meant to be baked **without** V19's cap: 322 of the final T60s are above it.
+- **The 152 Hz hum (2026-11-22, Kris: "needs to go"):** the render calibration had stretched four quiet bow modes at 151.2, 151.5, 152.7 and 153.2 Hz (ids 49, 50, 52, 53) to a T60 of 364 s, so after a minute of playing a 152 Hz hum was left ringing for minutes. Their T60 is set back to 12.0 s, their value before the calibration (the neighbouring bow modes: 13.0 s at 127-128 Hz, 5.6 s at 194-196 Hz). Nothing else in the preset changes.
 - **Calibrated by rendering (2026-11-22, Kris):** Kris heard the first build's edge as too high-pitched and its bow as too heavy in the low modes, though the captures are of this cymbal. The SPEAR resynthesis matched the recordings (Bow V1 = BeadSoft, Bow V2 = BeadMedium, Bell V1 = BellSoft, Edge V1-V3 = CrashSoft, CrashMedium, CrashLoud) within about 1 dB in every range; the built preset did not: the bow was short of 280-900 Hz with excess lows and highs in its tail, and the loud edge was about 5 dB short below 2.8 kHz with excess 7-18 kHz. So the plugin was rendered and compared with the recordings, and the data adjusted until they matched:
   - **Bow:** mode exc per range from the 0.3-1.0 s spectrum (relative to the highs: 280-900 Hz up about 2.2x), T60 per range from the decay between 0.3-1.0 s and 1-3 s (changes within x0.5-2).
   - **Bell:** the ratios of the modes the bell strikes (exc > 0) scaled per range against BellSoft, not clipped (34 above 1, at most 2.26); modes with exc 0 keep their built value.
