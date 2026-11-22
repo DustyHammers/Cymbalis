@@ -88,9 +88,12 @@
     },
     "note": "The plugin rendered and compared with the recordings per range (89-280, 280-900, 900-2800, 2800-7000, 7000-18000 Hz; 0-0.15, 0.3-1.0, 1.0-3.0 s): bow exc and T60, bell ratios, edge envelopes per band. The SPEAR resynthesis matched the recordings within about 1 dB per range; the built preset did not (bow short of 280-900 Hz with excess lows and highs in the tail, loud edge short below 2.8 kHz with excess 7-18 kHz).",
     "edge_row_velocities": [
-      0.27,
-      0.522,
+      0.42,
+      0.628,
       1.0
-    ]
+    ],
+    "edge": "Rebuilt by the onset specification (amplitude sums by partial mean frequency, 60 ms Gaussian, global peak; velw band norms from +-5 Hz range search), then band levels per row matched to the recordings, tails from 2.5 s at the recordings' band decays to 30 s, velw within each band from the recordings, shared velw and envelope peaks.",
+    "bow_t60_limit": "247 bow modes (exc > 0) limited to their band's measured SPEAR decay (t60_band_measured_s): the render calibration had stretched some (four modes at 151-153 Hz to 364 s, modes near 2 kHz to 17-30 s against 6.9 s measured).",
+    "levels": "The recordings put CrashLoud 18.5 dB and CrashMedium 12.0 dB above BeadMedium (RMS, first 500 ms); EDGE +18.1 dB above BOW (SPEAR) is the trim target."
   }
 }
