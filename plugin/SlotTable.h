@@ -1,6 +1,6 @@
 #pragma once
 
-// The five articulation rows (docs/UI_SPEC.md sections 7-8) and the eight presets
+// The five articulation rows (docs/UI_SPEC.md sections 7-8) and the nine presets
 // (UI_SPEC section 8, docs/PORT_MAP.md "Live-engine decisions"). Each preset maps every
 // row to the bake entries it plays with TIP and with SHOULDER (by entry name in the
 // preset's bake, tools/bake_preset.py or tools/bake_hihat.py), or to none, says how its stick
@@ -87,7 +87,7 @@ struct PresetInfo
     bool pedal = false;
 };
 
-constexpr int kNumPresets = 8;
+constexpr int kNumPresets = 9;
 
 // Every EDGE row is SHOULDER only. The other rows choose TIP or SHOULDER: in every preset BELL
 // and BOW start on TIP, BELL2 and BOW2 on SHOULDER (UI_SPEC section 8; Kris, 2026-10-31).
@@ -149,6 +149,15 @@ constexpr std::array<PresetInfo, kNumPresets> kPresets {{
     // Konstan Crash 18": as Raven, no overlays; one entry per position (the bell inferred, not
     // captured), and the shoulder copies of the bell and bow.
     { "konstan", "KONSTAN CRASH 18\"", "konstan.bake.json", &ui::kKonstanShape, {{
+        { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
+        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
+        { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },
+        { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::shoulder },
+        { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::shoulder },
+    }} },
+    // Crash 16" (A Zildjian): as Extra Paper Thin, no overlays; one entry per position, and the
+    // shoulder copies of the bell and bow.
+    { "azcrash", "CRASH 16\"", "azcrash.bake.json", &ui::kAzCrashShape, {{
         { "BELL", "BELL_SHOULDER", StickDisplay::choice, Stick::tip },
         { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
         { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },

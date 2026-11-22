@@ -25,7 +25,8 @@
 //   raven     click the CYMBAL box, then RAVEN (the fifth)           -> preset raven
 //   paperthin click the CYMBAL box, then EXTRA PAPER THIN 24" (the sixth) -> preset paperthin
 //   konstan   click the CYMBAL box, then KONSTAN CRASH 18" (the seventh) -> preset konstan
-//   hihat     click the CYMBAL box, then HI-HAT (the seventh)          -> preset hihat
+//   azcrash   click the CYMBAL box, then CRASH 16" (the eighth)       -> preset azcrash
+//   hihat     click the CYMBAL box, then HI-HAT (the ninth)            -> preset hihat
 //   hihatplay (on HI-HAT) MIDI through the host into the plugin, on the session's channel and
 //             pedal CC: notes 42 and 46 (its rows' defaults, BOW and EDGE), each must sound;
 //             the pedal open, 46 must ring on long after a closed one has gone; the pedal
@@ -92,6 +93,7 @@
 //   ptprofile    (on EXTRA PAPER THIN 24") click NOVA SHOULDER PROFILE on bell_shoulder's row,
 //                then on bow_shoulder's                               -> bell_shoulder's band gains,
 //                attack gains and attack time are Nova's bell profile, bow_shoulder's its bow profile
+//   azprofile    (on CRASH 16") the same as ptprofile                 -> as ptprofile
 //   noprofile    (on NOVA RIDE) look for NOVA SHOULDER PROFILE down the list -> none
 //   hihattuning  (on HI-HAT) the list shows the values that act on it and not the others
 //                (stick click weights, position spread, EDGE VOICE FROM BOW, tau_ref)
@@ -883,7 +885,7 @@ private:
                 return bands && attack && soft && time ? juce::String ("bow profile") : juce::String ("not the bow profile");
             };
         }
-        else if (name == "ptprofile")
+        else if (name == "ptprofile" || name == "azprofile")
         {
             s.actions = { [this] {
                              actionError = cymbalis::uitest::clickTuningButtonBeside (*editor, "Band gains, attack gains and time: Nova's bell",
@@ -1026,8 +1028,8 @@ private:
         }
         else if (name == "hihat")
         {
-            // The same list; HI-HAT is its eighth row.
-            s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + 7.0f * 40.0f + 20.0f), wait };
+            // The same list; HI-HAT is its ninth row.
+            s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + 8.0f * 40.0f + 20.0f), wait };
             s.key = "preset";
             s.expected = "hihat";
         }
@@ -1346,6 +1348,13 @@ private:
             s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + 6.0f * 40.0f + 20.0f), wait };
             s.key = "preset";
             s.expected = "konstan";
+        }
+        else if (name == "azcrash")
+        {
+            // The same list; CRASH 16" is its eighth row.
+            s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + 7.0f * 40.0f + 20.0f), wait };
+            s.key = "preset";
+            s.expected = "azcrash";
         }
         else
         {

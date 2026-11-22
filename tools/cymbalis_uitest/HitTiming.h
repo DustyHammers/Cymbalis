@@ -13,7 +13,7 @@
 //
 // Each case runs three times, the cases in turn, and the editor closed once more at the end.
 // Then the three cases run once more with HAMMERED THIN RIDE selected, and once each with SWISH,
-// RAVEN, EXTRA PAPER THIN 24" and KONSTAN CRASH 18", the heaviest cymbals to draw (their dented meshes), and HI-HAT (two
+// RAVEN, EXTRA PAPER THIN 24", KONSTAN CRASH 18" and CRASH 16", the heaviest cymbals to draw (their dented meshes), and HI-HAT (two
 // dented cymbals, its clutch and rod), at normal priority with 256-sample blocks. On HI-HAT the
 // notes are its own (42 and 46) and its pedal CC sweeps from closed to open and back every 2 s, so
 // the hats and the pedal drawing move as well.

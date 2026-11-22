@@ -256,6 +256,10 @@ struct CymbalShape
     bool hasEdgeLines = false;
     std::array<double, 2> edgeLines {};
     int numEdgeLines = 0;
+    // 2026-11-22 (CRASH 16"): drawn at drawScale x the common on-screen radius (draw_scale), the
+    // camera distance in radii divided by it, so the cymbal is drawn smaller in the same place, seen
+    // from the same camera (Camera; the reference's Cymbal2.__init__). 1: every other preset.
+    double drawScale = 1.0;
     // The hi-hat (hihat_draw): this shape is its top cymbal, which rises with the pedal and
     // carries the clutch and rod; `lower` is its bottom cymbal, drawn under it and hidden where
     // the top cymbal is in front of it. nullptr for a single cymbal.
@@ -477,6 +481,47 @@ inline constexpr CymbalShape kPaperThinShape = [] {
                         { 0.60, 0.93, 170, 0.024, 0.036, 0.45, 0.8, 1.0 } } };
     s.dents.numZones = 3;
     s.dents.linesFollowDents = true;
+    return s;
+}();
+
+// CRASH 16" (2026-11-22, approved by Kris from the project session's mockups, round 2; the
+// reference's azcrash, from his photos): a medium bell (its edge 2.0" and 0.88" high, its top 1.6"
+// above the rim), a gently falling bow; drawn at its true size, 16/20 of the common radius
+// (drawScale 0.8). Lathed all over in an even light gold (the flat brightness table), a few faint,
+// shallow dents in the bow, the lathe lines following them; a wide band of deep lathe grooves from
+// 5.8" to 7.3" in dark bronze (a copper zone, copperK 0.5), its grooves drawn in the band's colour
+// (SurfaceKind::copperGroove); no zone-edge rings (edgeLines set and empty).
+inline constexpr CymbalShape kAzCrashShape = [] {
+    CymbalShape s {};
+    s.key = "azcrash";
+    s.R = 8.0;
+    s.bell = 0.25;
+    s.profile = { { { 0.0, 1.60 }, { 0.5, 1.56 }, { 1.0, 1.42 }, { 1.5, 1.14 }, { 2.0, 0.88 }, { 2.6, 0.78 }, { 4.0, 0.60 },
+                    { 5.5, 0.40 }, { 7.0, 0.17 }, { 8.0, 0.0 } } };
+    s.numProfile = 10;
+    s.hammer = Hammer::none;
+    s.hammerZone = { 0.28, 0.70 };
+    s.hasBellGrooves = true;
+    s.bellGrooves = { 0.725, 0.915 }; // the groove band (not on the bell here)
+    s.gold = { { { 0.02, 0.725, 1.0 }, { 0.915, 1.0, 1.0 } } };
+    s.numGold = 2;
+    s.zoneEdges = false;
+    s.goldStep = 0.02;
+    s.copper = { { { 0.725, 0.915 } } }; // the groove band, dark bronze
+    s.numCopper = 1;
+    s.copperK = 0.5;
+    s.hasEdgeLines = true; // edge_lines []: no zone-edge rings at all
+    s.numEdgeLines = 0;
+    s.photoLum = &kPaperThinPhotoLum; // the same flat table: 0 for the first four entries, then 100
+    s.bellLine = false;
+    s.dented = true;
+    s.dents.ringStep = 5;
+    s.dents.depth = 0.7;
+    s.dents.contrast = 4.0;
+    s.dents.zones = { { { 0.28, 0.70, 90, 0.012, 0.018, 0.55, 0.9, 0.7 } } }; // a few faint marks in the bow
+    s.dents.numZones = 1;
+    s.dents.linesFollowDents = true;
+    s.drawScale = 0.8;
     return s;
 }();
 

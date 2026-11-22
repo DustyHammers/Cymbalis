@@ -204,7 +204,10 @@ Camera::Camera (const CymbalShape& shape) : Camera()
 {
     cx = shape.cx;
     cy = shape.cy;
-    scale = shape.scale;
+    // drawScale (CRASH 16" 0.8): the on-screen radius scaled, the distance in radii by its
+    // inverse, so the cymbal is drawn smaller in the same place, seen from the same camera.
+    scale = shape.scale * shape.drawScale;
+    distance = 5.0 / shape.drawScale;
 }
 
 void Camera::project (double X, double Y, double Z, double& sx, double& sy) const noexcept
@@ -723,7 +726,8 @@ void Geometry::buildSurface()
     const auto vertexAt = [this] (double r, double t, SurfaceKind kind, double param, double metalR) {
         double factor = 1.0;
         const auto metal = metalAt (metalR, factor);
-        const float width = kind == SurfaceKind::groove || kind == SurfaceKind::edge ? 2.0f : 1.0f;
+        const float width =
+            kind == SurfaceKind::groove || kind == SurfaceKind::copperGroove || kind == SurfaceKind::edge ? 2.0f : 1.0f;
         return SurfaceVertex { (float) r, (float) t, (float) (restHeight (r) + 0.0015), (float) kind, (float) param, (float) metal,
                                (float) factor, width };
     };
@@ -767,11 +771,18 @@ void Geometry::buildSurface()
         for (double r : at)
             fullRing (r, SurfaceKind::edge, strengthAt (r));
     };
-    // RAVEN's deep lathe grooves on the bell: irregular spacing, bold, in a paler gold.
+    // RAVEN's deep lathe grooves on the bell: irregular spacing, bold, in a paler gold. A groove
+    // in a copper zone (CRASH 16"'s groove band) takes the zone's colour (copperGroove).
+    const auto inCopper = [this] (double r) {
+        for (int k = 0; k < shape.numCopper; ++k)
+            if (shape.copper[(size_t) k].from <= r && r <= shape.copper[(size_t) k].to)
+                return true;
+        return false;
+    };
     const auto grooves = [&] {
         if (shape.hasBellGrooves)
             for (double r = shape.bellGrooves.from; r < shape.bellGrooves.to; r += uniform (0.011, 0.026))
-                fullRing (r, SurfaceKind::groove, uniform (0.55, 1.0));
+                fullRing (r, inCopper (r) ? SurfaceKind::copperGroove : SurfaceKind::groove, uniform (0.55, 1.0));
     };
 
     if (shape.dented)
@@ -1225,6 +1236,7 @@ Rgb surfaceColour (const SurfaceVertex& v, double ytl) noexcept
         case SurfaceKind::edge: return scaled (colour::gold, (0.55 + 0.40 * ytl) * v.param);
         case SurfaceKind::goldLathe: return scaled (surfaceBronze(), (0.50 + 0.35 * ytl) * v.param);
         case SurfaceKind::goldLine: return scaled (colour::gold, (0.50 + 0.35 * ytl) * v.param);
+        case SurfaceKind::copperGroove: return scaled (colour::copper, v.factor * (0.45 + 0.35 * ytl) * v.param);
     }
     return {};
 }
