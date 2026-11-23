@@ -39,10 +39,12 @@ Checked with numpy 2.5.3, scipy 1.18.1, soundfile 0.14.0.
 | `presets/nova/data/nova_vel_participation_shoulder_correct.json` | `b35e81435c5fa52165c8c7758326a988` |
 | `presets/nova/data/nova_vel_participation_tip_s2a_ceil.json` | `1d143acc1baf05397f436b5472f28d8e` |
 | `presets/nova/data/nova_vel_tilt.json` | `54533e6c49985a21c3b01a98eccde1dd` |
+| `presets/nova/data/nova_edge_npz_raven_onset.json` | `b47dea3f7a0b549ab2f7039187db2c3b` |
 
 ## Notes
 
 - `tip.json` and `shoulder.json` reference `nova_vel_participation_tip.json` and `nova_vel_participation_shoulder.json`, which are not in the package. Those two overlays cannot be loaded.
+- `nova_edge_npz_raven_onset.json` (added 2026-11-22 in the project session, Kris: "version 8"; not part of the V8 package and not read by the Python engine or `Nova_Baseline19.json`): an NPZ edge for the plugin's EDGE row. Nova has no edge captures. Its mode weights are Nova's edge today; per band and velocity its build-up follows Raven's edge, its peak level is Nova's with Raven's change from full velocity (soft hits darker), and its ring after the peak is Nova's own. Its `bake` block lists what the bake needs (band correction, 30 s window, level exponent 1.5, edge row only, no stick contact on envelope strikes). Details in its `notes`.
 - The bow-shoulder baseline render peaks at 1.28 (above full scale) at velocity 0.9. This is the locked behaviour.
 
 # Smoke Flat Ride (602) and Hammered Thin Ride (Bettis)
