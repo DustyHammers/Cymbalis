@@ -392,6 +392,13 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
     if (z.present && z.edgeRowOnly)
         for (size_t s = 0; s < b.slots.size(); ++s)
             npzSlot_[s] = b.slots[s].id == "edge" ? 1 : 0;
+    if (z.present && z.noContactOnEnvelope)
+    {
+        envCr_.assign(n, 0.0);
+        envCi_.assign(n, 0.0);
+        envNow_.assign(size_t(z.numBands), 0.0);
+        envX_.assign(n, 0.0);
+    }
     if (envBake_)
     {
         // An envelope strike's level follows its band envelope, not the T60 decay, so the
@@ -914,6 +921,11 @@ void FastEngine::renderContactSample(float* left, float* right) noexcept
     }
     // Output Re(state x u) . pick (u = gain x exp(i W), 1 without the cymbal-wide factors),
     // then one undamped step. Partial sums in two 2-lane vectors.
+    if (envCorrOn_)
+    {
+        renderContactEnvelopes(left, right);
+        return;
+    }
     if (contactRot_)
     {
         renderContactRotated(left, right);
@@ -997,6 +1009,131 @@ void FastEngine::renderContactRotated(float* left, float* right) noexcept
     left[0] = static_cast<float>((sl[0] + sl[1]) + (sl[2] + sl[3]));
     right[0] = static_cast<float>((sr[0] + sr[1]) + (sr[2] + sr[3]));
     endContactSample();
+}
+
+// The same with the envelope strikes at their enveloped level (envelopesIntoContact): the
+// output takes the state plus the difference, Re((z + d) u) . pick, and both take the step.
+void FastEngine::renderContactEnvelopes(float* left, float* right) noexcept
+{
+    const int n = n_;
+    double* __restrict zr = zr_.data();
+    double* __restrict zi = zi_.data();
+    double* __restrict dr = envCr_.data();
+    double* __restrict di = envCi_.data();
+    const double* __restrict mr = stepR_.data();
+    const double* __restrict mi = stepI_.data();
+    double sl = 0.0, sr = 0.0;
+    for (int i = 0; i < n; ++i)
+    {
+        const double r = zr[i] + dr[i], m = zi[i] + di[i];
+        if (contactRot_)
+        {
+            sl += r * cuLr_[size_t(i)] - m * cuLi_[size_t(i)];
+            sr += r * cuRr_[size_t(i)] - m * cuRi_[size_t(i)];
+        }
+        else
+        {
+            sl += r * gainL_[size_t(i)];
+            sr += r * gainR_[size_t(i)];
+        }
+        const double zr1 = zr[i] * mr[i] - zi[i] * mi[i];
+        zi[i] = zr[i] * mi[i] + zi[i] * mr[i];
+        zr[i] = zr1;
+        const double dr1 = dr[i] * mr[i] - di[i] * mi[i];
+        di[i] = dr[i] * mi[i] + di[i] * mr[i];
+        dr[i] = dr1;
+    }
+    left[0] = static_cast<float>(sl);
+    right[0] = static_cast<float>(sr);
+    endContactSample();
+}
+
+// An envelope strike's level per ringing mode, `te` seconds after it, as the free phase plays it:
+// band envelope x in-frame decay (x onset gains), lines 886-894, into envX_ (in the order of the
+// ringing modes, actIdx_). Its in-frame decay is read at its frame phase, as restartFrames does.
+// Times |coupling| (Er, Ei) it is the strike's amplitude. Only the ringing modes hold anything.
+void FastEngine::envelopeLevels(const Component& c, double te) noexcept
+{
+    const EdgeNpz& z = bake_->edgeNpz;
+    for (int band = 0; band < envBands_; ++band)
+    {
+        const size_t bs = size_t(band);
+        if (bandEnd_[bs] <= bandStart_[bs])
+            continue;
+        double tb = te;
+        if (c.envShift)
+        {
+            const size_t j = npzShiftBand_[bs];
+            tb = (tb - static_cast<double>(c.envDelay[j])) * static_cast<double>(c.envSpeed[j]);
+        }
+        if (c.envRing)
+            tb = ringTime(c, band, tb);
+        envNow_[bs] = envelopeAt(c, band, tb);
+    }
+    const double phase = c.frameRestart ? std::fmod(std::max(te, 0.0), z.frameDecayPeriodS) : 0.0;
+    const double onset = c.onsetOn ? std::exp(-std::max(te, 0.0) / c.onsetTau) : 0.0;
+    for (int a = 0; a < nAct_; ++a)
+    {
+        const size_t s = size_t(actIdx_[size_t(a)]);
+        vmArg_[size_t(a)] = negLambda_[s] * c.epsK[s] * phase;
+    }
+    vecmath::expArray(vmArg_.data(), vmExp_.data(), nAct_);
+    for (int a = 0; a < nAct_; ++a)
+    {
+        const size_t s = size_t(actIdx_[size_t(a)]);
+        envX_[size_t(a)] = envNow_[size_t(z.bandIndex[s])] * vmExp_[size_t(a)] * (1.0 + static_cast<double>(c.gm1[s]) * onset);
+    }
+}
+
+// no_contact_on_envelope_strikes, at a strike that starts a contact phase (the components just
+// re-anchored at this sample): each envelope strike in its window at its enveloped level
+// (envelopeLevels) less what the state holds of it (coupling x decay).
+void FastEngine::envelopesIntoContact() noexcept
+{
+    envCorrOn_ = false;
+    const double tAnchor = timeBase_ + static_cast<double>(baseSample_) / sr_;
+    for (auto& c : components_)
+    {
+        if (!c.used || c.pending || !c.envOn)
+            continue;
+        const double te = tAnchor - c.tStrike;
+        if (te >= c.envWindow)
+            continue; // it rings on with its own decay from the next block (sumComponents)
+        if (!envCorrOn_)
+        {
+            std::fill(envCr_.begin(), envCr_.end(), 0.0);
+            std::fill(envCi_.begin(), envCi_.end(), 0.0);
+            envCorrOn_ = true;
+        }
+        envelopeLevels(c, te);
+        for (int a = 0; a < nAct_; ++a)
+        {
+            const size_t s = size_t(actIdx_[size_t(a)]);
+            const double x = envX_[size_t(a)];
+            envCr_[s] += static_cast<double>(c.Er[s]) * x - static_cast<double>(c.Br[s]);
+            envCi_[s] += static_cast<double>(c.Ei[s]) * x - static_cast<double>(c.Bi[s]);
+        }
+    }
+}
+
+// no_contact_on_envelope_strikes, before a merge that drops envelopes (allocateComponent, at a
+// strike): an envelope strike in its window takes its enveloped level as its amplitude
+// (envelopeLevels, at the components' anchor), so it rings on from there with its own decay.
+void FastEngine::settleEnvelope(Component& c) noexcept
+{
+    if (!c.used || c.pending || !c.envOn)
+        return;
+    const double te = timeBase_ + static_cast<double>(baseSample_) / sr_ - c.tStrike;
+    if (te >= c.envWindow)
+        return;
+    envelopeLevels(c, te);
+    for (int a = 0; a < nAct_; ++a)
+    {
+        const size_t s = size_t(actIdx_[size_t(a)]);
+        const double x = envX_[size_t(a)];
+        c.Br[s] = static_cast<float>(static_cast<double>(c.Er[s]) * x);
+        c.Bi[s] = static_cast<float>(static_cast<double>(c.Ei[s]) * x);
+    }
 }
 
 // After a contact sample: the contacts move on; the free phase starts when all have ended.
@@ -2212,7 +2349,16 @@ FastEngine::Component& FastEngine::allocateComponent() noexcept
         return *oldest;
     }
     if (dropEnvelopes)
+    {
         CYM_PROF_COUNT(mergeOldest);
+        // no_contact_on_envelope_strikes (docs/PORT_MAP.md, "Nova Ride's NPZ edge"): an envelope
+        // strike merged here rings on from its enveloped level, not from its coupling x decay.
+        if (bake_->edgeNpz.noContactOnEnvelope)
+        {
+            settleEnvelope(*a);
+            settleEnvelope(*b);
+        }
+    }
     else
         CYM_PROF_COUNT(mergeSettled);
     // Keep the newer one's identity in `into` so the freed slot is the other.
@@ -3383,6 +3529,7 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     CYM_PROF_BEGIN(strikeRebase);
     if (gainRamp_)
         interruptGainRamp();
+    const bool reanchored = freeStarted_;
     if (freeStarted_)
         rebaseComponents();
     CYM_PROF_END(strikeRebase);
@@ -3489,6 +3636,10 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     }
     comp.held = noContact && activeContacts_ > 0;
     comp.pending = contact != nullptr || comp.held;
+    // This strike starts a contact phase: the envelope strikes ringing play through it at their
+    // enveloped level (no_contact_on_envelope_strikes; docs/PORT_MAP.md, "Nova Ride's NPZ edge").
+    if (contact != nullptr && reanchored && b.edgeNpz.noContactOnEnvelope)
+        envelopesIntoContact();
     CYM_PROF_END(strikeContact);
     // Lines 1043-1061: an edge strike of a preset with NPZ data takes its coupling from the
     // velw tables, with a second set of random phases (Python draws both).
@@ -3927,6 +4078,7 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
 {
     const BakeData& b = *bake_;
     const EngineParams& p = params_;
+    envCorrOn_ = false; // the contact phase is over: the envelope strikes play from their components
     const double threshold =
         b.ampSkipThreshold *
         (lastSlot_ >= 0 ? b.slots[size_t(lastSlot_)].calibScalar * slotTrim_[size_t(lastSlot_)] : 1.0);

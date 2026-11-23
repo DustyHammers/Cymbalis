@@ -302,6 +302,10 @@ private:
     void processSpan(float* left, float* right, int numSamples) noexcept;
     void renderContactSample(float* left, float* right) noexcept;
     void renderContactRotated(float* left, float* right) noexcept;
+    void renderContactEnvelopes(float* left, float* right) noexcept;
+    void envelopesIntoContact() noexcept;
+    void envelopeLevels(const Component& c, double te) noexcept;
+    void settleEnvelope(Component& c) noexcept;
     void endContactSample() noexcept;
     void renderFree(float* left, float* right, int n) noexcept;
     void beginControlBlock() noexcept;
@@ -506,6 +510,15 @@ private:
     // Per slot: its strikes can use the NPZ edge (every slot, or with edge_row_only only the
     // "edge" entry; docs/PORT_MAP.md, "Nova Ride's NPZ edge").
     std::vector<uint8_t> npzSlot_;
+    // no_contact_on_envelope_strikes (docs/PORT_MAP.md, "Nova Ride's NPZ edge"): a later strike
+    // leaves every envelope strike still in its window at its enveloped level. Through a
+    // contact phase: envCr_/envCi_ hold the difference per mode between that level and the
+    // coupling x decay the state holds, set when a strike starts the phase
+    // (envelopesIntoContact), stepped with the state and added to its output only (the skip
+    // threshold reads the state as before). At a merge that drops envelopes: settleEnvelope.
+    // envNow_: per envelope band, envX_: per ringing mode (envelopeLevels).
+    std::vector<double> envCr_, envCi_, envNow_, envX_;
+    bool envCorrOn_ = false;
     int frameBlocks_ = 0;
     std::vector<int> bandStart_, bandEnd_; // mode range of each envelope band
     std::vector<uint8_t> npzShiftBand_;    // the onset-shift band of each envelope band
