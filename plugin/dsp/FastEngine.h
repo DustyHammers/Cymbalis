@@ -208,6 +208,10 @@ private:
     {
         bool used = false;
         bool pending = false;     // its contact is still running; Br/Bi hold the coupling
+        // An envelope strike without a contact phase (no_contact_on_envelope_strikes) struck
+        // while other strikes' contacts run: pending, held out of the state until they end,
+        // then put in as it would have rung since its strike (startFreePhase).
+        bool held = false;
         bool cascade = false;     // it holds the energy cascade's moved energy and nothing else
         uint64_t order = 0;       // creation order, for "oldest"
         int64_t contactStart = 0; // engine sample where its contact began
@@ -499,6 +503,9 @@ private:
     // in-frame decay into frameBlocks_ blocks. envOn_: edge strikes follow the envelope
     // (edge_npz.envelope_active; EDGE ONSET ENVELOPE in the Tuning window).
     bool envBake_ = false, envOn_ = false;
+    // Per slot: its strikes can use the NPZ edge (every slot, or with edge_row_only only the
+    // "edge" entry; docs/PORT_MAP.md, "Nova Ride's NPZ edge").
+    std::vector<uint8_t> npzSlot_;
     int frameBlocks_ = 0;
     std::vector<int> bandStart_, bandEnd_; // mode range of each envelope band
     std::vector<uint8_t> npzShiftBand_;    // the onset-shift band of each envelope band

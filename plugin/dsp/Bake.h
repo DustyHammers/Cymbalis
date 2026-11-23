@@ -99,6 +99,13 @@ struct EdgeNpz
     // decay; the level follows the band envelope alone).
     double remapExponent = 0.5;
     bool frameDecayRestart = true;
+    // Plugin-only engine rules (docs/PORT_MAP.md, "Nova Ride's NPZ edge"), off in a bake
+    // without them. edgeRowOnly (edge_row_only): only strikes of the "edge" entry use the NPZ
+    // edge (velw, level law, band envelope); every other entry keeps its own coupling at any
+    // position. noContactOnEnvelope (no_contact_on_envelope_strikes): a strike that follows the
+    // band envelope has no stick-contact phase; every other strike keeps its contact.
+    bool edgeRowOnly = false;
+    bool noContactOnEnvelope = false;
     // EDGE VOICE FROM BOW (docs/TUNING.md): each mode's weight alpha, from the baked T60 and
     // exc_norm (edgeVoiceAlpha), computed at load. velw stays the bake's.
     std::vector<double> voiceAlpha;

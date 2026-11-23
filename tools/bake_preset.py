@@ -32,6 +32,10 @@ can prove that it parsed every value exactly.
     envelope only when an edge band envelope file is also set (line 691); for a preset in
     ENVELOPE_ON the bake sets edge_npz.envelope_active and says why (envelope_set_by), as the
     602's all-zero trigger file does in Python.
+  * plugin-only NPZ edge data (NPZ_ATTACHED): an NPZ edge file the Python engine never reads,
+    attached by the bake to a preset that has none in Python (NOVA RIDE), with its band
+    envelope on (envelope_set_by), the settings and engine rules of the file's "bake" block, and
+    edge_npz true in every entry's effective parameters.
   * velocity-table fixes (VP_COLUMN_FIXES): columns of an overlay's velocity table replaced
     with another column of the same table, in the bake only (presets/ is unchanged), for every
     entry with that overlay, copies included. Each fix is recorded in the bake's notes.
@@ -99,6 +103,18 @@ ENVELOPE_ON = {
     'swish': 'Swish_Baseline1.json sets no edge_band_env_path, so Python never runs the NPZ band '
              'envelope; the plugin switches it on (Kris, 2026-10-17), as the 602\'s trigger file does',
 }
+# Plugin-only NPZ edge data attached by the bake to a preset whose Python engine has none
+# (docs/PORT_MAP.md, "Nova Ride's NPZ edge"): preset -> (data file, the reason recorded in
+# edge_npz.envelope_set_by). Python never reads the file. Its "bake" block holds the bake's
+# settings (edge_rms_correction, edge_band_env_onset_s, level_vel_gain_power, edge_use_velw,
+# edge_velw_normalize) and the two engine rules (edge_row_only, no_contact_on_envelope_strikes).
+NPZ_ATTACHED = {
+    'nova': ('presets/nova/data/nova_edge_npz_raven_onset.json',
+             'Nova has no edge captures and its Python preset no NPZ edge; the plugin plays its EDGE '
+             'row from nova_edge_npz_raven_onset.json ("version 8", Kris by ear, 2026-11-22) with the '
+             'band envelope on, as Raven\'s edge'),
+}
+NPZ_ATTACHED_RULES = ('edge_row_only', 'no_contact_on_envelope_strikes')
 # Velocity-table columns replaced in the bake (docs/PORT_MAP.md, live-engine decision 17):
 # (overlay, table, its data file, its column labels, label replaced, replacing label, reason).
 # vel_norms stay as they are. The labels are checked against the data file.
@@ -347,6 +363,55 @@ def edge_npz_block(eng):
     }
 
 
+def attached_edge_npz(preset, n):
+    """The edge_npz block of a plugin-only NPZ edge file (NPZ_ATTACHED), in edge_npz_block's
+    layout, for a preset with n modes: the band envelope on (envelope_set_by) and the file's
+    engine rules. The file is in the Bettis NPZ JSON format, its velw and envelope rows keyed
+    by velocity, its modes in the preset's mode order."""
+    path, reason = NPZ_ATTACHED[preset]
+    with open(os.path.join(ab.REPO, path)) as f:
+        d = json.load(f)
+    evels = np.array(d['velocities'], dtype=np.float64)
+    for key in ('velw', 'envelopes'):
+        if [float(k) for k in d[key]] != [float(v) for v in evels]:
+            raise BakeError(f'FAIL: {path}: the {key} rows are not keyed by its velocities in order')
+    velw = np.array([d['velw'][k] for k in d['velw']], dtype=np.float64)
+    env = np.array([d['envelopes'][k] for k in d['envelopes']], dtype=np.float64)
+    band = np.array(d['our_band_idx'], dtype=np.int64)
+    bk = d['bake']
+    nb = int(d['n_bands'])
+    if velw.shape != (len(evels), n) or band.shape != (n,):
+        raise BakeError(f'FAIL: {path} is for {velw.shape[1]} modes, the preset has {n}')
+    if env.shape != (len(evels), int(d['max_frames']), nb) or len(d['band_edges_hz']) != nb + 1:
+        raise BakeError(f'FAIL: {path}: envelopes {env.shape} for {nb} bands of {d["max_frames"]} frames')
+    if band.min() < 0 or band.max() >= nb or np.any(np.diff(band) < 0):
+        raise BakeError(f'FAIL: {path}: our_band_idx must rise with the mode index, within the bands')
+    corr = np.array(bk['edge_rms_correction'], dtype=np.float64)
+    if corr.shape != (nb,):
+        raise BakeError(f'FAIL: {path}: edge_rms_correction has {corr.size} values for {nb} bands')
+    for key in ('edge_use_velw', 'edge_velw_normalize') + NPZ_ATTACHED_RULES:
+        if not isinstance(bk[key], bool):
+            raise BakeError(f'FAIL: {path}: bake.{key} must be true or false')
+    block = {
+        'velocities': enc(evels),
+        'velw': enc(velw),
+        'envelopes': enc(env),
+        'band_index': enc(band, True),
+        'frame_dur_s': float(d['frame_dur_s']),
+        'use_velw': bk['edge_use_velw'],
+        'velw_normalize': bk['edge_velw_normalize'],
+        'level_vel_gain_power': float(bk['level_vel_gain_power']),
+        'rms_correction': enc(corr),       # unclamped: each band's level is set by its envelope
+        'envelope_active': True,
+        'onset_s': float(bk['edge_band_env_onset_s']),
+        'frame_decay_period_s': 0.020,
+        'envelope_set_by': reason,
+    }
+    for key in NPZ_ATTACHED_RULES:
+        block[key] = bk[key]
+    return block
+
+
 def uncap_t60(eng):
     """Every body mode's T60 without V19's cap: max(fingerprint t60 x t60_scale, 0.02) in place
     of _bT (__init__ lines 136-138 without the cap), the contact-phase mode step from it with
@@ -543,6 +608,8 @@ def source_files(slots, preset_key):
         with open(ab.overlay_path(overlay, preset_key)) as f:
             data.update(json.load(f).get('data_files', {}).values())
     files += [os.path.join(base, d) for d in sorted(data)]
+    if preset_key in NPZ_ATTACHED:
+        files.append(os.path.join(ab.REPO, NPZ_ATTACHED[preset_key][0]))
     return files
 
 
@@ -622,6 +689,14 @@ def bake(overrides, preset='nova', allow_manifest_mismatch=False):
         ref_npz['envelope_active'] = True
         ref_npz['envelope_set_by'] = ENVELOPE_ON[preset]
         notes.append('edge_npz.envelope_active is set by the bake: ' + ENVELOPE_ON[preset])
+    if preset in NPZ_ATTACHED:
+        if ref_npz is not None:
+            raise BakeError(f'FAIL: preset {preset} already has NPZ edge data in Python')
+        ref_npz = attached_edge_npz(preset, ref_scalars['n_body'])
+        notes.append(f'edge_npz is attached by the bake from {NPZ_ATTACHED[preset][0]} (plugin only, '
+                     'docs/PORT_MAP.md, "Nova Ride\'s NPZ edge"), with its band envelope on and the engine '
+                     'rules ' + ', '.join(f'{k} {str(ref_npz[k]).lower()}' for k in NPZ_ATTACHED_RULES) +
+                     '; edge_npz is true in every entry\'s effective parameters')
 
     shared = {k: (None if v is None else enc(v, integer)) for k, (v, integer) in ref_arrays.items()
               if not (v is None and k in OPTIONAL_SHARED)}
@@ -643,6 +718,9 @@ def bake(overrides, preset='nova', allow_manifest_mismatch=False):
             slot_blocks.append(blk)
             source_engine.append(source_engine[k])
     fix_vp_columns(slot_blocks, VP_COLUMN_FIXES.get(preset, []), notes)
+    if preset in NPZ_ATTACHED:
+        for blk in slot_blocks:
+            blk['effective']['edge_npz'] = True
 
     out = {
         'format': BAKE_FORMAT,

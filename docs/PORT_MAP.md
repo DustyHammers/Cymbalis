@@ -510,6 +510,7 @@ These are plugin mechanisms; none is a port of Python. Kris tunes them by ear in
 ### Articulations and sticks
 
 13. **Every edge is SHOULDER only, and Nova's EDGE plays the bow shoulder at the edge** (2026-10-17). Nova has no edge captures. Its EDGE row played the base preset (no overlay) at position 0.0, a stand-in. That stand-in is gone from the bake. The row now plays `edge`, a copy of `bow_shoulder` (velocity tables, calibration, no onset gains) struck at 0.0, with bow_shoulder's level trim (−7.91 dB). As a separate articulation it is tuned apart from the bow shoulder. This is a deliberate sound change, and the only one: every other row of every preset plays as before. The 602 and Bettis edges are SHOULDER captures already and stay as they are. The EDGE stick box shows SHOULDER, fixed, on every preset.
+   - **Since 2026-11-23 Nova's EDGE plays an NPZ edge** ("Nova Ride's NPZ edge" below; Kris, by ear, 2026-11-22). The `edge` entry is still the copy of `bow_shoulder` at 0.0 (its calibration, its tuning values), but its strikes take their coupling, level law and band envelope from `presets/nova/data/nova_edge_npz_raven_onset.json`, with no stick contact, and its trim is +12.20 dB. It answers two complaints: no dynamics, and the edge sounding like a modified bow.
 14. **The 602 and Bettis get SHOULDER versions of their tip articulations, as copies** (2026-10-17). Their bell, bow and center are TIP. Each gets a SHOULDER copy that starts as an exact copy, its level trim included, and is tuned on its own: 602 `bow_shoulder` and `center_shoulder`, Bettis `bell_shoulder` and `bow_shoulder`. Python has no shoulder data for these presets; the copies exist to be tuned by ear.
    - **Sticks.** Their bell and bow rows offer TIP / SHOULDER, as Nova's do. They started on TIP; since 2026-10-31 BELL and BOW start on TIP and BELL2 and BOW2 on SHOULDER, on every preset, Nova included (`docs/UI_SPEC.md` section 8, "Default sticks"). Each preset keeps its own stick choices (`docs/UI_SPEC.md` sections 6, 8 and 9).
    - **NOVA SHOULDER PROFILE.** The tuning button fills such a copy's band gains with Nova's shoulder-minus-tip difference (`docs/TUNING.md`), computed once from the Nova velocity tables by `tools/shoulder_profile.py`.
@@ -598,7 +599,7 @@ These are plugin mechanisms; none is a port of Python. Kris tunes them by ear in
 - **Calibration is applied when the strike is injected.** Python multiplies the whole output by one scalar at the end. With NL off, every remaining mechanism is linear in amplitude, so the two give the same result to within rounding.
 - **The skip threshold is scaled to match.** Python skips a mode for a segment when `|z| < 1e-9` in its uncalibrated units (line 859). The C++ state holds calibrated amplitudes, so it uses `1e-9 × calibration` of the slot that struck most recently. For a single-slot sequence this is the same test as Python's.
 - **Contacts in the live engine run in full.** In Python, a strike that lands while an earlier contact is still running cuts that contact short (f.7). `EngineConfig::truncateContactsLikePython` selects between the two behaviours. With `false`, the default and the live engine, every contact plays all its force samples. The contact phase of the new segment lasts until every running contact has finished. If more than 64 contacts overlap, the oldest one's remaining force is applied at once, so it still enters in full. With `true`, used with `cymbalis_render --python-contact-truncation`, a new strike discards the rest of a running contact, as Python does. The A/B sequences never overlap contacts, so both settings render them identically.
-- **The plugin uses a faster engine.** `FastEngine` (`plugin/dsp/FastEngine.h`) keeps `Engine`'s segments, strike logic and the decisions above, with the superposition described in the next section. It renders the free ring with one recursive complex oscillator per mode in float, re-anchored from double every control block (128 samples at 44.1/48 kHz, 256 at 88.2/96 kHz, about 2.8 ms; for the 602 and Bettis presets a seventh or an eighth of the band envelope's 20 ms frame, see "602 and Bettis"). Wander, onset ramp, onset gains, the LF and MF scales and each strike's own decay are evaluated at the control points and interpolated; a mode whose ramp reaches 1 inside a block gets the exact ramp for that block. Every rate-dependent value is computed from the host rate: mode steps, the right channel's high-pass (120 Hz unless tuned, decision 19), and the contact force, whose Python taus and sigma floor are samples at 44.1 kHz (13 samples at 44.1 kHz, 14 at 48 kHz, 26 at 88.2 kHz, 28 at 96 kHz for Nova). The strike position is an argument, so the blend knobs can move it. It requires tip and shoulder taus to be equal (Nova's are), so the contact length does not depend on position.
+- **The plugin uses a faster engine.** `FastEngine` (`plugin/dsp/FastEngine.h`) keeps `Engine`'s segments, strike logic and the decisions above, with the superposition described in the next section. It renders the free ring with one recursive complex oscillator per mode in float, re-anchored from double every control block (128 samples at 44.1/48 kHz, 256 at 88.2/96 kHz, about 2.8 ms; for the presets with NPZ edge data, the 602 and Bettis first, a seventh or an eighth of the band envelope's 20 ms frame, see "602 and Bettis"). Wander, onset ramp, onset gains, the LF and MF scales and each strike's own decay are evaluated at the control points and interpolated; a mode whose ramp reaches 1 inside a block gets the exact ramp for that block. Every rate-dependent value is computed from the host rate: mode steps, the right channel's high-pass (120 Hz unless tuned, decision 19), and the contact force, whose Python taus and sigma floor are samples at 44.1 kHz (13 samples at 44.1 kHz, 14 at 48 kHz, 26 at 88.2 kHz, 28 at 96 kHz for Nova). The strike position is an argument, so the blend knobs can move it. It requires tip and shoulder taus to be equal (Nova's are), so the contact length does not depend on position.
 - **Level trims (plugin only).** Each slot of the plugin's bake carries a level trim, `level_trim.gain_db`: the gain that gives a velocity-0.9 hit at its base position the same 1-second RMS (both channels) as one on BOW (tip). It is measured with `FastEngine` itself (`tools/cymbalis_trims`), stored by `tools/set_level_trims.py`, and can be edited by hand. `FastEngine` multiplies a strike's coupling by calibration × trim, and scales the skip threshold the same way; blends use their slot's trim. `Engine`, the Python-matching path, ignores it. Nova Ride: BELL shoulder +10.48 dB, BOW tip 0, EDGE −7.91 dB (bow shoulder's, decision 13; the stand-in had −8.61 dB), BELL tip +17.48 dB, BOW shoulder −7.91 dB.
 - **The comparison pipeline** is `tools/bake_preset.py`, `tools/render_reference.py`, `cymbalis_render`, `tools/compare_ab.py` and `tools/run_ab.py`. The sequences are in `tests/sequences/`. Each stage's sequences switch on everything up to that stage and nothing after it.
 
@@ -679,8 +680,8 @@ Every other key the two presets set either has its default effect or is not read
 ### Live-engine decisions for these presets
 
 1. **The band envelope belongs to its strike** (the superposition decision above). In Python, one envelope, that of the latest edge strike, replaces the level of every ringing mode, including energy from later bow strikes, and the onset ramp never applies again after it (lines 869-896). In the plugin, each edge strike's envelope drives only its own energy, and other strikes ring normally. A strike with an envelope has no onset ramp, as in Python.
-2. **The shared oscillator does not decay for these two presets.** An envelope strike's level follows its envelope, not its T60, so every strike carries its whole decay (`oscWash_ = 0`). Nova keeps its oscillator decay.
-3. **The control block divides the 20 ms frame.** It is 126 samples at 44.1 kHz, 120 at 48 kHz, 252 at 88.2 kHz and 240 at 96 kHz (7 or 8 blocks per frame), so the in-frame decay restarts on a control point. At each later strike, the next restart of every running envelope is rounded to the new control grid (at most half a block, about 1.4 ms, once per strike). Nova keeps 128/256.
+2. **The shared oscillator does not decay for these two presets.** An envelope strike's level follows its envelope, not its T60, so every strike carries its whole decay (`oscWash_ = 0`). So for every later preset with NPZ edge data, and for NOVA RIDE since its NPZ edge (2026-11-23, "Nova Ride's NPZ edge").
+3. **The control block divides the 20 ms frame.** It is 126 samples at 44.1 kHz, 120 at 48 kHz, 252 at 88.2 kHz and 240 at 96 kHz (7 or 8 blocks per frame), so the in-frame decay restarts on a control point. At each later strike, the next restart of every running envelope is rounded to the new control grid (at most half a block, about 1.4 ms, once per strike). Presets without NPZ edge data keep 128/256; NOVA RIDE has had NPZ data since 2026-11-23.
 4. **Slots.** SMOKE FLAT RIDE: BOW and BOW2 play the 602 bow and EDGE the 602 edge. BELL and BELL2, labelled CENTER and CENTER2, play the 602 center (2026-10-17; silent before). HAMMERED THIN RIDE: BELL/BELL2 play the bell, BOW/BOW2 the bow, EDGE the edge. Those are the TIP versions. Since 2026-10-17 the bell and bow rows also offer SHOULDER copies (decision 14 under "Articulations and sticks"). EDGE is SHOULDER only (`docs/UI_SPEC.md` section 8). Bake entries: 602 `BOW` (`bow.json`, 0.5), `EDGE` (`edge.json`, 0.0), `CENTER` (a copy of `BOW` at 1.0, articulation id `center`), `BOW_SHOULDER` (a copy of `BOW`) and `CENTER_SHOULDER` (a copy of `CENTER`); Bettis `BELL` (1.0), `BOW` (0.5) and `EDGE` (0.0), with no overlays, `BELL_SHOULDER` and `BOW_SHOULDER` (copies). Python has no center or shoulder data for these presets: those are plugin entries made of the tip data, to be tuned by ear (`docs/TUNING.md`).
 5. **Level trims follow the SPEAR captures, capped by peak** (2026-10-15; they replaced trims that made every slot equally loud at velocity 0.9). All levels are at full velocity (1.0), the RMS of the first 500 ms (both channels).
    - BOW is matched to Nova BOW (tip), so the presets stay level with each other. It is never lowered, even where it peaks above 0.9.
@@ -690,7 +691,7 @@ Every other key the two presets set either has its default effect or is not read
    - The 602's CENTER starts with BOW's trim. Measured again, it has no SPEAR target and is matched to Nova's BOW (tip) like BOW, so it gets BOW's trim.
    - The shoulder copies (602 `BOW_SHOULDER`, `CENTER_SHOULDER`; Bettis `BELL_SHOULDER`, `BOW_SHOULDER`) start with their sources' trims.
    - Each bake records, next to the trim (`slots[].level_trim`): `spear_target_db`, and where capped, `capped`, `capped_level_db`, `uncapped_gain_db` and `cap_reason`.
-   - Measured with `tools/cymbalis_trims --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target SLOT=DB --peak-limit 0.9` (`docs/BUILDS.md`). Nova keeps its own trims (velocity 0.9, 1 s).
+   - Measured with `tools/cymbalis_trims --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target SLOT=DB --peak-limit 0.9` (`docs/BUILDS.md`). Nova keeps its own trims (velocity 0.9, 1 s); its EDGE since 2026-11-23 is matched to its earlier level ("Nova Ride's NPZ edge").
    - The 602 stays at EDGE VOICE FROM BOW 0 % with its EDGE trim −0.05 dB (Kris, 2026-10-31). At 100 % it would be −0.60 dB: the voiced edge is 0.55 dB louder over the first 500 ms.
 
    | Preset | Entry | SPEAR target vs BOW | Trim | Level vs BOW | Peak of one hit with trim (99th percentile) | Capped |
@@ -1064,6 +1065,84 @@ Its CPU cost (`cymbalis_bench`, 60 s, this container): 3.5 % of a core at 44.1 k
 - **The pk_t ramps have no effect** with the envelope on (as for the other NPZ presets): the edge pk_t and the edge velocity tilt are inaudible, and bow strikes never ramp. With EDGE ONSET ENVELOPE off, edge modes ramp in over up to 7.95 s (the edge pk_t's longest).
 - **The calibration does not see the envelope** (as for the other NPZ presets); the trims make up for the level.
 - **`data/azcrash_build_info.json` has no `t60_refit` record** (null); the refit's numbers are in the manifest only.
+
+## Nova Ride's NPZ edge
+
+Added 2026-11-23. Kris approved it by ear on 2026-11-22 ("version 8") from the project session's listening tests, and asked for it to be done cautiously. NOVA RIDE's EDGE row now plays an NPZ edge, through the mechanism the 602, Bettis, Raven, Konstan, Extra Paper Thin and Crash 16 use. Every other preset bakes and plays bit for bit as before (checked, below). NOVA RIDE's other rows play as before to within rounding ("The engine", below).
+
+### The data
+
+`presets/nova/data/nova_edge_npz_raven_onset.json` (`docs/BASELINE_MANIFEST.md`, Nova). It is plugin only: neither the Python engine nor `Nova_Baseline19.json` reads it. The format is Bettis's NPZ JSON, as `raven_edge_npz_data.json`:
+
+- **Mode weights (velw).** One set on all 7 rows (velocities 0.1097–1.0): Nova's edge before, `exc_norm` × the bow-shoulder velocity table's V4 column × `edge_weight`, peak 1, in the mode order of `nova_vel_participation.json`. Checked against the bake: they equal its `exc_norm` × EDGE's V4 column × `edge_weight` to 5e-8 (the file's rounding), so the 2270 modes line up.
+- **Envelopes** (7 rows × 1500 frames of 20 ms × 22 bands: 30 s; the bands are the plugin's thirds, 89–14 368 Hz). Per band and row, the build-up to the band's peak follows Raven's edge at that row. The peak is Nova's edge at full velocity times Raven's change from full velocity, so soft hits are darker. After the peak the band rings as Nova's edge did.
+- **Its `bake` block**: `edge_rms_correction` (22 values), `edge_band_env_onset_s` 30, `level_vel_gain_power` 1.5, `edge_use_velw` and `edge_velw_normalize` true, and the two engine rules below. The rows' velocities are set so the level follows velocity^1.5.
+
+### Bake
+
+`tools/bake_preset.py` (`NPZ_ATTACHED`, `attached_edge_npz`) attaches the file to NOVA RIDE's bake as its `edge_npz` block, in the other presets' layout (`edge_npz_block`), with:
+
+- `envelope_active` true and `envelope_set_by` naming the file, as Swish's `ENVELOPE_ON` does; the loader accepts it with that note, since Nova's `edge_band_env` is false;
+- the file's bake settings, its corrections unclamped ("Things that look wrong", below);
+- `edge_row_only` and `no_contact_on_envelope_strikes` true;
+- `edge_npz` true in every entry's effective parameters;
+- the file in the bake's `sources` (its MD5 checked against the manifest), and a note.
+
+It checks the file first: rows keyed by its velocities in order, 2270 modes, 7 × 1500 × 22 envelopes, band indices rising with the mode within the 22 bands, 22 corrections, and boolean switches.
+
+Everything else is unchanged. A re-bake equals the previous bake everywhere else, key by key: the contact (`permode_contact`, `tip_contact_ms`, `shld_contact_ms`), the velocity tables (with the V5 → V4 fix, decision 17), the onset ramps, the calibration, every array. The level trims and the tuning block were carried over unchanged, except EDGE's trim (below).
+
+### The engine
+
+- **Built as every NPZ preset** (the 602 and Bettis decisions 2 and 3). The engine's structure follows its NPZ data, not the strike ("Swish", the edge band envelope switched on by the bake):
+  - the shared oscillator carries no decay; every strike carries its whole decay;
+  - the control block divides the 20 ms frame: 126 samples at 44.1 kHz, 120 at 48 kHz, 252 at 88.2 kHz and 240 at 96 kHz, in place of 128 and 256.
+
+  An envelope strike needs both. With Nova's earlier structure, a velocity-1.0 EDGE hit fell to −64 dB at 1 s and −98 dB at 3 s instead of −56 and −78 dB: the oscillator's decay was applied on top of the envelope.
+- **So NOVA RIDE's other rows now differ from before by rounding.** The strikes, levels, blending and contact are the same, computed on a different control grid and with each strike's decay carried by the strike. Kris accepted a bound in place of bit for bit (2026-11-23): the difference at least 60 dB under the signal. Attaching the data alone, on main's engine, moved BELL, BELL2, BOW and BOW2 to 66–74 dB under the signal. The control block alone gave 66–74 dB, the oscillator decay alone 91–101 dB; with both kept as before they were bit for bit.
+- **`edge_row_only`** (plugin only; `EdgeNpz::edgeRowOnly`, `FastEngine::npzSlot_`). Only strikes of the `edge` entry use the NPZ edge: its velw coupling, its level law and its band envelope. Every other entry keeps its own coupling at any position, as if the preset had no NPZ data. So NOVA RIDE's BOW and BOW2 with Blend Position 2 turned up blend towards the edge as before (position weights, onset ramp); they don't switch to the NPZ edge at 20 %. Why: the NPZ edge is made for the EDGE row; the bow rows' blend towards the edge is Nova's own, as Kris tuned it. Without the flag (every other preset), any strike with an edge fraction above 0.1 uses the NPZ edge, as before. The loader refuses the flag in a bake with no `edge` entry.
+- **`no_contact_on_envelope_strikes`** (plugin only; `EdgeNpz::noContactOnEnvelope`). A strike that follows the band envelope has no stick-contact phase: an instantaneous injection, as on Raven, Bettis and the crashes, which have no contact. Every other strike keeps its contact, so NOVA RIDE's bell and bow keep their tip and shoulder character. Why: during the contact phase a strike is not enveloped, so an envelope strike with contact starts with a burst at its un-enveloped strength. The project session measured a click up to +6.5 dB above the first 500 ms average, with peaks 5× today's.
+  - **Within another strike's contact.** An envelope strike that lands while other strikes' contacts still run (within 13 samples of a bow or bell hit) is held out of the shared state until they end. It is then put in as it would have rung since its strike, with its envelope at that time (`Component::held`, `startFreePhase`). Its onset comes at most one contact length late, with no un-enveloped burst. Measured: EDGE at 1.0, 0–3 ms after a BOW or BOW2 hit at 0.8, peaks at most 1.16× the two hits' peaks played apart, and its first 10 ms are within +2.1 dB of their sum.
+  - SWISH keeps its contact on envelope strikes: its bake has no such flag.
+- `Engine`, the retired path, refuses NPZ data and the tuning block, as before.
+
+### EDGE's level trim
+
++12.20 dB (was −7.91 dB): a velocity-1.0 EDGE hit has the same RMS over its first 500 ms as before, −28.97 dB, to 0.0004 dB (44.1 kHz, HIT VARIATION off, FastEngine in memory, against main's engine and bake). At the old trim the NPZ edge is 20.11 dB quieter; the project session measured +12.1 dB. Softer hits follow velocity^1.5 from there. The reason is recorded in `slots[].level_trim`. The other trims are unchanged. Nova's trims recipe in `docs/BUILDS.md` (velocity 0.9, 1 s, against BOW) would replace this trim; EDGE keeps +12.20 dB.
+
+### Checked in memory (2026-11-23)
+
+- **Every other preset is bit for bit** with this engine against main's, on the shipped bakes (`tools/cymbalis_identity/run.sh`: 44.1 and 96 kHz, blocks of 128 and 64, with the default tuning and with the cascade and both dampings on).
+- **NOVA RIDE's BELL, BELL2, BOW and BOW2 against main** (main's engine and bake), at 44.1 and 96 kHz with HIT VARIATION as baked: single hits at velocities 0.05, 0.2, 0.35, 0.5, 0.65, 0.8, 0.9 and 1.0, and a 12-hit sequence of mixed velocities, with both Blend Position knobs at 0, 50 % and 100 %; and the four rows mixed, 24 hits, with the knobs moving (69.2 dB). The difference is at least 64.3 dB under the signal. Their levels (first second) are within 0.001 dB and their contact (first 2 ms) within 0.01 dB. The worst case of each row, all at 44.1 kHz (96 kHz is 2–3 dB further under):
+
+  | Row | Blend 0 % | Blend 50 % | Blend 100 % |
+  |---|---|---|---|
+  | BELL | 72.3 dB | 69.7 dB | 67.6 dB |
+  | BELL2 | 64.3 dB | 67.5 dB | 67.8 dB |
+  | BOW | 66.5 dB | 73.0 dB | 73.1 dB |
+  | BOW2 | 74.0 dB | 82.3 dB | 82.9 dB |
+
+- **The new edge**: single EDGE hits, HIT VARIATION off, 44.1 kHz, with the project session's values in brackets:
+
+  | Velocity | 0.2 | 0.35 | 0.5 | 0.65 | 0.8 | 1.0 |
+  |---|---|---|---|---|---|---|
+  | Level, first 500 ms, against 1.0 | −20.6 dB (−20.5) | −13.9 dB (−14.0) | −9.1 dB (−8.8) | −6.0 dB (−6.2) | −3.0 dB (−2.6) | 0 |
+  | Spectral centroid, 0.05–0.6 s | 916 Hz (879) | 811 Hz (792) | 914 Hz (853) | 902 Hz (853) | 952 Hz (885) | 1093 Hz (982) |
+  | Peak, one hit every 3 s | 0.011 (0.01) | 0.022 (0.02) | 0.040 (0.04) | 0.056 (0.05) | 0.081 (0.09) | 0.136 (0.13) |
+  | First 5 ms against the first 500 ms | −4.4 dB | −6.8 dB | −9.4 dB | −6.6 dB | −4.9 dB | −5.2 dB |
+
+  The previous edge gave −13.3, −8.8, −5.8, −3.4, −1.7 and 0 dB, centroids of 1151–1188 Hz, and first 5 ms −1.7 to −2.4 dB. The centroids here (the power-weighted mean frequency of Hann frames of 4096, both channels) run 20–110 Hz above the project session's, which may measure them differently.
+- **No ring returning.** After one EDGE hit at 1.0, every 250 ms block from 1.25 s to 30 s is below the block at 1 s. The loudest is 2.9 dB under it, at 1.25 s; no block rises more than 0.01 dB over the one before.
+- **Bench** (`cymbalis_bench`: every slot cycled, EDGE included, 10 strikes a second; this container, 256-sample blocks). 13.9 % of a core at 44.1 kHz (7.2× real time), 16.4 % at 48 kHz, 25.4 % at 96 kHz (3.9×). Main's engine and bake: 13.3 % and 24.9 %. The mean strike costs 320 µs against 202 µs: each EDGE strike searches its envelope's 1500 × 22 frames for the peak.
+
+### Things in the Nova edge data or engine that look wrong (ported as they are)
+
+- **A later contact plays a ringing envelope strike at its un-enveloped strength** (an engine behaviour SWISH has too).
+  - **Why.** During a contact phase the engine plays the shared state, which `rebaseComponents` builds from each ringing strike's coupling × its own decay, not from its enveloped level. So while an EDGE hit rings (30 s), every BOW or BELL hit's contact (13 samples) plays the edge at that strength.
+  - **On NOVA RIDE.** Its corrections lower its main bands (×0.15–0.24 at 566–713 Hz and 1.4–2.3 kHz), so there the un-enveloped edge is louder than the enveloped one. With EDGE at 1.0, then BOW, BOW2 or BELL at 0.6 every 0.25 s, the peak in the 4 ms after each hit is up to 3.9×, 3.8× and 2.7× the hit's own. On the bench pattern the output peaks at 1.07, against 0.31 on main.
+  - **A possible fix.** A prototype, not in this change: the state takes an envelope strike's enveloped amplitude at the rebase. It brings those peaks to 1.2×, 1.2× and 1.5×, and the bench peak to 0.44. It would leave SWISH's peaks as they are (its corrections are all 1), but SWISH would no longer be bit for bit.
+  - Reported to Kris; not changed here.
+- **The band corrections are large and unclamped**: ×510 at 89–112 Hz, ×27–30 at 141–178 and 225–283 Hz, ×11 and ×5.6 at 283–449 Hz. Every other preset's stay within ×4. This is intended (Kris, 2026-11-23): Nova's edge drives the modes in those bands very weakly (their velw sums are 0.0003–0.05 of 32.4), and the envelopes set each band to Nova's level.
 
 ## Hi-hat
 

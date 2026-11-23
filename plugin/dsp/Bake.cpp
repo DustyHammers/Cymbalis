@@ -174,10 +174,19 @@ void readEdgeNpz(const json::Value& z, size_t numModes, EdgeNpz& out, std::vecto
     out.frameDecayPeriodS = z.at("frame_decay_period_s").number();
     if (!(out.frameDurS > 0.0) || !(out.frameDecayPeriodS > 0.0) || !(out.onsetS >= 0.0))
         throw BakeError("edge_npz: frame lengths must be positive and onset_s >= 0");
+    // The plugin-only engine rules (NOVA RIDE's attached NPZ edge): absent, off.
+    const auto rule = [&](const char* key) {
+        const json::Value* v = z.find(key);
+        return v != nullptr && ! v->isNull() && v->boolean();
+    };
+    out.edgeRowOnly = rule("edge_row_only");
+    out.noContactOnEnvelope = rule("no_contact_on_envelope_strikes");
     rep.push_back("edge npz     " + std::to_string(nv) + " velocities, " + std::to_string(out.numFrames) + " frames x " +
                   std::to_string(out.numBands) + " bands of " + fmt("%.3f s", out.frameDurS) +
                   (out.envelopeActive ? fmt(", band envelope for %.1f s after an edge strike", out.onsetS)
-                                      : std::string(", no band envelope")));
+                                      : std::string(", no band envelope")) +
+                  (out.edgeRowOnly ? ", edge entry only" : "") +
+                  (out.noContactOnEnvelope ? ", no stick contact on envelope strikes" : ""));
 }
 
 // The hi-hat block written by tools/bake_hihat.py (docs/PORT_MAP.md, "Hi-hat").
@@ -869,6 +878,14 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
                 if (!found)
                     throw BakeError(std::string("hihat: the bake needs an entry with articulation id '") + id + "'");
             }
+        if (b.edgeNpz.edgeRowOnly)
+        {
+            bool found = false;
+            for (const auto& s : b.slots)
+                found = found || s.id == "edge";
+            if (!found)
+                throw BakeError("edge_npz.edge_row_only: the bake has no entry with articulation id 'edge'");
+        }
 
         // ---- RNG streams (stage 0: exact PCG64, uniform() and choice())
         const auto& rng = root.at("rng");

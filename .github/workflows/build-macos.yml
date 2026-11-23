@@ -222,7 +222,8 @@ jobs:
       # from (docs/UI_SPEC.md section 6). Then click the CYMBALIS title: the Tuning window must be
       # visible, in front of the editor and attached to it;
       # the wheel over its sliders and numeric boxes must change nothing; EDGE VOICE FROM BOW
-      # must move on KONSTAN, RAVEN, SWISH, EXTRA PAPER THIN, CRASH 16", HAMMERED and SMOKE; SWISH's bow_shoulder must take
+      # must move on KONSTAN, RAVEN, SWISH, EXTRA PAPER THIN, CRASH 16", HAMMERED, SMOKE and NOVA RIDE (its EDGE first
+      # played through the host: its NPZ edge, the soft hit 10-15 dB under the hard one, no click); SWISH's bow_shoulder must take
       # NOVA SHOULDER PROFILE's bow profile, EXTRA PAPER THIN's and CRASH 16"'s bell_shoulder and bow_shoulder Nova's bell and
       # bow profiles (each preset's tuning then saved and loaded back), and NOVA RIDE must have no such button; NOVA's first articulation's
       # three STICK CLICK weights must move; HIT VARIATION's switch must flip and its two spreads
@@ -230,13 +231,13 @@ jobs:
       # stand-ins for the file panels) must hold and restore the tuning; on HI-HAT the window
       # shows the values that act on it and hides the others; a second click on
       # the title hides the window, and on HI-HAT it opens and closes it again (tools/cymbalis_uitest).
-      # 65 steps in each host take about 2.6 minutes per host on the runner (59 took 4.8 minutes in
-      # all with EXTRA PAPER THIN 24"), hence 8 minutes.
+      # 65 steps in each host took about 2.6 minutes per host on the runner (59 took 4.8 minutes in
+      # all with EXTRA PAPER THIN 24"); 67 with NOVA RIDE's EDGE (10 s more audio), hence 8 minutes.
       - name: Editor mouse test (AU and VST3)
         timeout-minutes: 8
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
-          STEPS="edge sticks channel drag reset none edgereset list stick preset shoulder swish raven paperthin konstan azcrash hihat blendhidden hihatplay hihatpedal hihatswing pedalchannel pedalcc konstan blendshown wheel arcs tuning wheeltuning voice raven voice swish voice profile paperthin voice ptprofile savetuning loadtuning azcrash voice azprofile savetuning loadtuning preset voice smoke voice nova noprofile nohihatvalues clickweights hitvariation savetuning loadtuning hihat hihattuning hihatvalues hihatopen savetuning loadtuning tuningclose tuning tuningclose"
+          STEPS="edge sticks channel drag reset none edgereset list stick preset shoulder swish raven paperthin konstan azcrash hihat blendhidden hihatplay hihatpedal hihatswing pedalchannel pedalcc konstan blendshown wheel arcs tuning wheeltuning voice raven voice swish voice profile paperthin voice ptprofile savetuning loadtuning azcrash voice azprofile savetuning loadtuning preset voice smoke voice nova novaedge voice noprofile nohihatvalues clickweights hitvariation savetuning loadtuning hihat hihattuning hihatvalues hihatopen savetuning loadtuning tuningclose tuning tuningclose"
           echo "--- VST3 ---"
           "$UITEST" "$PWD/$VST3" $STEPS
           echo "--- AU ---"

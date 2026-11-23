@@ -388,6 +388,10 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
     }
     envBake_ = z.present;
     envOn_ = z.present && z.envelopeActive;
+    npzSlot_.assign(b.slots.size(), 1);
+    if (z.present && z.edgeRowOnly)
+        for (size_t s = 0; s < b.slots.size(); ++s)
+            npzSlot_[s] = b.slots[s].id == "edge" ? 1 : 0;
     if (envBake_)
     {
         // An envelope strike's level follows its band envelope, not the T60 decay, so the
@@ -3451,9 +3455,17 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     CYM_PROF_END(strikeRehit);
     comp.order = ++componentOrder_;
     comp.contactStart = sampleNow_;
+    // An edge strike of a preset with NPZ data (edge fraction above 0.1) uses the NPZ edge;
+    // with edge_row_only only the "edge" entry's strikes do (docs/PORT_MAP.md, "Nova Ride's
+    // NPZ edge"). Lines 690-694 and 869-894: with the band envelope on, it follows it.
+    const bool npzSlot = npzSlot_[size_t(slotIndex)] != 0;
+    const bool envStrike = envOn_ && npzSlot && edgeFrac > 0.1;
+    // no_contact_on_envelope_strikes: an envelope strike has no contact phase (instantaneous
+    // injection); with other strikes' contacts running it is held until they end.
+    const bool noContact = envStrike && b.edgeNpz.noContactOnEnvelope;
     CYM_PROF_BEGIN(strikeContact);
     Contact* contact = nullptr;
-    if (p.contactPermode)
+    if (p.contactPermode && ! noContact)
     {
         if (activeContacts_ == kMaxContacts)
         {
@@ -3475,11 +3487,12 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
         contact = &contactPool_[size_t(activeContacts_++)];
         contact->k = 0;
     }
-    comp.pending = contact != nullptr;
+    comp.held = noContact && activeContacts_ > 0;
+    comp.pending = contact != nullptr || comp.held;
     CYM_PROF_END(strikeContact);
     // Lines 1043-1061: an edge strike of a preset with NPZ data takes its coupling from the
     // velw tables, with a second set of random phases (Python draws both).
-    const bool npzEdge = b.edgeNpz.present && edgeFrac > 0.1 && b.edgeNpz.useVelw;
+    const bool npzEdge = b.edgeNpz.present && npzSlot && edgeFrac > 0.1 && b.edgeNpz.useVelw;
     double npzLevel = 0.0;
     if (npzEdge)
     {
@@ -3522,7 +3535,7 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
             contact->cr[i] = cr;
             contact->ci[i] = ci;
         }
-        else
+        else if (! comp.held)
         {
             zr_[i] += cr; // line 1065: instantaneous injection
             zi_[i] += ci;
@@ -3558,7 +3571,7 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     comp.gm1Max = 0.0;
     // Lines 690-694 and 869-894: with an NPZ band envelope an edge strike's level follows
     // the envelope for its onset window, and the onset ramp does not apply (line 896).
-    comp.envOn = envOn_ && edgeFrac > 0.1;
+    comp.envOn = envStrike;
     comp.envWindow = envWindowS_;
     comp.frameRestart = frameRestart_;
     // The ring length on its envelope, kept with the strike (a later change applies from the
@@ -3948,6 +3961,27 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
     {
         if (!c.used || !c.pending)
             continue;
+        if (c.held)
+        {
+            // An envelope strike without contact, held during other strikes' contacts: its
+            // coupling as it would have rung since its strike (the state's step, as the
+            // contact phase steps it), put into the state now.
+            const int64_t since = sampleNow_ - c.contactStart;
+            if (since > 0)
+                complexPowerArray(stepR_.data(), stepI_.data(), since, vmCos_.data(), vmSin_.data(), n_);
+            for (int k = 0; k < n_; ++k)
+            {
+                const size_t s = size_t(k);
+                const double er = since > 0 ? vmCos_[s] : 1.0, ei = since > 0 ? vmSin_[s] : 0.0;
+                const double cr = c.Br[s], ci = c.Bi[s];
+                const double nr = cr * er - ci * ei, ni = cr * ei + ci * er;
+                c.Br[s] = static_cast<float>(nr);
+                c.Bi[s] = static_cast<float>(ni);
+                zr_[s] += nr;
+                zi_[s] += ni;
+            }
+            continue;
+        }
         const int64_t extra = std::max<int64_t>(0, sampleNow_ - (c.contactStart + contactLen_));
         if (extra == 0)
         {
@@ -3976,6 +4010,7 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
         {
             setDecayAll(c);
             c.pending = false;
+            c.held = false;
             if (c.envOn) // the envelope scales what the contact left
             {
                 std::copy(c.Br.begin(), c.Br.end(), c.Er.begin());

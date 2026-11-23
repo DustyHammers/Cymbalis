@@ -110,6 +110,12 @@
 //
 //   nova      click the CYMBAL box, then NOVA RIDE (the first)       -> preset nova_ride
 //   smoke     click the CYMBAL box, then SMOKE FLAT RIDE (the second) -> preset smoke_flat_ride
+//   novaedge  (on NOVA RIDE) MIDI through the host into the plugin, on the session's channel and
+//             EDGE note, Velocity Sensitivity at its default: a hard EDGE hit (127), 8 s, then a
+//             soft one (51, velocity 0.40). EDGE plays the NPZ edge, its level following
+//             velocity^1.5 (docs/PORT_MAP.md, "Nova Ride's NPZ edge"): the soft hit 10-15 dB under
+//             the hard one over the first 500 ms (the bow-shoulder copy it replaced: about 7 dB),
+//             and each hit's first 5 ms under its first 500 ms (no contact click) -> played
 //
 // Exit code 0 when every step passed.
 //
@@ -437,6 +443,82 @@ private:
             return "the open EDGE does not ring on 20 dB above the closed one";
         if (! (footMs > 1e-8))
             return "the pedal closing plays no FOOT";
+        return "played";
+    }
+
+    // novaedge: NOVA RIDE's EDGE through the hosted plugin's processBlock (blocks of 512, as
+    // hihatplay), on the session's MIDI channel and EDGE note, with Velocity Sensitivity at its
+    // default (velocity = MIDI velocity / 127) and put back afterwards.
+    juce::String playNovaEdge()
+    {
+        std::unique_ptr<juce::XmlElement> xml (juce::parseXML (sessionNow()));
+        if (xml == nullptr)
+            return "no session";
+        if (xml->getStringAttribute ("preset") != "nova_ride")
+            return "the preset is " + xml->getStringAttribute ("preset") + ", not nova_ride";
+        const int ch = xml->getIntAttribute ("midiChannel", 16), note = xml->getIntAttribute ("note_EDGE", -1);
+        std::printf ("      channel %d, EDGE note %d\n", ch, note);
+        if (note < 0)
+            return "no EDGE note";
+        juce::AudioProcessorParameter* sens = nullptr;
+        for (auto* p : plugin->getParameters())
+            if (p->getName (64) == "Velocity Sensitivity")
+                sens = p;
+        if (sens == nullptr)
+            return "no Velocity Sensitivity parameter";
+        const float sensWas = sens->getValue();
+        sens->setValueNotifyingHost (sens->getDefaultValue());
+        constexpr int block = 512;
+        constexpr double rate = 48000.0;
+        juce::AudioBuffer<float> buffer (juce::jmax (2, plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels()), block);
+        // Mean square of `seconds` rendered after `msg` (at the first sample), both channels, and
+        // of its first `head` samples.
+        struct Level { double all = 0.0, head = 0.0; };
+        auto render = [&] (double seconds, const juce::MidiMessage* msg, int head) {
+            double sum = 0.0, sumHead = 0.0;
+            long count = 0, countHead = 0;
+            const int blocks = juce::roundToInt (seconds * rate / block);
+            for (int b = 0; b < blocks; ++b)
+            {
+                juce::MidiBuffer midi;
+                if (b == 0 && msg != nullptr)
+                    midi.addEvent (*msg, 0);
+                buffer.clear();
+                plugin->processBlock (buffer, midi);
+                for (int c = 0; c < 2; ++c)
+                    for (int i = 0; i < block; ++i)
+                    {
+                        const double x = buffer.getSample (c, i);
+                        sum += x * x;
+                        if (b * block + i < head)
+                        {
+                            sumHead += x * x;
+                            ++countHead;
+                        }
+                    }
+                count += 2 * block;
+            }
+            return Level { sum / (double) juce::jmax (1L, count), sumHead / (double) juce::jmax (1L, countHead) };
+        };
+        auto dB = [] (double ms) { return 10.0 * std::log10 (juce::jmax (ms, 1e-30)); };
+        const int head = juce::roundToInt (0.005 * rate);
+        render (0.5, nullptr, 0); // the plugin takes the NOVA RIDE cymbal its loader built
+        const auto hardMsg = juce::MidiMessage::noteOn (ch, note, (juce::uint8) 127);
+        const auto softMsg = juce::MidiMessage::noteOn (ch, note, (juce::uint8) 51);
+        const auto hard = render (0.5, &hardMsg, head);
+        render (8.0, nullptr, 0);
+        const auto soft = render (0.5, &softMsg, head);
+        render (0.5, nullptr, 0);
+        sens->setValueNotifyingHost (sensWas);
+        const double drop = dB (hard.all) - dB (soft.all);
+        std::printf ("      EDGE at 127: %.1f dB (first 5 ms %+.1f dB); at 51: %.1f dB (first 5 ms %+.1f dB); %.1f dB softer\n",
+                     dB (hard.all), dB (hard.head) - dB (hard.all), dB (soft.all), dB (soft.head) - dB (soft.all), drop);
+        if (! (hard.all > 1e-8) || ! std::isfinite (hard.all) || ! std::isfinite (soft.all))
+            return juce::String ("EDGE is silent or not finite");
+        if (! (drop >= 10.0 && drop <= 15.0))
+            return "the soft EDGE hit is " + juce::String (drop, 1) + " dB under the hard one, not 10-15 dB";
+        if (! (hard.head < hard.all && soft.head < soft.all))
+            return juce::String ("an EDGE hit's first 5 ms are above its first 500 ms");
         return "played";
     }
 
@@ -1039,6 +1121,13 @@ private:
             s.key = "hi-hat";
             s.expected = "played";
             s.probe = [this] { return playHiHat(); };
+        }
+        else if (name == "novaedge")
+        {
+            s.actions = { wait };
+            s.key = "NOVA RIDE EDGE";
+            s.expected = "played";
+            s.probe = [this] { return playNovaEdge(); };
         }
         else if (name == "hihatpedal")
         {
