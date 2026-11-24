@@ -624,11 +624,46 @@ void CymbalisProcessor::setSlotStick (int preset, int slot, cymbalis::Stick stic
 }
 
 // Session key of a row's stick in a preset: NOVA RIDE keeps the keys it had before the other
-// presets had a choice (stick_BELL), the others name the preset (stick_smoke_flat_ride_BELL).
+// presets had a choice (stick_BELL), the others name the preset (stick_stine_flat_ride_BELL).
 static juce::String stickKey (int preset, int slot)
 {
     return juce::String ("stick_") + (preset == 0 ? juce::String() : juce::String (cymbalis::kPresets[(size_t) preset].id) + "_")
            + cymbalis::kSlots[(size_t) slot].label;
+}
+
+// A preset a saved session may name that the plugin no longer has, and the one in its place
+// (docs/PORT_MAP.md, "Stine Flat Ride"): such a session opens on the new preset with the old
+// one's sticks and notes of its own, but not its tuning, which belonged to another cymbal (its
+// Tuning element names the old preset, so readTuningState passes over it).
+struct FormerPreset
+{
+    const char* id;  // the id sessions saved
+    const char* now; // the id of the preset in its place
+};
+constexpr FormerPreset kFormerPresets[] = { { "smoke_flat_ride", "stine_flat_ride" } };
+
+// The former id of a preset, or nullptr.
+static const char* formerId (int preset)
+{
+    for (const auto& f : kFormerPresets)
+        if (juce::String (f.now) == cymbalis::kPresets[(size_t) preset].id)
+            return f.id;
+    return nullptr;
+}
+
+// A session's value for `key`, or, where it has none, for the same key under the preset's former
+// id (stick_smoke_flat_ride_BOW for stick_stine_flat_ride_BOW), or `fallback`.
+static juce::String sessionValue (const juce::XmlElement& session, int preset, const juce::String& key, const juce::String& fallback)
+{
+    if (session.hasAttribute (key))
+        return session.getStringAttribute (key);
+    if (const char* old = formerId (preset))
+    {
+        const auto oldKey = key.replace (juce::String ("_") + cymbalis::kPresets[(size_t) preset].id + "_", juce::String ("_") + old + "_");
+        if (oldKey != key && session.hasAttribute (oldKey))
+            return session.getStringAttribute (oldKey);
+    }
+    return fallback;
 }
 
 void CymbalisProcessor::setEditorSize (int w, int h) noexcept
@@ -693,17 +728,20 @@ void CymbalisProcessor::setStateInformation (const void* data, int sizeInBytes)
         for (int k = 0; k < cymbalis::kNumPresets; ++k)
             if (cymbalis::kPresets[(size_t) k].ownNotes)
                 for (int i = 0; i < cymbalis::kNumSlots; ++i)
-                    setSlotNote (k, i, session->getIntAttribute (noteKey (k, i), cymbalis::defaultNote (k, i)));
+                    setSlotNote (k, i, sessionValue (*session, k, noteKey (k, i), juce::String (cymbalis::defaultNote (k, i))).getIntValue());
         for (int k = 0; k < cymbalis::kNumPresets; ++k)
             for (int i = 0; i < cymbalis::kNumSlots; ++i)
                 if (cymbalis::hasStickChoice (k, i))
                 {
-                    const auto stick = session->getStringAttribute (
-                        stickKey (k, i), cymbalis::stickName (cymbalis::kPresets[(size_t) k].slots[(size_t) i].defaultStick));
+                    const auto stick = sessionValue (*session, k, stickKey (k, i),
+                                                     cymbalis::stickName (cymbalis::kPresets[(size_t) k].slots[(size_t) i].defaultStick));
                     setSlotStick (k, i, stick == "TIP" ? cymbalis::Stick::tip : cymbalis::Stick::shoulder);
                 }
         setEditorSize (session->getIntAttribute ("editorWidth", 0), session->getIntAttribute ("editorHeight", 0));
-        const auto id = session->getStringAttribute ("preset", cymbalis::kPresets[0].id);
+        auto id = session->getStringAttribute ("preset", cymbalis::kPresets[0].id);
+        for (const auto& f : kFormerPresets)
+            if (id == f.id)
+                id = f.now;
         int preset = 0;
         for (int k = 0; k < cymbalis::kNumPresets; ++k)
             if (id == cymbalis::kPresets[(size_t) k].id)

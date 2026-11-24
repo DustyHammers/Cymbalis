@@ -105,7 +105,7 @@ jobs:
           BENCH=build/tools/cymbalis_bench/cymbalis_bench
           {
             echo "### Fast engine CPU on ${CPU}"
-            for PRESET in nova_ride smoke_flat_ride hammered_thin_ride swish raven paperthin konstan azcrash hihat; do
+            for PRESET in nova_ride stine_flat_ride hammered_thin_ride swish raven paperthin konstan azcrash hihat; do
               BAKE="resources/presets/${PRESET}.bake.json"
               echo
               echo "#### ${PRESET}"
@@ -125,7 +125,7 @@ jobs:
         timeout-minutes: 15
         run: |
           BAKES=()
-          for PRESET in nova_ride smoke_flat_ride hammered_thin_ride swish raven paperthin konstan azcrash hihat; do
+          for PRESET in nova_ride stine_flat_ride hammered_thin_ride swish raven paperthin konstan azcrash hihat; do
             BAKES+=(--bake "resources/presets/${PRESET}.bake.json")
           done
           {
@@ -235,7 +235,9 @@ jobs:
       # from (docs/UI_SPEC.md section 6). Then click the CYMBALIS title: the Tuning window must be
       # visible, in front of the editor and attached to it;
       # the wheel over its sliders and numeric boxes must change nothing; EDGE VOICE FROM BOW
-      # must move on KONSTAN, RAVEN, SWISH, EXTRA PAPER THIN, CRASH 16", HAMMERED and SMOKE; SWISH's bow_shoulder must take
+      # must move on KONSTAN, RAVEN, SWISH, EXTRA PAPER THIN, CRASH 16", HAMMERED and STINE (STINE FLAT RIDE: every row played
+      # with both sticks, its tuning saved and loaded back, and a SMOKE FLAT RIDE session reopening on it with its sticks and
+      # notes; the rows and the session through Cymbalis's processor compiled into the tool); SWISH's bow_shoulder must take
       # NOVA SHOULDER PROFILE's bow profile, EXTRA PAPER THIN's and CRASH 16"'s bell_shoulder and bow_shoulder Nova's bell and
       # bow profiles (each preset's tuning then saved and loaded back), and NOVA RIDE must have no such button; NOVA's first articulation's
       # three STICK CLICK weights must move; HIT VARIATION's switch must flip and its two spreads
@@ -246,12 +248,12 @@ jobs:
       # to its limits (960 x 640, 1536 x 1024, 3:2 in between), and a session saved at another size reopening at it (VST3)
       # (tools/cymbalis_uitest).
       # 65 steps in each host took about 2.6 minutes per host on the runner (59 took 4.8 minutes in
-      # all with EXTRA PAPER THIN 24"); 68 with the editor's sizes, hence 8 minutes.
+      # all with EXTRA PAPER THIN 24"); 68 with the editor's sizes took under 8 minutes; 72 with STINE FLAT RIDE's, hence 10.
       - name: Editor mouse test (AU and VST3)
-        timeout-minutes: 8
+        timeout-minutes: 10
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
-          STEPS="opensize edge sticks channel drag reset none edgereset list stick preset shoulder swish raven paperthin konstan azcrash hihat blendhidden hihatplay hihatpedal hihatswing pedalchannel pedalcc konstan blendshown wheel arcs tuning wheeltuning voice raven voice swish voice profile paperthin voice ptprofile savetuning loadtuning azcrash voice azprofile savetuning loadtuning preset voice smoke voice nova noprofile nohihatvalues clickweights hitvariation savetuning loadtuning hihat hihattuning hihatvalues hihatopen savetuning loadtuning tuningclose tuning tuningclose dragsize savedsize"
+          STEPS="opensize edge sticks channel drag reset none edgereset list stick preset shoulder swish raven paperthin konstan azcrash hihat blendhidden hihatplay hihatpedal hihatswing pedalchannel pedalcc konstan blendshown wheel arcs tuning wheeltuning voice raven voice swish voice profile paperthin voice ptprofile savetuning loadtuning azcrash voice azprofile savetuning loadtuning preset voice stine stinerows smokesession voice savetuning loadtuning nova noprofile nohihatvalues clickweights hitvariation savetuning loadtuning hihat hihattuning hihatvalues hihatopen savetuning loadtuning tuningclose tuning tuningclose dragsize savedsize"
           echo "--- VST3 ---"
           "$UITEST" "$PWD/$VST3" $STEPS
           echo "--- AU ---"

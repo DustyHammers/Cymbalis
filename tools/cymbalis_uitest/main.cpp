@@ -11,7 +11,7 @@
 //
 //   edge      nothing: the EDGE note of a new instance                -> note_EDGE 64
 //   sticks    nothing: the sticks of a new instance, every preset     -> BELL and BOW TIP,
-//             BELL2 and BOW2 SHOULDER (CENTER and CENTER2 on SMOKE FLAT RIDE)
+//             BELL2 and BOW2 SHOULDER (CENTER and CENTER2 on STINE FLAT RIDE)
 //   channel   click the MIDI CHANNEL box, then channel 5 in the grid  -> midiChannel 5
 //   drag      drag the BOW note box up by 40 design units             -> note_BOW 67
 //   reset     click the BOW note box, then RESET DEFAULT              -> note_BOW 62
@@ -127,7 +127,15 @@
 //                                                                    -> the size before, the size
 //             saved (a saved size wins over the opening size)
 //   nova      click the CYMBAL box, then NOVA RIDE (the first)       -> preset nova_ride
-//   smoke     click the CYMBAL box, then SMOKE FLAT RIDE (the second) -> preset smoke_flat_ride
+//   stine     click the CYMBAL box, then STINE FLAT RIDE (the second) -> preset stine_flat_ride
+//   stinerows Cymbalis's processor, compiled into this tool, on STINE FLAT RIDE: every row's
+//             default note with the rows that have a choice on TIP, then on SHOULDER, each from
+//             silence (the processor prepared at another rate first); each hit must sound
+//                                                                    -> played
+//   smokesession a session saved with SMOKE FLAT RIDE (preset smoke_flat_ride, a SHOULDER choice
+//             on its BELL and BOW rows, note_BOW 70, a SMOKE tuning) restored in a new processor
+//             compiled into this tool: it opens on STINE FLAT RIDE with those sticks and that
+//             note, without the SMOKE tuning               -> on STINE with its sticks and note
 //
 // Exit code 0 when every step passed.
 //
@@ -149,6 +157,7 @@
 #include <vector>
 
 #include "HitTiming.h"
+#include "PluginProcessor.h"
 #include "ui/EditorSize.h"
 #include "MacEvents.h"
 #include "ShoulderProfiles.h"
@@ -211,6 +220,133 @@ juce::var currentTuning (const juce::String& session)
             if (t->getStringAttribute ("preset") == xml->getStringAttribute ("preset"))
                 return juce::JSON::parse (t->getAllSubText());
     return {};
+}
+
+// STINE FLAT RIDE's index in the preset table (docs/PORT_MAP.md, "Stine Flat Ride").
+int stineIndex()
+{
+    for (int k = 0; k < cymbalis::kNumPresets; ++k)
+        if (juce::String (cymbalis::kPresets[(size_t) k].id) == "stine_flat_ride")
+            return k;
+    return -1;
+}
+
+// stinerows: Cymbalis's own processor (compiled into this tool, as for the hit timing), on
+// STINE FLAT RIDE: each row's default note on MIDI channel 16 at velocity 127, with every row
+// that has a choice on TIP, then on SHOULDER. Before each hit the processor is prepared at the
+// other of 48 and 44.1 kHz, which silences the cymbal (its low modes ring up to 40 s), so each
+// hit starts from silence: its first 0.25 s must be finite and sound (RMS above 1e-9, and 60 dB
+// above the 0.05 s of silence before it).
+juce::String playStineRows()
+{
+    const int k = stineIndex();
+    if (k < 0)
+        return "no stine_flat_ride preset";
+    CymbalisProcessor p;
+    p.setPreset (k);
+    constexpr int block = 512;
+    bool at48 = true;
+    double rate = 48000.0;
+    p.prepareToPlay (rate, block);
+    juce::AudioBuffer<float> buffer (2, block);
+    auto render = [&] (double seconds, int note) {
+        double sum = 0.0;
+        long count = 0;
+        bool finite = true;
+        const int blocks = juce::roundToInt (seconds * rate / block);
+        for (int b = 0; b < blocks; ++b)
+        {
+            juce::MidiBuffer midi;
+            if (b == 0 && note >= 0)
+                midi.addEvent (juce::MidiMessage::noteOn (cymbalis::kDefaultMidiChannel, note, (juce::uint8) 127), 0);
+            buffer.clear();
+            p.processBlock (buffer, midi);
+            for (int c = 0; c < 2; ++c)
+                for (int i = 0; i < block; ++i)
+                {
+                    const double x = buffer.getSample (c, i);
+                    finite = finite && std::isfinite (x);
+                    sum += x * x;
+                }
+            count += 2 * block;
+        }
+        return finite ? sum / (double) juce::jmax (1L, count) : -1.0;
+    };
+    auto dB = [] (double ms) { return 10.0 * std::log10 (juce::jmax (ms, 1e-30)); };
+    juce::String wrong, levels;
+    for (const auto stick : { cymbalis::Stick::tip, cymbalis::Stick::shoulder })
+    {
+        for (int slot = 0; slot < cymbalis::kNumSlots; ++slot)
+            p.setSlotStick (k, slot, stick); // only the rows with a choice take it
+        levels << (stick == cymbalis::Stick::tip ? "TIP:" : " SHOULDER:");
+        for (int slot = 0; slot < cymbalis::kNumSlots; ++slot)
+        {
+            if (! cymbalis::rowPlays (k, slot))
+                continue;
+            const int note = p.slotNote (k, slot);
+            at48 = ! at48;
+            rate = at48 ? 48000.0 : 44100.0;
+            p.prepareToPlay (rate, block); // a new rate stops the ring
+            const double before = render (0.05, -1), hit = render (0.25, note);
+            levels << " " << cymbalis::kSlots[(size_t) slot].label << " " << juce::String (dB (hit), 1) << " dB";
+            if (hit < 0.0 || before < 0.0)
+                wrong << " " << cymbalis::kSlots[(size_t) slot].label << " not finite;";
+            else if (! (hit > 1e-9) || ! (dB (hit) - dB (before) >= 60.0))
+                wrong << " " << cymbalis::kSlots[(size_t) slot].label << (stick == cymbalis::Stick::tip ? " (TIP)" : " (SHOULDER)")
+                      << " does not sound;";
+        }
+    }
+    std::printf ("      STINE FLAT RIDE, every row: %s\n", levels.toRawUTF8());
+    return wrong.isEmpty() ? juce::String ("played") : "not played:" + wrong;
+}
+
+// smokesession: a session saved with SMOKE FLAT RIDE, as the plugin saved it before STINE FLAT
+// RIDE took its place (preset smoke_flat_ride, its sticks under stick_smoke_flat_ride_*, a
+// SHOULDER choice on its BELL and BOW rows, note_BOW changed to 70, a SMOKE tuning), given to a
+// new processor (compiled into this tool): it must open on STINE FLAT RIDE with those sticks and
+// that note, and without the SMOKE tuning.
+juce::String reopenSmokeSession()
+{
+    CymbalisProcessor fresh;
+    juce::MemoryBlock state;
+    fresh.getStateInformation (state);
+    std::unique_ptr<juce::XmlElement> xml (juce::AudioProcessor::getXmlFromBinary (state.getData(), (int) state.getSize()));
+    auto* session = xml != nullptr ? xml->getChildByName ("Session") : nullptr;
+    if (session == nullptr)
+        return "no session in a new processor's state";
+    session->setAttribute ("preset", "smoke_flat_ride");
+    for (int i = session->getNumAttributes(); --i >= 0;)
+        if (session->getAttributeName (i).startsWith ("stick_stine_flat_ride_"))
+            session->removeAttribute (session->getAttributeName (i));
+    for (const char* row : { "BELL", "BOW" })
+        session->setAttribute (juce::String ("stick_smoke_flat_ride_") + row, "SHOULDER");
+    for (const char* row : { "BELL2", "BOW2" })
+        session->setAttribute (juce::String ("stick_smoke_flat_ride_") + row, "SHOULDER");
+    session->setAttribute ("note_BOW", 70);
+    auto* tuning = session->createNewChildElement ("Tuning");
+    tuning->setAttribute ("preset", "smoke_flat_ride");
+    tuning->addTextElement (R"({"format": "cymbalis-tuning", "version": 1, "preset": "smoke_flat_ride", "bake_format_version": 1,)"
+                            R"( "cymbal": {"output_gain_db": -3.0}})");
+    juce::MemoryBlock smoke;
+    juce::AudioProcessor::copyXmlToBinary (*xml, smoke);
+
+    CymbalisProcessor reopened;
+    reopened.setStateInformation (smoke.getData(), (int) smoke.getSize());
+    juce::MemoryBlock after;
+    reopened.getStateInformation (after);
+    const auto now = findSession (after);
+    std::unique_ptr<juce::XmlElement> s2 (juce::parseXML (now));
+    if (s2 == nullptr)
+        return "no session after reopening";
+    juce::StringArray tunings;
+    for (auto* t : s2->getChildWithTagNameIterator ("Tuning"))
+        tunings.add (t->getStringAttribute ("preset"));
+    const auto got = "preset " + s2->getStringAttribute ("preset") + ", BELL " + s2->getStringAttribute ("stick_stine_flat_ride_BELL")
+                     + ", BOW " + s2->getStringAttribute ("stick_stine_flat_ride_BOW") + ", note_BOW "
+                     + s2->getStringAttribute ("note_BOW") + ", tunings [" + tunings.joinIntoString (" ") + "]";
+    std::printf ("      a SMOKE FLAT RIDE session reopened: %s\n", got.toRawUTF8());
+    return got == "preset stine_flat_ride, BELL SHOULDER, BOW SHOULDER, note_BOW 70, tunings []" ? juce::String ("on STINE with its sticks and note")
+                                                                                               : got;
 }
 
 // The temporary tuning file of savetuning and loadtuning.
@@ -1050,13 +1186,13 @@ private:
                 return juce::String ("loaded");
             };
         }
-        else if (name == "nova" || name == "smoke")
+        else if (name == "nova" || name == "stine")
         {
-            // The list below the CYMBAL box; NOVA RIDE is its first row, SMOKE FLAT RIDE its second.
+            // The list below the CYMBAL box; NOVA RIDE is its first row, STINE FLAT RIDE its second.
             const float row = name == "nova" ? 0.0f : 1.0f;
             s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + row * 40.0f + 20.0f), wait };
             s.key = "preset";
-            s.expected = name == "nova" ? "nova_ride" : "smoke_flat_ride";
+            s.expected = name == "nova" ? "nova_ride" : "stine_flat_ride";
         }
         else if (name == "preset")
         {
@@ -1208,6 +1344,20 @@ private:
                            ? juce::String ("the size before, the size saved")
                            : seen->joinIntoString (", ") + " (before " + sizeBeforeText + ", saved " + sizeSavedText + ")";
             };
+        }
+        else if (name == "stinerows")
+        {
+            s.actions = { wait };
+            s.key = "STINE FLAT RIDE rows";
+            s.expected = "played";
+            s.probe = [] { return playStineRows(); };
+        }
+        else if (name == "smokesession")
+        {
+            s.actions = { wait };
+            s.key = "SMOKE FLAT RIDE session";
+            s.expected = "on STINE with its sticks and note";
+            s.probe = [] { return reopenSmokeSession(); };
         }
         else if (name == "hihatplay")
         {

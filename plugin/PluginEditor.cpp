@@ -1125,7 +1125,7 @@ void Content::paintLabels (juce::Graphics& g)
             drawInkText (g, f, spec.label, spec.labelInk, spec.colour);
     }
 
-    // BLEND POSITION 1 runs from the preset's bell rows (BELL; CENTER on SMOKE FLAT RIDE) to BOW.
+    // BLEND POSITION 1 runs from the preset's bell rows (BELL; CENTER on STINE FLAT RIDE) to BOW.
     if (preset.blendKnobs)
     {
         small (preset.blend1Left, 1249.0f, 720.0f, 3.33f);

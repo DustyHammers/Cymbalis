@@ -101,10 +101,11 @@ constexpr std::array<PresetInfo, kNumPresets> kPresets {{
         { "BELL2", "BELL", StickDisplay::choice, Stick::shoulder },
         { "BOW", "BOW2", StickDisplay::choice, Stick::shoulder },
     }} },
-    // 602: no bell. The bell rows play center (a copy of the bow, tuned on its own) and are
-    // labelled CENTER and CENTER2, tighter than the other labels so that they end clear of
+    // STINE FLAT RIDE (2026-11-23; in SMOKE FLAT RIDE's place, with its rows and its drawing,
+    // kSmokeShape): no bell. The bell rows play center (a copy of the bow, tuned on its own) and
+    // are labelled CENTER and CENTER2, tighter than the other labels so that they end clear of
     // the stick box. The shoulder entries are copies of the tip ones, tuned on their own.
-    { "smoke_flat_ride", "SMOKE FLAT RIDE", "smoke_flat_ride.bake.json", &ui::kSmokeShape, {{
+    { "stine_flat_ride", "STINE FLAT RIDE", "stine_flat_ride.bake.json", &ui::kSmokeShape, {{
         { "CENTER", "CENTER_SHOULDER", StickDisplay::choice, Stick::tip, "CENTER", 1.5f },
         { "BOW", "BOW_SHOULDER", StickDisplay::choice, Stick::tip },
         { "EDGE", "EDGE", StickDisplay::shoulder, Stick::none },

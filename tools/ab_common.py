@@ -71,6 +71,13 @@ PRESETS = {
         'articulations': None,
         'slots': [('BELL', None, 1.0), ('BOW', None, 0.5), ('EDGE', None, 0.0)],
     },
+    # STINE FLAT RIDE (2026-11-23): SMOKE FLAT RIDE's layout (no bell; CENTER, a copy of BOW,
+    # plays the bell rows), in the Bettis format (docs/PORT_MAP.md, "Stine Flat Ride").
+    'stine': {
+        'preset': os.path.join(REPO, 'presets', 'stine', 'Stine_Baseline1.json'),
+        'articulations': None,
+        'slots': [('BOW', None, 0.5), ('EDGE', None, 0.0)],
+    },
 }
 
 

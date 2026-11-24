@@ -31,7 +31,7 @@ struct VoiceCheck
     int alphaOne, alphaPartial, shared;
 };
 const VoiceCheck voiceChecks[] = {
-    { "smoke_flat_ride.bake.json", 206, 469, 14 },
+    { "stine_flat_ride.bake.json", 52, 590, 8 },
     { "swish.bake.json", 226, 378, 6 },
     { "konstan.bake.json", 42, 592, 10 },
 };
