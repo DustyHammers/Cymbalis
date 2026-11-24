@@ -1,0 +1,58 @@
+Copyright © 2026 DustyHammers. All rights reserved.
+
+Cymbalis, and everything in this repository (source code, preset data, baked presets,
+documentation, images and tools), is proprietary. It is visible here for viewing only.
+No licence is granted to use, copy, modify, merge, publish, distribute, sublicense or
+sell any part of it, or to build, run or distribute software made from it, without the
+prior written permission of DustyHammers.
+
+Third-party components keep their own licences:
+
+- JUCE 7.0.12 (https://github.com/juce-framework/JUCE), by Raw Material Software
+  Limited. Fetched at build time (CMakeLists.txt); not in this repository. Under the
+  JUCE 7 End-User Licence Agreement (https://www.juce.com/juce-7-licence) or the GNU
+  General Public License v3; its juce_core, juce_events, juce_audio_basics and
+  juce_audio_devices modules under the ISC licence (JUCE's LICENSE.md). Kris's JUCE
+  licence covers building the plugin without the "Made with JUCE" splash screen
+  (docs/BUILDS.md).
+  The plugin builds also compile third-party code that JUCE carries, each under the
+  licence in JUCE's source:
+  - the Steinberg VST3 SDK (VST3 plugin): Steinberg VST3 License or GNU GPL v3,
+    modules/juce_audio_processors/format_types/VST3_SDK/LICENSE.txt;
+  - Apple's AudioUnitSDK (AU plugin): Apache License 2.0,
+    modules/juce_audio_plugin_client/AU/AudioUnitSDK/LICENSE.txt;
+  - zlib, libpng, the IJG JPEG library, FLAC and Ogg Vorbis.
+
+- Carlito Regular (resources/ui/Carlito-Regular.ttf). Copyright (c) 2010-2013 by
+  tyPoland Lukasz Dziedzic with Reserved Font Name "Carlito". SIL Open Font License 1.1:
+  resources/ui/Carlito-OFL.txt.
+
+- Pinyon Script Regular (resources/ui/PinyonScript-Regular.ttf). Copyright 2024 The
+  Pinyon Project Authors. SIL Open Font License 1.1: resources/ui/PinyonScript-OFL.txt.
+
+- fdlibm. plugin/dsp/VecMath.h evaluates exp, sin and cos with fdlibm's algorithms and
+  constants, from FreeBSD's msun (lib/msun/src: e_exp.c, k_sin.c, k_cos.c and
+  e_rem_pio2.c). Their notices, also kept in that file:
+
+    e_exp.c:
+    Copyright (C) 2004 by Sun Microsystems, Inc. All rights reserved.
+    Permission to use, copy, modify, and distribute this software is freely granted,
+    provided that this notice is preserved.
+
+    k_sin.c, k_cos.c and e_rem_pio2.c:
+    Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+    Developed at SunSoft, a Sun Microsystems, Inc. business.
+    Permission to use, copy, modify, and distribute this software is freely granted,
+    provided that this notice is preserved.
+    (e_rem_pio2.c: optimized by Bruce D. Evans.)
+
+Not part of Cymbalis, and not in this repository:
+
+- pluginval (https://github.com/Tracktion/pluginval): downloaded by CI only, to validate
+  the VST3 build. Under its own licence.
+- The GitHub Actions the CI workflow uses (actions/checkout, actions/cache,
+  actions/upload-artifact, hendrikmuhs/ccache-action, softprops/action-gh-release) and
+  Ninja, which CI installs. Each under its own licence.
+- The Python packages the tools, docs/*.py and prototype/ import (numpy, scipy,
+  soundfile; OpenCV for docs/ui/wireframe_reference.py), installed with pip. Each under
+  its own licence.

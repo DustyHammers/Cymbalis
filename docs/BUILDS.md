@@ -1,5 +1,7 @@
 # Builds and installation
 
+Cymbalis is proprietary: see `LICENSE` at the repo root, which also lists the third-party components and where their licences are (Kris, 2026-11-24).
+
 ## Builds
 
 Every push to `main` runs **Actions → Build macOS (VST3 + AU)**. It builds one plugin, **Cymbalis**, with everything: the editor, and the Tuning window, opened by a click on the CYMBALIS title (`docs/TUNING.md`). It produces:
