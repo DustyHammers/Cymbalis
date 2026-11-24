@@ -157,6 +157,8 @@ target_compile_definitions(Cymbalis PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
+    # No "Made with JUCE" splash: Kris's JUCE licence permits it (2026-11-23; docs/BUILDS.md).
+    JUCE_DISPLAY_SPLASH_SCREEN=0
 )
 
 # ---------------------------------------------------------------------------

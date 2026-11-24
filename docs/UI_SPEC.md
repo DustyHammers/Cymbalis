@@ -24,7 +24,8 @@ Since 2026-10-27 the five photos are references only: they stay in `resources/ui
 ## 2. Window
 
 - Resizable, aspect ratio fixed at 3:2. **Maximum 1536×1024 — never larger.** Minimum 960×640.
-- Opens at the largest size that fits the screen, up to the maximum. Size is saved with the session.
+- **Opening size** (Kris, 2026-11-23). A new editor with no saved size opens at **1104×736** (3:2, 0.71875 of the 1536×1024 design). On a primary display whose user area is too small for that plus room for a host's window around it, it opens smaller: its width at most the user area's width − 40, and its height at most the user area's height − 200 (title bars, a host's preset bar), never below the 960×640 minimum (`cymbalis::ui::editorOpeningWidth`, `plugin/ui/EditorSize.h`). Until then it opened at the largest size that fit the screen (its height − 80), which in REAPER, with its own title and preset bar, ran off the bottom of Kris's screen at about 1455×970, cutting off the knob labels and the logo; he wanted new instances to open close to the 1090×727 he dragged it to.
+- Size is saved with the session: a session's saved size wins over the opening size.
 - If a host gives the editor a size that is not 3:2, the whole design is scaled to fit and centred, so no control is cut off.
 - Paint everything in design units and scale with one transform.
 

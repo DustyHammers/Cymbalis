@@ -108,6 +108,19 @@
 //   nohihatvalues (on any preset but HI-HAT) look for TIP OPEN LEVEL, TIP OPEN TICK, RING FLOOR,
 //                FREE RING, TIP MODES and MAX OPEN down the list      -> none
 //
+//   opensize  (first, on a new instance) the editor's size and the session's editorWidth and
+//             editorHeight: the opening size for the primary display's user area
+//             (cymbalis::ui::editorOpeningWidth: 1104 x 736, smaller on a small display, never
+//             below 960 x 640; UI_SPEC section 2), and the rule itself on six display sizes
+//                                                                    -> as the rule
+//   dragsize  (Tuning window closed) the editor's bottom-right resizer dragged far in, a little
+//             out, far out and far in again (the events go to the window, so a drag can end
+//             off a small screen)                                    -> 960x640, 1050x700,
+//             1536x1024, 960x640 (the limits, 3:2 in between)
+//   savedsize (after dragsize) the editor dragged to 1050 x 700, the state saved, dragged back to
+//             the minimum, the editor closed, the state restored and the editor opened again
+//                                                                    -> 1050x700, 960x640,
+//             1050x700 (the saved size)
 //   nova      click the CYMBAL box, then NOVA RIDE (the first)       -> preset nova_ride
 //   smoke     click the CYMBAL box, then SMOKE FLAT RIDE (the second) -> preset smoke_flat_ride
 //
@@ -131,6 +144,7 @@
 #include <vector>
 
 #include "HitTiming.h"
+#include "ui/EditorSize.h"
 #include "MacEvents.h"
 #include "ShoulderProfiles.h"
 #include "SlotTable.h"
@@ -350,6 +364,41 @@ private:
     std::function<void()> click (float x, float y)
     {
         return [this, x, y] { cymbalis::uitest::click (*editor, at (x, y)); };
+    }
+
+    // The host's editor size, "WxH".
+    juce::String sizeText() const
+    {
+        return editor == nullptr ? juce::String ("no editor") : juce::String (editor->getWidth()) + "x" + juce::String (editor->getHeight());
+    }
+
+    // A drag of the editor's bottom-right resizer (the plugin's AudioProcessorEditor corner, 3:2
+    // constrained) by (dx, dy) editor pixels.
+    std::function<void()> dragCorner (float dx, float dy)
+    {
+        return [this, dx, dy] {
+            const float w = (float) editor->getWidth(), h = (float) editor->getHeight();
+            cymbalis::uitest::drag (*editor, { w - 4.0f, h - 4.0f }, { w - 4.0f + dx, h - 4.0f + dy });
+        };
+    }
+
+    // The editor closed, and opened again from the plugin (as load() opens it).
+    void closeEditor()
+    {
+        if (auto* ed = plugin->getActiveEditor())
+        {
+            window->clearContentComponent();
+            delete ed;
+        }
+        editor = nullptr;
+    }
+
+    void openEditor()
+    {
+        editor = plugin->createEditorIfNeeded();
+        window->setContentNonOwned (editor, true);
+        window->setTopLeftPosition (80, 80);
+        window->toFront (true);
     }
 
     // An action that is run again at each tick until `done` holds or `ticks` ticks have
@@ -1032,6 +1081,66 @@ private:
             s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + 8.0f * 40.0f + 20.0f), wait };
             s.key = "preset";
             s.expected = "hihat";
+        }
+        else if (name == "opensize")
+        {
+            s.actions = { wait };
+            s.key = "editor size";
+            s.expected = "as the rule";
+            s.probe = [this] {
+                // The rule (user area -> opening width) on displays from small to large.
+                struct Case { int areaWidth, areaHeight, width; };
+                const Case cases[] = { { 2560, 1415, 1104 }, { 1680, 1050, 1104 }, { 1512, 945, 1104 },
+                                       { 1440, 875, 1013 }, { 1100, 1200, 1060 }, { 1024, 743, 960 } };
+                for (const auto& c : cases)
+                {
+                    const int w = cymbalis::ui::editorOpeningWidth (c.areaWidth, c.areaHeight, 1536);
+                    if (w != c.width)
+                        return "the rule gives " + juce::String (w) + " for a " + juce::String (c.areaWidth) + " x "
+                               + juce::String (c.areaHeight) + " user area, not " + juce::String (c.width);
+                }
+                const auto* d = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+                if (d == nullptr)
+                    return juce::String ("no primary display");
+                const int w = cymbalis::ui::editorOpeningWidth (d->userArea.getWidth(), d->userArea.getHeight(), 1536);
+                const auto expected = juce::String (w) + "x" + juce::String (cymbalis::ui::editorHeightFor (w));
+                const auto session = sessionNow();
+                const auto saved = attribute (session, "editorWidth") + "x" + attribute (session, "editorHeight");
+                std::printf ("      user area %d x %d: expected %s; the editor %s, the session %s\n", d->userArea.getWidth(),
+                             d->userArea.getHeight(), expected.toRawUTF8(), sizeText().toRawUTF8(), saved.toRawUTF8());
+                return sizeText() == expected && saved == expected ? juce::String ("as the rule")
+                                                                   : "the editor " + sizeText() + ", the session " + saved + ", not " + expected;
+            };
+        }
+        else if (name == "dragsize")
+        {
+            auto sizes = std::make_shared<juce::StringArray>();
+            const auto read = [this, sizes] { sizes->add (sizeText()); };
+            s.actions = { dragCorner (-1200.0f, -800.0f), wait, read, dragCorner (90.0f, 60.0f), wait, read,
+                          dragCorner (1200.0f, 800.0f), wait, read, dragCorner (-1200.0f, -800.0f), wait, read };
+            s.key = "editor size after the drags";
+            s.expected = "960x640, 1050x700, 1536x1024, 960x640";
+            s.probe = [sizes] { return sizes->joinIntoString (", "); };
+        }
+        else if (name == "savedsize")
+        {
+            auto saved = std::make_shared<juce::MemoryBlock>();
+            auto seen = std::make_shared<juce::StringArray>();
+            s.actions = { dragCorner (90.0f, 60.0f), wait,
+                          [this, saved, seen] {
+                              seen->add (sizeText());
+                              plugin->getStateInformation (*saved);
+                          },
+                          dragCorner (-1200.0f, -800.0f), wait, [this, seen] { seen->add (sizeText()); },
+                          [this] { closeEditor(); }, wait,
+                          [this, saved] { plugin->setStateInformation (saved->getData(), (int) saved->getSize()); }, wait,
+                          [this] { openEditor(); }, wait, wait };
+            s.key = "editor size saved, dragged, reopened";
+            s.expected = "1050x700, 960x640, 1050x700";
+            s.probe = [this, seen] {
+                seen->add (sizeText());
+                return seen->joinIntoString (", ");
+            };
         }
         else if (name == "hihatplay")
         {
