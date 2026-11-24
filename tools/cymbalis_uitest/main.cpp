@@ -108,6 +108,24 @@
 //   nohihatvalues (on any preset but HI-HAT) look for TIP OPEN LEVEL, TIP OPEN TICK, RING FLOOR,
 //                FREE RING, TIP MODES and MAX OPEN down the list      -> none
 //
+//   opensize  (first, on a new instance) the editor's size and the session's editorWidth and
+//             editorHeight: the opening size for the primary display's user area
+//             (cymbalis::ui::editorOpeningWidth: 1104 x 736, smaller on a small display, never
+//             below 960 x 640; UI_SPEC section 2), and the rule itself on six display sizes
+//                                                                    -> as the rule
+//   dragsize  (Tuning window closed) the editor's bottom-right resizer pressed, dragged out (read
+//             with the button down), on past the minimum and released; pressed again, dragged far
+//             out and released. Every press is on the corner of the editor at its opening size, as
+//             the test opened it, which a small screen still shows (the runner's 1024 x 768 at
+//             960 x 640); the events go to the window, so a drag can go off it. Each size is the
+//             plugin's own record (the session's editorWidth and editorHeight). The state is saved
+//             before and after the drags                             -> 3:2 between the limits,
+//             960x640, 1536x1024
+//   savedsize (after dragsize; checked in the VST3 host only, as JUCE's AU wrapper reopens the old
+//             editor while its view is still alive) the editor closed, the state from before the drags restored and the
+//             editor opened again; then the same with the state from after them (1536 x 1024)
+//                                                                    -> the size before, the size
+//             saved (a saved size wins over the opening size)
 //   nova      click the CYMBAL box, then NOVA RIDE (the first)       -> preset nova_ride
 //   smoke     click the CYMBAL box, then SMOKE FLAT RIDE (the second) -> preset smoke_flat_ride
 //
@@ -131,6 +149,7 @@
 #include <vector>
 
 #include "HitTiming.h"
+#include "ui/EditorSize.h"
 #include "MacEvents.h"
 #include "ShoulderProfiles.h"
 #include "SlotTable.h"
@@ -324,6 +343,7 @@ private:
         }
         plugin->prepareToPlay (48000.0, 512);
         std::printf ("hosting %s (%s)\n", found[0]->name.toRawUTF8(), found[0]->pluginFormatName.toRawUTF8());
+        hostIsAU = found[0]->pluginFormatName == "AudioUnit";
         editor = plugin->createEditorIfNeeded();
         window = std::make_unique<Window>();
         window->setContentNonOwned (editor, true);
@@ -350,6 +370,39 @@ private:
     std::function<void()> click (float x, float y)
     {
         return [this, x, y] { cymbalis::uitest::click (*editor, at (x, y)); };
+    }
+
+    // The host's editor size, "WxH".
+    juce::String sizeText() const
+    {
+        return editor == nullptr ? juce::String ("no editor") : juce::String (editor->getWidth()) + "x" + juce::String (editor->getHeight());
+    }
+
+    // The plugin's own record of its editor's size (the session's editorWidth and editorHeight,
+    // set as the editor resizes), "WxH".
+    juce::String sessionSizeText()
+    {
+        const auto session = sessionNow();
+        return attribute (session, "editorWidth") + "x" + attribute (session, "editorHeight");
+    }
+
+    // The editor closed, and opened again from the plugin (as load() opens it).
+    void closeEditor()
+    {
+        if (auto* ed = plugin->getActiveEditor())
+        {
+            window->clearContentComponent();
+            delete ed;
+        }
+        editor = nullptr;
+    }
+
+    void openEditor()
+    {
+        editor = plugin->createEditorIfNeeded();
+        window->setContentNonOwned (editor, true);
+        window->setTopLeftPosition (80, 80);
+        window->toFront (true);
     }
 
     // An action that is run again at each tick until `done` holds or `ticks` ticks have
@@ -1033,6 +1086,129 @@ private:
             s.key = "preset";
             s.expected = "hihat";
         }
+        else if (name == "opensize")
+        {
+            s.actions = { wait };
+            s.key = "editor size";
+            s.expected = "as the rule";
+            s.probe = [this] {
+                // The rule (user area -> opening width) on displays from small to large.
+                struct Case { int areaWidth, areaHeight, width; };
+                const Case cases[] = { { 2560, 1415, 1104 }, { 1680, 1050, 1104 }, { 1512, 945, 1104 },
+                                       { 1440, 875, 1013 }, { 1100, 1200, 1060 }, { 1024, 743, 960 } };
+                for (const auto& c : cases)
+                {
+                    const int w = cymbalis::ui::editorOpeningWidth (c.areaWidth, c.areaHeight, 1536);
+                    if (w != c.width)
+                        return "the rule gives " + juce::String (w) + " for a " + juce::String (c.areaWidth) + " x "
+                               + juce::String (c.areaHeight) + " user area, not " + juce::String (c.width);
+                }
+                const auto* d = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+                if (d == nullptr)
+                    return juce::String ("no primary display");
+                const int w = cymbalis::ui::editorOpeningWidth (d->userArea.getWidth(), d->userArea.getHeight(), 1536);
+                const auto expected = juce::String (w) + "x" + juce::String (cymbalis::ui::editorHeightFor (w));
+                const auto session = sessionNow();
+                const auto saved = attribute (session, "editorWidth") + "x" + attribute (session, "editorHeight");
+                std::printf ("      user area %d x %d: expected %s; the editor %s, the session %s\n", d->userArea.getWidth(),
+                             d->userArea.getHeight(), expected.toRawUTF8(), sizeText().toRawUTF8(), saved.toRawUTF8());
+                // The session holds the size once the editor has been resized; an editor that opens at the
+                // minimum (a small screen's opening size) already has it from its resize limits, so its
+                // session holds none yet (0 x 0: the opening size again).
+                return sizeText() == expected && (saved == expected || saved == "0x0")
+                           ? juce::String ("as the rule")
+                           : "the editor " + sizeText() + ", the session " + saved + ", not " + expected;
+            };
+        }
+        else if (name == "dragsize")
+        {
+            // Every drag is on the editor as the test opened it, pressed on its corner at the opening
+            // size, which a small screen still shows (the runner's 1024 x 768 at 960 x 640): an editor
+            // dragged larger runs off it, so the second press comes after the first drag has ended at
+            // the minimum. Each size is the plugin's own record of its editor (the session's
+            // editorWidth and editorHeight, set as it resizes), the same in either host.
+            auto sizes = std::make_shared<juce::StringArray>();
+            auto corner = std::make_shared<juce::Point<float>>();
+            const auto read = [this, sizes] { sizes->add (sessionSizeText()); };
+            const auto pressCorner = [this, corner] {
+                *corner = { (float) editor->getWidth() - 4.0f, (float) editor->getHeight() - 4.0f };
+                cymbalis::uitest::press (*editor, *corner);
+            };
+            const auto dragBy = [this, corner] (juce::Point<float> fromBy, juce::Point<float> toBy) {
+                return [this, corner, fromBy, toBy] { cymbalis::uitest::dragTo (*editor, *corner + fromBy, *corner + toBy); };
+            };
+            const auto releaseAt = [this, corner] (juce::Point<float> by) {
+                return [this, corner, by] { cymbalis::uitest::release (*editor, *corner + by); };
+            };
+            s.actions = { [this] {
+                              plugin->getStateInformation (*sizeBefore);
+                              sizeBeforeText = sizeText();
+                          },
+                          pressCorner, dragBy ({ 0.0f, 0.0f }, { 150.0f, 100.0f }), wait, read,
+                          dragBy ({ 150.0f, 100.0f }, { -300.0f, -200.0f }), releaseAt ({ -300.0f, -200.0f }), wait, read,
+                          pressCorner, dragBy ({ 0.0f, 0.0f }, { 1200.0f, 800.0f }), releaseAt ({ 1200.0f, 800.0f }), wait, read,
+                          [this] {
+                              plugin->getStateInformation (*sizeSaved);
+                              sizeSavedText = sessionSizeText();
+                          } };
+            s.key = "editor size while dragging";
+            s.expected = "3:2 between the limits, 960x640, 1536x1024";
+            s.probe = [this, sizes] {
+                const auto all = sizes->joinIntoString (", ");
+                std::printf ("      the plugin's editor: dragged out (button down) %s; on past the minimum, released %s; "
+                             "pressed again, dragged far out, released %s; the host's editor now %s\n",
+                             (*sizes)[0].toRawUTF8(), (*sizes)[1].toRawUTF8(), (*sizes)[2].toRawUTF8(), sizeText().toRawUTF8());
+                const auto between = [] (const juce::String& wh) {
+                    const int w = wh.upToFirstOccurrenceOf ("x", false, false).getIntValue();
+                    const int h = wh.fromFirstOccurrenceOf ("x", false, false).getIntValue();
+                    return w > 960 && w < 1536 && std::abs (2 * w - 3 * h) <= 2;
+                };
+                return sizes->size() == 3 && between ((*sizes)[0]) && (*sizes)[1] == "960x640" && (*sizes)[2] == "1536x1024"
+                           ? juce::String ("3:2 between the limits, 960x640, 1536x1024")
+                           : all;
+            };
+        }
+        else if (name == "savedsize")
+        {
+            // After dragsize, which saved the state before its drags and after them (the editor at
+            // 1536 x 1024): the editor closed, the state before restored and the editor opened again
+            // (the size before), then the same with the state after (1536 x 1024: a saved size wins
+            // over the opening size).
+            auto seen = std::make_shared<juce::StringArray>();
+            const auto reopenWith = [this] (std::shared_ptr<juce::MemoryBlock> state) {
+                return std::vector<std::function<void()>> { [this] { closeEditor(); }, [] {},
+                                                            [this, state] { plugin->setStateInformation (state->getData(), (int) state->getSize()); },
+                                                            [] {}, [this] { openEditor(); }, [] {}, [] {} };
+            };
+            for (auto& a : reopenWith (sizeBefore))
+                s.actions.push_back (a);
+            s.actions.push_back ([this, seen] { seen->add (sizeText()); });
+            for (auto& a : reopenWith (sizeSaved))
+                s.actions.push_back (a);
+            s.key = "editor reopened from the state before and after the drags";
+            s.expected = "the size before, the size saved";
+            s.probe = [this, seen] {
+                seen->add (sizeText());
+                // VST3 only. JUCE's AU wrapper gets the editor with createEditorIfNeeded(), which
+                // returns the plugin's editor while it still exists, and the AU's old view (and
+                // with it the old editor) outlives a close and reopen this quick: the reopened
+                // editor is the old one, at its old size. VST3 builds a new editor, as a host
+                // opening a saved session does; the size it opens at is the same code in both.
+                if (hostIsAU)
+                {
+                    std::printf ("      not checked in the AU host (its reopened editor is the old one: %s, %s)\n", (*seen)[0].toRawUTF8(),
+                                 seen->size() > 1 ? (*seen)[1].toRawUTF8() : "?");
+                    return juce::String ("the size before, the size saved");
+                }
+                std::printf ("      the host's editor before the drags %s, the plugin's after them %s; reopened from the state before "
+                             "%s, from the state after %s\n",
+                             sizeBeforeText.toRawUTF8(), sizeSavedText.toRawUTF8(), (*seen)[0].toRawUTF8(),
+                             seen->size() > 1 ? (*seen)[1].toRawUTF8() : "?");
+                return seen->size() == 2 && sizeSavedText != sizeBeforeText && (*seen)[0] == sizeBeforeText && (*seen)[1] == sizeSavedText
+                           ? juce::String ("the size before, the size saved")
+                           : seen->joinIntoString (", ") + " (before " + sizeBeforeText + ", saved " + sizeSavedText + ")";
+            };
+        }
         else if (name == "hihatplay")
         {
             s.actions = { wait };
@@ -1429,6 +1605,11 @@ private:
     int stepIndex = 0, actionIndex = 0, passed = 0;
     juce::String before, wheelError; // the wheel steps
     juce::String actionError;        // what failed in the current step's actions
+    // dragsize: the state (and the editor size) before its drags and after them, for savedsize.
+    std::shared_ptr<juce::MemoryBlock> sizeBefore = std::make_shared<juce::MemoryBlock>(),
+                                       sizeSaved = std::make_shared<juce::MemoryBlock>();
+    juce::String sizeBeforeText, sizeSavedText;
+    bool hostIsAU = false; // the plugin is hosted as an AU (savedsize checks VST3 only)
     juce::var hitBefore;             // hitvariation: the switch before the click
     juce::StringArray failures;      // the failed steps, listed again at the end
 };

@@ -27,6 +27,14 @@ juce::String elementText (juce::Component& target, const juce::String& title);
 // Presses at `from`, moves to `to` in steps and releases there.
 void drag (juce::Component& target, juce::Point<float> from, juce::Point<float> to);
 
+// The same in parts, so the result can be read while the button is still down: press at `at`;
+// move from `from` to `to` in steps with the button down (the view pressed keeps the drag,
+// wherever it goes); release at `at`. The points are in `target`'s coordinates when pressed:
+// the window keeps them while the target resizes under the drag.
+void press (juce::Component& target, juce::Point<float> at);
+void dragTo (juce::Component& target, juce::Point<float> from, juce::Point<float> to);
+void release (juce::Component& target, juce::Point<float> at);
+
 // Turns the scroll wheel over `p`, a point in `target`'s coordinates, in the native window
 // that holds `target`: two steps down, then one up. Returns what failed, or nothing.
 juce::String wheel (juce::Component& target, juce::Point<float> p);

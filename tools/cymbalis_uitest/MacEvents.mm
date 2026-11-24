@@ -426,6 +426,46 @@ void drag (juce::Component& target, juce::Point<float> from, juce::Point<float> 
         post (window, NSEventTypeLeftMouseDragged, NSMakePoint (a.x + (b.x - a.x) * i / 8.0, a.y + (b.y - a.y) * i / 8.0));
     post (window, NSEventTypeLeftMouseUp, b);
 }
+
+// press, dragTo and release keep the window and the window points of the press: the target
+// resizes under the drag, and its points then map to other window points.
+static NSWindow* pressWindow = nil;
+static NSPoint pressOrigin;
+static juce::Point<float> pressAt;
+
+static NSPoint pressPoint (juce::Point<float> p)
+{
+    return NSMakePoint (pressOrigin.x + (p.x - pressAt.x), pressOrigin.y - (p.y - pressAt.y)); // window y runs up
+}
+
+void press (juce::Component& target, juce::Point<float> at)
+{
+    NSWindow* window = nil;
+    pressOrigin = windowPoint (target, at, window);
+    pressWindow = window;
+    pressAt = at;
+    [NSApp activateIgnoringOtherApps: YES];
+    [window makeKeyAndOrderFront: nil];
+    post (window, NSEventTypeMouseMoved, pressOrigin);
+    post (window, NSEventTypeLeftMouseDown, pressOrigin);
+}
+
+void dragTo (juce::Component&, juce::Point<float> from, juce::Point<float> to)
+{
+    if (pressWindow == nil)
+        return;
+    const NSPoint a = pressPoint (from), b = pressPoint (to);
+    for (int i = 1; i <= 8; ++i)
+        post (pressWindow, NSEventTypeLeftMouseDragged, NSMakePoint (a.x + (b.x - a.x) * i / 8.0, a.y + (b.y - a.y) * i / 8.0));
+}
+
+void release (juce::Component&, juce::Point<float> at)
+{
+    if (pressWindow == nil)
+        return;
+    post (pressWindow, NSEventTypeLeftMouseUp, pressPoint (at));
+    pressWindow = nil;
+}
 juce::String clickTuningSlider (juce::Component& editor, const juce::String& rowName, float fraction)
 {
     juce::String error;
