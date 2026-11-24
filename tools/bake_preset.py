@@ -85,14 +85,17 @@ COPIED_ENTRIES = {
                   ('BOW_SHOULDER', 'bow_shoulder', 'BOW', 0.5)],
     'azcrash': [('BELL_SHOULDER', 'bell_shoulder', 'BELL', 1.0),
                 ('BOW_SHOULDER', 'bow_shoulder', 'BOW', 0.5)],
+    'stine': [('CENTER', 'center', 'BOW', 1.0),
+              ('BOW_SHOULDER', 'bow_shoulder', 'BOW', 0.5),
+              ('CENTER_SHOULDER', 'center_shoulder', 'CENTER', 1.0)],
 }
 # Presets whose mode T60s are the fingerprint's without V19's T60 cap (multi_strike_engine_v19.py
 # lines 136-138, _T60_CAP_F / _T60_CAP_VAL: 12 s at 200 Hz, 6 s at 1 kHz, 3 s at 4 kHz, 1.6 s at
-# 10 kHz). KONSTAN's, EXTRA PAPER THIN 24"'s and CRASH 16"'s fingerprints hold T60s refit from
+# 10 kHz). KONSTAN's, EXTRA PAPER THIN 24"'s, CRASH 16"'s and STINE FLAT RIDE's fingerprints hold T60s refit from
 # their bow captures, meant to be used uncapped (docs/BASELINE_MANIFEST.md, Konstan, Extra Paper
-# Thin Ride 24" and Crash 16"; docs/PORT_MAP.md, "Konstan Crash 18"", "Extra Paper Thin Ride 24""
-# and "Crash 16"").
-T60_UNCAPPED = {'konstan', 'paperthin', 'azcrash'}
+# Thin Ride 24", Crash 16" and Stine Flat Ride; docs/PORT_MAP.md, "Konstan Crash 18"", "Extra Paper
+# Thin Ride 24"", "Crash 16"" and "Stine Flat Ride").
+T60_UNCAPPED = {'konstan', 'paperthin', 'azcrash', 'stine'}
 # Presets whose NPZ edge band envelope the bake switches on (docs/PORT_MAP.md, "Swish"):
 # preset -> the reason recorded in edge_npz.envelope_set_by.
 ENVELOPE_ON = {

@@ -1,6 +1,6 @@
 # UI specification — Cymbalis
 
-Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE added 2026-10-15, SWISH 2026-10-17, RAVEN 2026-10-27, KONSTAN CRASH 18" 2026-10-28, HI-HAT 2026-11-20 (its sound and rows; its own UI the same day, below), EXTRA PAPER THIN 24" 2026-11-21 (its wireframe approved by Kris the same day, from the project session's mockups, round 2; section 11), CRASH 16" 2026-11-22 (its sound chosen by Kris by ear from the project session's renders, its wireframe, drawn at its true size, approved from that session's mockups, round 2, the same day; section 11). Layout v2 (mockup v2: a larger, higher photo area, MIDI CHANNEL under CYMBAL, Velocity Sensitivity and Volume in a bottom row) approved by Kris 2026-10-25; the Pan parameter and its knob added 2026-10-25 at Kris's request; the hit display (section 10) approved by Kris 2026-10-25. Layout v3 (mockup v3: the MIDI CHANNEL box and the TUNING button swapped) approved by Kris 2026-10-25. The wireframe cymbal (section 11), replacing the photos and the 2D hit marks, approved by Kris 2026-10-27; its second round (NOVA RIDE, HAMMERED THIN RIDE and SMOKE FLAT RIDE) 2026-10-28, and its third (SWISH) and fourth (RAVEN) the same day. The bottom row moved under the cymbal (section 3), a position arc on all five knobs (section 6) and the DHammers logo (section 4) approved by Kris 2026-11-17. The hi-hat's own UI (section 11, "HI-HAT" and "The pedal": the two hats, their clutch and rod, the opening with the pedal, the pedal drawing; section 3: its PEDAL row, its Blend Position knobs hidden) and the TUNING button replaced by a click on the CYMBALIS title (sections 3 and 6) approved by Kris 2026-11-20, from mockups made in the project session. All coordinates are in 1536×1024 design units. `docs/ui/reference_mockup.png` shows the original artwork (layout v1).
+Approved by Kris, 2026-10-13; presets SMOKE FLAT RIDE and HAMMERED THIN RIDE added 2026-10-15, SWISH 2026-10-17, RAVEN 2026-10-27, KONSTAN CRASH 18" 2026-10-28, HI-HAT 2026-11-20 (its sound and rows; its own UI the same day, below), EXTRA PAPER THIN 24" 2026-11-21 (its wireframe approved by Kris the same day, from the project session's mockups, round 2; section 11), CRASH 16" 2026-11-22 (its sound chosen by Kris by ear from the project session's renders, its wireframe, drawn at its true size, approved from that session's mockups, round 2, the same day; section 11), STINE FLAT RIDE 2026-11-23 (chosen by Kris by ear from the project session's renders, in SMOKE FLAT RIDE's place with its rows and its drawing; sections 8 and 11). Layout v2 (mockup v2: a larger, higher photo area, MIDI CHANNEL under CYMBAL, Velocity Sensitivity and Volume in a bottom row) approved by Kris 2026-10-25; the Pan parameter and its knob added 2026-10-25 at Kris's request; the hit display (section 10) approved by Kris 2026-10-25. Layout v3 (mockup v3: the MIDI CHANNEL box and the TUNING button swapped) approved by Kris 2026-10-25. The wireframe cymbal (section 11), replacing the photos and the 2D hit marks, approved by Kris 2026-10-27; its second round (NOVA RIDE, HAMMERED THIN RIDE and SMOKE FLAT RIDE) 2026-10-28, and its third (SWISH) and fourth (RAVEN) the same day. The bottom row moved under the cymbal (section 3), a position arc on all five knobs (section 6) and the DHammers logo (section 4) approved by Kris 2026-11-17. The hi-hat's own UI (section 11, "HI-HAT" and "The pedal": the two hats, their clutch and rod, the opening with the pedal, the pedal drawing; section 3: its PEDAL row, its Blend Position knobs hidden) and the TUNING button replaced by a click on the CYMBALIS title (sections 3 and 6) approved by Kris 2026-11-20, from mockups made in the project session. All coordinates are in 1536×1024 design units. `docs/ui/reference_mockup.png` shows the original artwork (layout v1).
 
 ## 1. Assets (`resources/ui/`)
 
@@ -81,10 +81,10 @@ The CYMBALIS logo and "BRONZE MODELING INSTRUMENT" are part of the background im
 | STICK ARTICULATION | 1201, 98 | 17.1 | 3.29 | `#A7A7A4` |
 | MIDI NOTE | 1424, 98 | 17.1 | 3.00 | `#A7A7A4` |
 | BELL / BOW / EDGE / BELL2 / BOW2 (rows) | x1201; y 148 / 228 / 307 / 387 / 468 | 15.6 | 3.33 / 2.88 / 2.83 / 3.50 / 3.25 | `#695E52` |
-| CENTER / CENTER2 (rows 1 and 4 on SMOKE FLAT RIDE, section 8) | x1201; y 148 / 387 | 15.6 | 1.5 / 0.0 | `#695E52` |
+| CENTER / CENTER2 (rows 1 and 4 on STINE FLAT RIDE, section 8) | x1201; y 148 / 387 | 15.6 | 1.5 / 0.0 | `#695E52` |
 | PEDAL (HI-HAT's PEDAL row, 2026-11-20) | 1201, 387 | 15.6 | 3.00 (its ink ends about 12.5 units clear of the box at x 1265) | `#695E52` |
 | BLEND POSITION 1 | 1269, 545 | 17.1 | 3.18 | `#A7A7A4` |
-| BELL · BOW (under Blend 1; CENTER · BOW on SMOKE FLAT RIDE) | 1249, 720 · 1409, 720 | 15.6 | 3.33 · 2.88 | `#695E52` |
+| BELL · BOW (under Blend 1; CENTER · BOW on STINE FLAT RIDE) | 1249, 720 · 1409, 720 | 15.6 | 3.33 · 2.88 | `#695E52` |
 | BLEND POSITION 2 | 1270, 783 | 17.1 | 2.98 | `#A7A7A4` |
 | BOW · EDGE (under Blend 2) | 1249, 958 · 1409, 958 | 15.6 | 2.88 · 2.83 | `#695E52` |
 
@@ -132,7 +132,7 @@ Hover, open and selected states use only colours from this table.
 - **No mouse wheel:** the mouse wheel and trackpad scrolling change no value anywhere in the editor: not the knobs, the note boxes or the dropdowns. A value changes only by a deliberate click and drag, a menu choice or MIDI learn (and the host's automation of the five parameters). The wheel still scrolls the note list.
 - **MIDI note box:** vertical drag changes the note. A click opens a menu: MIDI LEARN, RESET DEFAULT, NONE (unassign) and a scrollable list of every note, C-2 (0) to G8 (127), each with its number; the current note is outlined and in view. No separate Learn button is added.
 - **Stick box:** where the preset has both stick versions, a click opens a TIP / SHOULDER popup. In every preset the bell and bow rows (BELL, BOW, BELL2, BOW2) have both; section 8 lists what each plays. EDGE is SHOULDER only in every preset: its box shows SHOULDER and opens nothing. In every preset BELL and BOW start on TIP and BELL2 and BOW2 on SHOULDER (section 8, "Default sticks"). Which rows offer the choice comes from the slot table (`StickDisplay::choice` in `plugin/SlotTable.h`). Each preset keeps its own choices: picking SHOULDER on a row in one preset leaves the other presets' rows as they are. The choices are saved with the session (section 9); they are not automatable parameters.
-- **Dropdowns:** the preset dropdown is a list of NOVA RIDE, SMOKE FLAT RIDE, HAMMERED THIN RIDE, SWISH, RAVEN, EXTRA PAPER THIN 24", KONSTAN CRASH 18", CRASH 16" and HI-HAT, below its box; the channel dropdown is a 4×4 grid below its box, right-aligned with it. A choice sets the preset or the channel.
+- **Dropdowns:** the preset dropdown is a list of NOVA RIDE, STINE FLAT RIDE, HAMMERED THIN RIDE, SWISH, RAVEN, EXTRA PAPER THIN 24", KONSTAN CRASH 18", CRASH 16" and HI-HAT, below its box; the channel dropdown is a 4×4 grid below its box, right-aligned with it. A choice sets the preset or the channel.
 - **PEDAL box** (HI-HAT, 2026-11-20): a click opens a grid of CC 1–127 drawn like the MIDI CHANNEL box's (the same padding, text and hover outline): items 40×24 showing the number, 8 a row (16 rows, the last short), its left edge at x 1196 (the right column's) and its top just below the box (box bottom + 3): x 1196 to 1532, y 408 to 808, over the blend knobs' area, empty on HI-HAT. The current CC is bright and the others in `#695E52`. A choice sets the pedal's CC (section 9), saved with the session; a click elsewhere closes the grid. Until 2026-11-21 the grid had items 61×40, 10 a row, right-aligned with the box (x 738 to 1364, y 408 to 944): it reached over the cymbal area, which drew over it.
 - **CYMBALIS title** (tuning code only, since 2026-11-20): a click within 6 units of the title's ink (section 3) opens the Tuning window, a second click closes it, on every preset; over that area the pointer is a pointing hand. Nothing is drawn for it. It replaces the TUNING button (until 2026-11-20: a click on it opened and closed the window, its outline `#A5A299` while open and `#76624C` on hover; and Cmd-click on the logo opened it too). The DHammers logo takes no clicks.
 - **Preset switch:** the chosen preset's data is loaded into the one cymbal engine and plays from the next audio block (PORT_MAP, "602 and Bettis", decision 6). If the old cymbal is still ringing it fades out over 30 ms; it does not carry over. Notes, the MIDI channel and the knobs stay as they are; the rows play the stick choices of the chosen preset. HI-HAT plays its own notes (section 8) and takes the pedal where it is.
@@ -167,7 +167,7 @@ Blend 2 inherits the engine's hard bow-to-edge switch near position 0.45 (PORT_M
 
 The rows, their base positions, blends and default notes are the same in every cymbal preset; what each row plays depends on the preset. Notes are per row and are kept across the cymbal presets. HI-HAT is the exception: two rows, notes of its own (below).
 
-A preset can name a row: SMOKE FLAT RIDE labels its bell rows CENTER and CENTER2 (`PresetSlot::label` in `plugin/SlotTable.h`). The name is shown only. The row keeps its notes, its MIDI behaviour and its session keys (`note_BELL`, `note_BELL2`).
+A preset can name a row: STINE FLAT RIDE labels its bell rows CENTER and CENTER2 (`PresetSlot::label` in `plugin/SlotTable.h`). The name is shown only. The row keeps its notes, its MIDI behaviour and its session keys (`note_BELL`, `note_BELL2`).
 
 | Slot | Base position | Blend | Default note |
 |---|---|---|---|
@@ -181,10 +181,10 @@ A preset can name a row: SMOKE FLAT RIDE labels its bell rows CENTER and CENTER2
 
 | Row | Starts on |
 |---|---|
-| BELL (CENTER on SMOKE FLAT RIDE) | TIP |
+| BELL (CENTER on STINE FLAT RIDE) | TIP |
 | BOW | TIP |
 | EDGE | SHOULDER (fixed) |
-| BELL2 (CENTER2 on SMOKE FLAT RIDE) | SHOULDER |
+| BELL2 (CENTER2 on STINE FLAT RIDE) | SHOULDER |
 | BOW2 | SHOULDER |
 
 These are a new instance's sticks (`defaultStick` in `plugin/SlotTable.h`); a saved session keeps the sticks it stored (section 9). Until 2026-10-31 every row with a choice started on TIP, except on NOVA RIDE, whose BELL started on SHOULDER and BELL2 on TIP.
@@ -201,19 +201,19 @@ These are a new instance's sticks (`defaultStick` in `plugin/SlotTable.h`); a sa
 
 The bell and bow articulations are the four overlays (`bell_shoulder.json` and so on), so any bell or bow row can play either stick. **edge** is a copy of `bow_shoulder` played at the edge position, 0.0 (bake entry `EDGE`, `"copy_of": "BOW2"`). It is tuned on its own (`docs/TUNING.md`) and starts with bow_shoulder's level trim. Nova has no edge captures; until 2026-10-17 its EDGE row played the base preset at the edge position, which is gone from the bake.
 
-**SMOKE FLAT RIDE** (602, `resources/presets/smoke_flat_ride.bake.json`): no bell. Its bell rows play **center**, a copy of the 602 bow that is tuned on its own (`docs/TUNING.md`). The existing bow and center are TIP. Their SHOULDER versions, **bow_shoulder** and **center_shoulder**, are copies of them, tuned on their own; untuned they play exactly as their TIP versions.
+**STINE FLAT RIDE** (`resources/presets/stine_flat_ride.bake.json`; since 2026-11-23 in the place of SMOKE FLAT RIDE, the 602, with its rows: `docs/PORT_MAP.md`, "Stine Flat Ride"): no bell. Its bell rows play **center**, a copy of its bow that is tuned on its own (`docs/TUNING.md`). The existing bow and center are TIP. Their SHOULDER versions, **bow_shoulder** and **center_shoulder**, are copies of them, tuned on their own; untuned they play exactly as their TIP versions.
 
 | Slot | Label | TIP | SHOULDER | Stick box |
 |---|---|---|---|---|
 | BELL | CENTER | center (`CENTER`: a copy of `BOW`) | center_shoulder (`CENTER_SHOULDER`: a copy of `CENTER`) | TIP / SHOULDER popup |
-| BOW | BOW | bow (`BOW`: `bow.json`, empty overlay) | bow_shoulder (`BOW_SHOULDER`: a copy of `BOW`) | TIP / SHOULDER popup |
-| EDGE | EDGE | — | edge (`EDGE`: `edge.json`, empty overlay) | SHOULDER (fixed) |
+| BOW | BOW | bow (`BOW`: the base preset at the bow) | bow_shoulder (`BOW_SHOULDER`: a copy of `BOW`) | TIP / SHOULDER popup |
+| EDGE | EDGE | — | edge (`EDGE`: the base preset at the edge) | SHOULDER (fixed) |
 | BELL2 | CENTER2 | center | center_shoulder | TIP / SHOULDER popup |
 | BOW2 | BOW2 | bow | bow_shoulder | TIP / SHOULDER popup |
 
 Each copy has its own level trim, initialised to its source's.
 
-CENTER and CENTER2 strike where the bell rows do, at 1.0 − 0.5·blend_1. The 602's position weights are flat, so position does not change its excitation. Untuned, CENTER sounds like the bow at any Blend 1 setting. The only effect of position is through the MF/LF build-up: a strike at 0.75 or above counts with the bell weights. The 602 has its build-up off.
+CENTER and CENTER2 strike where the bell rows do, at 1.0 − 0.5·blend_1. STINE's position weights are flat (no bell ratios, neutral edge ratios), so position does not change its excitation, and untuned, CENTER plays the bow's level at any Blend 1 setting. The only effect of position is through the MF/LF build-up, which STINE has on (as Bettis and Swish): a strike at 0.75 or above counts with the bell weights. (SMOKE FLAT RIDE, the 602, played the same way, with its build-up off.)
 
 **HAMMERED THIN RIDE** (Bettis, `resources/presets/hammered_thin_ride.bake.json`): no overlays. The existing bell and bow are TIP. Their SHOULDER versions, **bell_shoulder** and **bow_shoulder**, are copies of them, tuned on their own; untuned they play exactly as their TIP versions.
 
@@ -225,7 +225,7 @@ CENTER and CENTER2 strike where the bell rows do, at 1.0 − 0.5·blend_1. The 6
 | BELL2 | bell | bell_shoulder | TIP / SHOULDER popup |
 | BOW2 | bow | bow_shoulder | TIP / SHOULDER popup |
 
-Each copy has its own level trim, initialised to its source's. In both presets BELL and BOW (CENTER and BOW on SMOKE FLAT RIDE) start on TIP, BELL2 and BOW2 (CENTER2 and BOW2) on SHOULDER ("Default sticks" above). The blend knobs move whichever rows play, with either stick. In SMOKE FLAT RIDE, Blend 1 moves CENTER and CENTER2, and its end labels read CENTER · BOW.
+Each copy has its own level trim, initialised to its source's. In both presets BELL and BOW (CENTER and BOW on STINE FLAT RIDE) start on TIP, BELL2 and BOW2 (CENTER2 and BOW2) on SHOULDER ("Default sticks" above). The blend knobs move whichever rows play, with either stick. In STINE FLAT RIDE, Blend 1 moves CENTER and CENTER2, and its end labels read CENTER · BOW.
 
 **SWISH** (22" China, `resources/presets/swish.bake.json`): the bell is the base preset at the bell position with the v11 bell ratios (TIP); its SHOULDER version, **bell_shoulder**, is a copy of it, tuned on its own. The bow has two overlays, **bow_tip** (with the stick click) and **bow_shoulder** (without it). They are not separate captures: the overlays only set the stick click gain (6.0 and 0.0), so the two play the same data apart from the click and their level trims (+8.86 and +8.96 dB). The edge is the base preset at the edge position (SHOULDER).
 
@@ -317,7 +317,7 @@ Placeholder ranges until Kris revises them. At the defaults the plugin sounds th
 
 At p = 0 that is L to L and R to R, unchanged (the stage is skipped). At −1 everything goes to the left output and the right output is 0; at +1 everything goes to the right. A hard-panned output is the sum of both channels, so its peak can be up to twice a channel's. The output meter of the Tuning window reads after Pan.
 
-EDGE always strikes at position 0.0. All five are automatable. No other parameters. Their host-visible names and value texts are the same in every preset; on SMOKE FLAT RIDE, Blend Position 1 still reads BELL → BOW in the host, although its knob labels read CENTER · BOW.
+EDGE always strikes at position 0.0. All five are automatable. No other parameters. Their host-visible names and value texts are the same in every preset; on STINE FLAT RIDE, Blend Position 1 still reads BELL → BOW in the host, although its knob labels read CENTER · BOW.
 
 Pan is saved with the session like the other four; a session saved before it existed loads with pan at centre.
 
@@ -333,7 +333,7 @@ Approved by Kris, 2026-10-25. UI only: it changes nothing in the sound and adds 
 - The editor reads the FIFO on its timer and keeps up to 16 hits (`HitTracker`, `plugin/ui/HitDisplay.h`); when full, the oldest is dropped, and a hit is dropped once it is older than 6 s. The tracker's own timer runs at 30 Hz only while it keeps a hit and stops when it keeps none; each tick hands the hits to the cymbal, which draws a frame. While it keeps none, the editor's existing 30 Hz timer (notes, MIDI learn) reads the FIFO, and a hit starts the tracker's timer.
 
 **Where a strike lands.**
-- Each preset has a bell (or centre) zone as a fraction of the cymbal's radius: its shape's bell radius (`CymbalShape::bell` in `plugin/ui/CymbalShapes.h`, the slot table's `PresetInfo::shape`): NOVA RIDE 0.22, SMOKE FLAT RIDE 0.16 (centre zone), HAMMERED THIN RIDE 0.19, SWISH 0.19, RAVEN 0.22, EXTRA PAPER THIN 24" 0.20, KONSTAN CRASH 18" 0.25, CRASH 16" 0.25, HI-HAT 0.37 (its top cymbal, which the hits strike: BOW at its bow, (0.37 + 0.95) / 2 = 0.66, EDGE at 0.97; FOOT, played by the pedal, draws no hit). NOVA RIDE's was 0.40 until its new bell (2026-10-28, section 11); SWISH's was 0.22 until its new shape (round 3, 2026-10-28, section 11). Until 2026-10-27 they were the slot table's `bellRadius`, measured on the photos: HAMMERED THIN RIDE 0.40 and RAVEN 0.29, the others as then.
+- Each preset has a bell (or centre) zone as a fraction of the cymbal's radius: its shape's bell radius (`CymbalShape::bell` in `plugin/ui/CymbalShapes.h`, the slot table's `PresetInfo::shape`): NOVA RIDE 0.22, STINE FLAT RIDE 0.16 (centre zone; SMOKE FLAT RIDE's shape), HAMMERED THIN RIDE 0.19, SWISH 0.19, RAVEN 0.22, EXTRA PAPER THIN 24" 0.20, KONSTAN CRASH 18" 0.25, CRASH 16" 0.25, HI-HAT 0.37 (its top cymbal, which the hits strike: BOW at its bow, (0.37 + 0.95) / 2 = 0.66, EDGE at 0.97; FOOT, played by the pedal, draws no hit). NOVA RIDE's was 0.40 until its new bell (2026-10-28, section 11); SWISH's was 0.22 until its new shape (round 3, 2026-10-28, section 11). Until 2026-10-27 they were the slot table's `bellRadius`, measured on the photos: HAMMERED THIN RIDE 0.40 and RAVEN 0.29, the others as then.
 - Radius fraction from strike position p, linear between p = 1.0 → 0.6 × bell radius, p = 0.5 → (bell radius + 0.95) / 2, and p = 0.0 → 0.97.
 - Angle: 4 to 5 o'clock, 45° clockwise from 3 o'clock plus a random offset uniform in ±12°. The editor draws the random number, never the audio thread.
 - Zone: bell when the radius fraction is below the bell radius, edge when it is 0.9 or more, bow otherwise. How the cymbal moves and flashes: section 11, "Motion on hits".
@@ -355,12 +355,14 @@ The reference's numbers are the specification; its colours are OpenCV BGR, given
 - The cymbal's radius is the same on screen for every preset: SWISH (22") is drawn the size of the 20" cymbals, as its photo was, and so are EXTRA PAPER THIN 24" and KONSTAN CRASH 18". The one exception is CRASH 16", drawn at its true size, 0.8 of that radius (`drawScale`, below; Kris, 2026-11-22, for CRASH 16" only for now). Heights are fractions of each cymbal's own R.
 - Camera, as the reference's `project()`: elevation 38°, centre 787,400, scale 345 design units per cymbal radius, perspective distance 5 radii. A point X, Y, Z (radius 1) goes to yv = Y sin e − Z cos e, zv = Y cos e + Z sin e, p = 5 / (5 − zv), screen 787 + 345·X·p, 400 + 345·yv·p. HI-HAT's centre and scale are its own: 787,430 and 270 (`CymbalShape::cx`, `cy`, `scale`; the reference's `hihat_draw`), the same view; its 14" hats are drawn smaller than the other cymbals.
 
+**STINE FLAT RIDE is drawn with SMOKE FLAT RIDE's shape** (Kris, 2026-11-23: "Same wireframe render as smoke"): its slot table entry names `kSmokeShape`, unchanged, so its drawing is bit for bit SMOKE's. Where this section describes that drawing it names STINE FLAT RIDE; the approvals of SMOKE FLAT RIDE's drawing (2026-10-27 and 2026-10-28) and its photo stay as they were.
+
 **Geometry per preset.** `plugin/ui/CymbalShapes.h` holds one entry per preset, copied from the reference's `CYMBALS` table: R in inches, the profile points (radius and height in inches; up to 15), the bell radius fraction, the lathe and fine-lathe zones, the hammering style and zone, RAVEN's bell grooves, and the 2026-10-28 fields below. The slot table's `PresetInfo::shape` points to it.
 
 | Preset | Shape | R (in) | Bell | Hammering, zone | Lathe zones | Fine lathe |
 |---|---|---|---|---|---|---|
 | NOVA RIDE | `nova` | 10 | 0.22 | scale, 0.43–0.925 (drawn) | — | — |
-| SMOKE FLAT RIDE | `smoke` | 10 | 0.16 | radial, 0.03–0.855 (drawn) | — | — |
+| STINE FLAT RIDE (SMOKE FLAT RIDE's shape) | `smoke` | 10 | 0.16 | radial, 0.03–0.855 (drawn) | — | — |
 | HAMMERED THIN RIDE | `hammered` | 10 | 0.19 | dimple, 0.43–0.92 (dents in the mesh) | — | — |
 | SWISH | `swish` | 11 | 0.19 | three dent zones (dents in the mesh) | — | — |
 | RAVEN | `raven` | 10 | 0.22 | power-hammer dents along a spiral, 0.24–0.93 (dents in the mesh; hammer zone 0.235–0.935) | — | — (bell grooves 0.073–0.166) |
@@ -370,7 +372,7 @@ The reference's numbers are the specification; its colours are OpenCV BGR, given
 
 The 2026-10-28 fields (NOVA RIDE, HAMMERED THIN RIDE and SMOKE FLAT RIDE in round 2, SWISH in round 3, RAVEN in round 4, KONSTAN CRASH 18", EXTRA PAPER THIN 24" with the two 2026-11-21 fields below, and CRASH 16" with the 2026-11-22 field below; the defaults are no gold, no tint, no copper, edges on, gold step 0.012, no photo table, `lumGamma` 1, the bell ring 2 units, not dented):
 
-| Field | NOVA RIDE | HAMMERED THIN RIDE | SMOKE FLAT RIDE | SWISH | RAVEN | KONSTAN CRASH 18" | EXTRA PAPER THIN 24" | CRASH 16" |
+| Field | NOVA RIDE | HAMMERED THIN RIDE | STINE FLAT RIDE (SMOKE's shape) | SWISH | RAVEN | KONSTAN CRASH 18" | EXTRA PAPER THIN 24" | CRASH 16" |
 |---|---|---|---|---|---|---|---|---|
 | `gold` zones (from, to, strength; default strength 1) | 0.025–0.355, 0.373–0.397, 0.958–1.0 | 0.025–0.405, 0.90–1.0 at 0.6 | 0.858–1.0 | 0.19–0.52, 0.745–1.0 | 0.039–0.073, 0.170–0.22, 0.945–0.965, 0.975–1.0 | 0.03–1.0 | 0.02–0.945, 0.975–0.982 | 0.02–0.725, 0.915–1.0 |
 | `tint` (gold metal, no lathe lines) | — | — | 0.0–0.857 | — | — | — | — | — |
@@ -406,17 +408,17 @@ One field and one rule since 2026-11-22 (CRASH 16"; every other preset draws as 
 How the presets are hammered (Kris, 2026-10-28): RAVEN and NOVA RIDE are power-hammered, in regular patterns (RAVEN's dents along a spiral in the mesh; NOVA's drawn scale arcs); SMOKE FLAT RIDE and HAMMERED THIN RIDE are hand-hammered (SMOKE's drawn radial strokes; HAMMERED's random dents in the mesh), and so are KONSTAN CRASH 18" (its random dents in the mesh) EXTRA PAPER THIN 24" (sparse, deep random dents in the mesh, 2026-11-21) and CRASH 16" (a few faint, shallow random dents in the bow, 2026-11-22).
 
 - **Height** between the profile points (r/R, z/R): monotone cubic, PCHIP (Fritsch–Carlson, as scipy's `PchipInterpolator`, its end slopes included); r is clipped to 0–1.
-- **Mesh** (`Cymbal.__init__`, NOVA RIDE and SMOKE FLAT RIDE; the dented meshes of HAMMERED THIN RIDE, SWISH, RAVEN, KONSTAN CRASH 18", EXTRA PAPER THIN 24" and CRASH 16" below): rings at `linspace(0.03, bell, max(4, int(bell/0.04)))`, then `linspace(bell + 0.035, 0.92, max(6, int((0.92 − bell)/0.035)))`, then 0.94, 0.96, 0.98 and 1.0; 80 samples around each ring, closed; a spoke on every second sample (40 spokes) from the first ring to the rim. Lines are 1 design unit wide; the rim is 2 units, and so is the ring nearest the bell radius where `bellLine` (no preset since round 4; until then SWISH and RAVEN).
+- **Mesh** (`Cymbal.__init__`, NOVA RIDE and STINE FLAT RIDE; the dented meshes of HAMMERED THIN RIDE, SWISH, RAVEN, KONSTAN CRASH 18", EXTRA PAPER THIN 24" and CRASH 16" below): rings at `linspace(0.03, bell, max(4, int(bell/0.04)))`, then `linspace(bell + 0.035, 0.92, max(6, int((0.92 − bell)/0.035)))`, then 0.94, 0.96, 0.98 and 1.0; 80 samples around each ring, closed; a spoke on every second sample (40 spokes) from the first ring to the rim. Lines are 1 design unit wide; the rim is 2 units, and so is the ring nearest the bell radius where `bellLine` (no preset since round 4; until then SWISH and RAVEN).
 - **Surface lines** (`_build_texture`), on the profile's surface (+0.0015), from a fixed-seed generator (`std::mt19937_64`, seed 11; the pattern matches the mockups in size, spacing and spread, not mark for mark):
   - `scale`: rows of arcs every 0.03 R through the zone; each arc spans 0.82 of a step 0.05/r, steps of 0.92–1.08 × that, rising 0.014 R in the middle, jittered ±0.004 R.
   - `spiral` (RAVEN until round 4; no preset draws it now): scale-shaped marks along an Archimedean spiral of pitch 0.065 R, each 0.105 R wide (0.85 of it drawn), rising 0.032 R in the middle, jittered ±0.005 R per mark.
   - `dimple` (HAMMERED THIN RIDE): one irregular dent per 0.011 of the zone's area, at random, its half axes 0.012–0.026 R (× 0.35–0.9 across), growing 0.8 to 2.4 × towards the edge, wobbled by its 2nd and 3rd harmonics.
-  - `radial` (SMOKE FLAT RIDE): one short radial stroke per 0.0025 of the zone's area (from r 0.05), 0.015–0.035 R long.
+  - `radial` (STINE FLAT RIDE, SMOKE's shape): one short radial stroke per 0.0025 of the zone's area (from r 0.05), 0.015–0.035 R long.
   - Fine lathe: full rings every 0.012 R through each fine-lathe zone.
   - RAVEN's bell grooves: full rings from 0.073 to 0.166 (0.035 to 0.215 until round 4), spaced 0.011–0.026 R at random, each with an intensity 0.55–1.0; 2 units wide.
   - Gold lathing (2026-10-28): full rings every `goldStep` across each gold zone (numpy's `arange`, value for value), 1 unit wide.
   - Edge lines (2026-10-28): full rings at each gold zone's bounds that lie between 0.02 and 0.999 (unless `zoneEdges` is off), and at each `goldLines` radius; 2 units wide.
-  - HAMMERED THIN RIDE, SWISH, RAVEN, KONSTAN CRASH 18", EXTRA PAPER THIN 24" and CRASH 16" draw no hammer marks: their dents are in the mesh (below). NOVA RIDE and SMOKE FLAT RIDE keep theirs drawn.
+  - HAMMERED THIN RIDE, SWISH, RAVEN, KONSTAN CRASH 18", EXTRA PAPER THIN 24" and CRASH 16" draw no hammer marks: their dents are in the mesh (below). NOVA RIDE and STINE FLAT RIDE keep theirs drawn.
 
 **Colour and light** (`draw()`).
 - Normal from the height field (profile, flex and tilt); light direction (0, −0.55, 0.83); shade = clip(n·light, 0, 1).
@@ -431,7 +433,7 @@ How the presets are hammered (Kris, 2026-10-28): RAVEN and NOVA RIDE are power-h
 - **Photo brightness lum(r)** (`Cymbal.lum`), once per preset: the 200-value table (the photo's mean brightness by radius, 0.005 R steps from the centre, measured 2026-10-28; `kNovaPhotoLum`, `kHammeredPhotoLum`, `kSmokePhotoLum`, `kSwishPhotoLum`, `kRavenPhotoLum`, `kKonstanPhotoLum` in `CymbalShapes.h`) smoothed with a moving average of `lumSmooth` samples (padded with the edge values), divided by the 98th percentile of entries 5 to 79 (numpy's linear interpolation). lum(r) is entry floor(r/0.005), at most 199, raised to `lumGamma` (1 but on KONSTAN CRASH 18", 0.35; the reference's `lum_gamma`), clipped to 0.3–1.15; 1 without a table.
 - Colours (RGB): ROSE_DARK `#704A3A`, ROSE_LIGHT `#DEB096`, LATHE `#CDA06E`, GOLD `#ECC88C`, COPPER `#C46E42` (round 3; the reference's BGR 66, 110, 196), HOT `#FFEED7`, flash `#FFF5E6`.
 - Surface lines (shade 0.9, no glow): hammer marks the surface colour (at the mark's mean radius) × 0.8 (the `spiral` marks × 1.0); fine-lathe rings the surface colour × (0.30 + 0.25·ytl); bell grooves GOLD × (0.30 + 0.32·ytl) × the groove's intensity; gold lathing the surface colour × (0.50 + 0.35·ytl) × lum(r) (on the dented meshes, as `Cymbal2`: GOLD × (0.50 + 0.35·ytl) × lum(r) × strength); edge lines GOLD × (0.55 + 0.40·ytl) × the zone's strength. On SWISH the lines then take the dent light (below, "Lines that follow the dents").
-- The lines are combined as the reference's `draw()` combines them, in a layer of their own: the surface lines over one another in their drawing order (where two cross, the later one shows: SMOKE FLAT RIDE's dense lathe lines mostly cover its two edge lines, as in the mockup), and the mesh lightening them (max); on the dented meshes (`Cymbal2`) the surface lines are drawn over the mesh. The layer then lightens the background (max).
+- The lines are combined as the reference's `draw()` combines them, in a layer of their own: the surface lines over one another in their drawing order (where two cross, the later one shows: STINE FLAT RIDE's (SMOKE's shape) dense lathe lines mostly cover its two edge lines, as in the mockup), and the mesh lightening them (max); on the dented meshes (`Cymbal2`) the surface lines are drawn over the mesh. The layer then lightens the background (max).
 - Glow: around every mesh line brighter than 150/255 (its brightest channel), a soft halo is added: Gaussian across the line, sigma 3 design units, out to 9, peak 0.0665 × the line's colour per unit of its width. That is the reference's 3-unit blur added at 0.5, drawn as a halo instead of blurring the image.
 
 **Dents in the mesh: HAMMERED THIN RIDE, SWISH, RAVEN, KONSTAN CRASH 18", EXTRA PAPER THIN 24" and CRASH 16"** (2026-10-28, the reference's `Cymbal2`, `DENTED = {'hammered', 'swish', 'raven', 'konstan', 'paperthin', 'azcrash'}`; `CymbalShape::dents`; SWISH since round 3, RAVEN since round 4).
@@ -548,7 +550,7 @@ How the presets are hammered (Kris, 2026-10-28): RAVEN and NOVA RIDE are power-h
 - The audio thread is unchanged: it only writes the FIFO.
 - `CymbalView` covers the cymbal area only. An `juce::OpenGLContext` (OpenGL 3.2 core, 4× multisampling, component painting off, no continuous repainting) draws it on the context's own thread: the area's part of the background image as a texture (with mipmaps), then the mesh and the surface lines, the glow and the flashes. JUCE's software renderer never draws the moving cymbal, and the message thread paints nothing per frame.
 - Buffers: the static geometry is uploaded once per preset: the mesh's segments (each its two mesh vertices and their metal), its vertices (radius, angle, dent light factor: a float texture), and the surface lines (each segment its two ends, kind and dent light factor). Per frame only the mesh's heights, the smooth surface's slopes and the glow (4 floats per vertex, in a second float texture: 2,320 vertices on the ring meshes, about 11,400 on HAMMERED THIN RIDE, 10,900 on SWISH, 18,900 on RAVEN and 11,400 on KONSTAN CRASH 18") and a few uniforms (tilt, spin, camera, the cymbal's screen extent) change. On the dented meshes the flex is summed per frame from a per-radius table (Σ over m of A_m(r)·cos mθ + B_m(r)·sin mθ, and its slopes) at the kept vertices only. The surface lines follow the tilt and spin, not the flex (SWISH's carry its dents, fixed at rest).
-- Size: about 3,440 mesh segments and 2,700 to 10,700 surface line segments on the ring-mesh presets (NOVA RIDE, SMOKE FLAT RIDE); on HAMMERED THIN RIDE about 12,000 mesh segments and 4,000 surface line segments; on SWISH about 12,500 and 8,400 (21,000 in all); on RAVEN about 19,800 and 1,700 (21,500 in all); on KONSTAN CRASH 18" about 13,000 and 8,100 (21,000 in all). The static geometry, dents included, is built once per preset.
+- Size: about 3,440 mesh segments and 2,700 to 10,700 surface line segments on the ring-mesh presets (NOVA RIDE, STINE FLAT RIDE); on HAMMERED THIN RIDE about 12,000 mesh segments and 4,000 surface line segments; on SWISH about 12,500 and 8,400 (21,000 in all); on RAVEN about 19,800 and 1,700 (21,500 in all); on KONSTAN CRASH 18" about 13,000 and 8,100 (21,000 in all). The static geometry, dents included, is built once per preset.
 - Lines: each segment is drawn as a thin quad (two triangles), 1 or 2 design units wide (the surface lines' widths per vertex, so they draw in one call, in order) and scaled with the editor, built in the vertex shader from its two ends (the core profile has no wide lines); multisampling antialiases them. No geometry shader is used.
 - The lines' layer is a multisampled framebuffer the size of the view, cleared to black: the surface lines drawn over one another (no blending) and the mesh with `GL_MAX` (on the dented meshes the mesh first, then the surface lines over it). It is resolved into a texture, which is drawn over the background with `GL_MAX`; then the glow and the flashes are added. Where the driver refuses the framebuffer, all the lines lighten the background directly. The still drawing builds the same layer with JUCE's drawing.
 - Frames: the hit tracker asks for one at 30 Hz while it keeps a hit (any hit younger than 6 s); otherwise none is drawn until the next hit, a resize or a preset change.

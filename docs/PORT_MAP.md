@@ -643,7 +643,7 @@ tools/cymbalis_identity/run.sh --build build --time --runs 4
 
 ## 602 and Bettis (Smoke Flat Ride, Hammered Thin Ride)
 
-Added 2026-10-15. The plugin is the reference (`CLAUDE.md`): these presets were ported with the Python engine as a guide and are checked by ear, with no render comparison. Both are baked with `nl_amount = 0`, as Nova is (Bettis's JSON sets 1.0). Nova Ride's bake is unchanged, and so is every code path it uses: each new mechanism is used only when a bake carries its data.
+Added 2026-10-15. SMOKE FLAT RIDE was in the plugin until 2026-11-23, when STINE FLAT RIDE took its place ("Stine Flat Ride" below); its bake is kept in `resources/presets/archive/`. The plugin is the reference (`CLAUDE.md`): these presets were ported with the Python engine as a guide and are checked by ear, with no render comparison. Both are baked with `nl_amount = 0`, as Nova is (Bettis's JSON sets 1.0). Nova Ride's bake is unchanged, and so is every code path it uses: each new mechanism is used only when a bake carries its data.
 
 ### What each preset uses
 
@@ -1064,6 +1064,74 @@ Its CPU cost (`cymbalis_bench`, 60 s, this container): 3.5 % of a core at 44.1 k
 - **The pk_t ramps have no effect** with the envelope on (as for the other NPZ presets): the edge pk_t and the edge velocity tilt are inaudible, and bow strikes never ramp. With EDGE ONSET ENVELOPE off, edge modes ramp in over up to 7.95 s (the edge pk_t's longest).
 - **The calibration does not see the envelope** (as for the other NPZ presets); the trims make up for the level.
 - **`data/azcrash_build_info.json` has no `t60_refit` record** (null); the refit's numbers are in the manifest only.
+
+## Stine Flat Ride
+
+Added 2026-11-23. STINE FLAT RIDE takes SMOKE FLAT RIDE's place in the plugin: Kris chose it by ear on 2026-11-23, from the project session's renders of both cymbals playing the same score, and named it. It was built from Kris's SPEAR captures (`docs/BASELINE_MANIFEST.md`, "Stine Flat Ride"; working name "New Flat") in the Bettis format, as Raven, Konstan and Crash 16", and needs no new engine code: every mechanism it uses is one Crash 16" already has, its uncapped T60s included. Its preset JSON differs from Crash 16"'s only in its data files, its edge envelope window (`edge_band_env_onset_s` 30 s) and its `edge_rms_correction`, and it names no bell ratios file. It is baked with `nl_amount = 0`. Every other preset bakes and plays bit for bit as before (their bakes and the engine are unchanged).
+
+### What Stine uses
+
+| | Stine (`Stine_Baseline1.json`) |
+|---|---|
+| Modes | 900, 29.6 Hz–19.0 kHz (none above 22.05 kHz). 746 from the bow captures; 154 seen only in the edge captures, with `exc` 0: they sound only on edge strikes, through the NPZ velw |
+| Velocity response | `hertz_vel_scale`, `tau_ref_ms` 0.2 (no participation tables) |
+| Edge strikes (`edge_frac > 0.1`) | NPZ velw coupling (3 rows, at velocities 0.142, 0.325 and 1.0: Edge V1, V2 and V3) and the NPZ band envelope, switched on by the all-zero trigger file: 22 bands, exactly the plugin's thirds, 30 s of data (1500 frames), 30 s window, `edge_rms_correction` per band, level exponent `vel_gain_power` 1.0 |
+| Bow strikes | standard coupling with the neutral edge ratios (all 1); no bell ratios |
+| Onset ramp data | bow pk_t, velocity-bracketed edge pk_t (3 velocities), edge velocity tilt (4 bands) |
+| Contact | none (`permode_contact` false, `tip_contact_ms` 0): instantaneous strikes |
+| MF / LF accumulators | as Crash 16" (MF in boost mode, depth 0.4, tau 3 s, max 1.4, 500 Hz–4 kHz; bow 1, edge 1, bell 0.2. LF in boost mode, depth 0.2, tau 3 s, max 1.7, cutoff 1.5 kHz; bow 0.5, edge 1, bell 0.1) |
+| Wander, `vel_len_tilt`, onset gains, bloom, sparkle, stick click, attack noise, NL, edge level boost, rate jitter, hammering tilt | off |
+
+**No bell.** A flat ride: there are no bell captures, and the preset names no bell ratios file, as SMOKE FLAT RIDE named none. The builder needs `--infer-bell` to run without bell captures; `data/stine_build_info.json` records the inferred bell (`bell_inferred`), which nothing uses. The plugin's bell rows play CENTER, a copy of BOW struck at position 1.0, as SMOKE FLAT RIDE's did.
+
+**The T60s are refit from the bow captures, as Konstan's** (its decision 5; the manifest): 520 of the 746 bow modes refitted (median ×2.29), meant to be used without V19's cap. The captures' low range (89–400 Hz) rings 17.5–33.8 s.
+
+**The edge envelopes run 30 s** (1500 frames) **and so does the window** (`edge_band_env_onset_s` 30.0), as the manifest describes. The captures end at 11.7 s; with the builder's 12.2 s window an edge hit's ring came back about 29 dB at the window's end, where the envelope hands each mode back to its own T60 (up to 40 s here). So each band was extended past its capture by its decay over the capture's last 3 s (T60 limited to 1–60 s), and a band that dies inside its capture stays silent. `data/stine_build_info.json` records the builder's values (586 frames, 12.2 s); the preset's are the ones used.
+
+### Bake and plugin
+
+- **Bake** (`tools/bake_preset.py --preset stine`; `tools/ab_common.py` `PRESETS`): SMOKE FLAT RIDE's layout. `BOW` (0.5) and `EDGE` (0.0), no articulation folder, and the copies `CENTER` (`center`, from `BOW`, at 1.0), `BOW_SHOULDER` (`bow_shoulder`, from `BOW`, at 0.5) and `CENTER_SHOULDER` (`center_shoulder`, from `CENTER`, at 1.0) (`COPIED_ENTRIES`), exactly as `'602'` has them. No `ENVELOPE_ON` entry: the trigger file switches the envelope on (`edge_npz.envelope_active` true, `onset_s` 30.0). Its T60s are baked without V19's cap (`T60_UNCAPPED` = {konstan, paperthin, azcrash, stine}; decision 4). Every entry has the same calibration scalar, 0.11862169212183724 (0.11956305757274611 with the capped T60s). 5 slots, 900 modes; every locked file matches the manifest.
+- **Preset** STINE FLAT RIDE, id `stine_flat_ride`, second in the CYMBAL list, in SMOKE FLAT RIDE's place (`plugin/SlotTable.h`): SMOKE FLAT RIDE's five rows, sticks, labels (CENTER, CENTER2, and CENTER · BOW under Blend 1) and notes (`docs/UI_SPEC.md` section 8); SMOKE FLAT RIDE's wireframe cymbal `kSmokeShape`, unchanged (Kris: "Same wireframe render as smoke"; section 11), so the drawing is SMOKE FLAT RIDE's, bit for bit. CMake packs `stine_flat_ride` in `smoke_flat_ride`'s place.
+- **SMOKE FLAT RIDE is kept.** Its data, `presets/602/`, stays as it is, locked. Its bake moved unchanged (`git mv`, the same bytes) to `resources/presets/archive/smoke_flat_ride.bake.json`; nothing builds, packs or tests the archive (CMake packs a list of names, and `tools/cymbalis_identity` and the other tools read `resources/presets/*.bake.json`, which does not descend into `archive/`). The `'602'` entries stay in `tools/ab_common.py` and `tools/bake_preset.py`, so `--preset 602` still re-bakes it (`docs/BUILDS.md`). The plugin as it was, SMOKE FLAT RIDE included, is on the branch `backup/smoke-flat-ride-602` (main at `81c1620`).
+- **Saved sessions** (`plugin/PluginProcessor.cpp`, `kFormerPresets`). A session saved with preset `smoke_flat_ride` opens on STINE FLAT RIDE with that preset's stick choices and notes: a missing `stick_stine_flat_ride_*` key is read from `stick_smoke_flat_ride_*` (and a prefixed note key the same way; SMOKE FLAT RIDE's notes were the shared `note_*` keys, which STINE reads as they are). Its SMOKE tuning is not applied: the session's Tuning child for `smoke_flat_ride` names another preset and is ignored, so STINE starts at its bake's values, and a tuning file for `smoke_flat_ride` is refused like any file for another preset (`docs/TUNING.md`).
+
+### Live-engine decisions for Stine
+
+1. **Slots.** As SMOKE FLAT RIDE: BOW and BOW2 play `bow` (TIP) or `bow_shoulder` (SHOULDER); BELL and BELL2, labelled CENTER and CENTER2, play `center` (TIP) or `center_shoulder` (SHOULDER); EDGE plays `edge` (SHOULDER, fixed) (`docs/UI_SPEC.md` section 8). The copies are tip data, to be tuned by ear (`docs/TUNING.md`; the shoulders have the NOVA SHOULDER PROFILE button, with the bow profile).
+2. **Level trims**, as for Raven and the presets after it: velocity 1.0, the mean level of the first 500 ms, measured after the tuning block was applied (`--peak-limit 0.25365`, `docs/BUILDS.md`). BOW is matched to Nova BOW (tip) and never capped; CENTER (no SPEAR target) is matched to it too and gets BOW's trim; the shoulder copies take their sources'. EDGE goes to its SPEAR target, +19.25 dB above BOW (Edge V3 against Bow V3, `data/stine_build_info.json`), capped where one hit (99th percentile of 1024 hits) would peak above 0.9 before the output gain: `tools/cymbalis_trims --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target EDGE=19.25 --peak-limit 0.25365`. The values are the project session's.
+
+   | Entry | Target vs BOW | Trim | Level vs BOW | Peak of one hit with trim (99th percentile), after the output gain | Capped |
+   |---|---|---|---|---|---|
+   | BOW | 0 dB | −8.83 dB | 0 dB | 0.280 | no (BOW) |
+   | CENTER | 0 dB (BOW's) | −8.83 dB | 0 dB | 0.256 | no (BOW's target) |
+   | BOW_SHOULDER | 0 dB (BOW's) | −8.83 dB | 0 dB | 0.280 | no (as BOW) |
+   | CENTER_SHOULDER | 0 dB (BOW's) | −8.83 dB | 0 dB | 0.256 | no (as CENTER) |
+   | EDGE | +19.25 dB | +5.44 dB | −2.95 dB | 0.254 | yes (+27.64 dB would peak at 3.27) |
+
+3. **Tuning block** (`tools/apply_tuning.py`, the file `stine_flat_ride.tuning.json`), as the other new rides': `output_gain_db` −11.0, `hit_variation` true, and on `bow`, `center`, `bow_shoulder` and `center_shoulder` the velocity curve that makes the Hertz law's v² linear (`vel_0.6_db` 4.437, `vel_0.3_db` 10.458). EDGE is not touched: its NPZ rows are already linear in velocity. EDGE VOICE FROM BOW is not in the block, so it starts at 0 %. Its check values at 100 % (`tools/pack_bake`, `docs/TUNING.md`): modes with α = 1: 52, with 0 < α < 1: 590, shared long-ringing modes 8 of 20 (2 at 0 %).
+4. **No T60 cap**, as Konstan, Extra Paper Thin and Crash 16": `stine` is in `T60_UNCAPPED`, so each mode's T60 is max(fingerprint `t60` × `t60_scale`, 0.02), the contact-phase mode step is recomputed from it, and so is the calibration scalar (0.119563 → 0.118622). 297 of the 900 T60s differ from the capped ones: 278 by more than 0.0001 s, the manifest's count; the other 19 (8 edge-only modes and 11 bow modes) by under 0.0001 s, the fingerprint's four decimals against V19's interpolated cap. 49 modes ring longer than 12 s, the longest 39.9 s at 292.7 Hz (33.4 s and 32.2 s at 252.9 and 253.6 Hz).
+5. **Seed.** The strike-phase sequence starts from Stine's seed, 13 (Raven's, Konstan's, Extra Paper Thin's and Crash 16"'s too).
+
+**Checked in memory** (2026-11-23, 44.1 kHz, the engine's output with the tuning block's −11 dB):
+
+- **Levels**, single hits, HIT VARIATION off, RMS of the two channels' mean over the first 500 ms (the project session's in brackets): BOW −43.5 (−43.5), −36.6 (−36.2) and −31.5 dBFS (−31.0) at 0.3, 0.6 and 1.0; EDGE −46.7 (−45.0), −38.8 (−38.0) and −35.7 dBFS (−35.2); CENTER −38.4 (−38.2) at 0.5 and −31.5 dBFS (−31.1) at 1.0. EDGE's spectral centroid over 0.05–0.6 s: 1000, 2858 and 4363 Hz at 0.3, 0.6 and 1.0 (933, 3207 and 4398 Hz).
+- **No ring returning.** After one EDGE hit at 1.0, every 250 ms from 1.25 s to 30 s stays below the level at 1 s (13.0 dB under the first 500 ms; the loudest later block, at 1.25 s, is 3.9 dB under it). At the window's end the ring steps up: 74.9 dB under the hit in 29.75–30 s, 59.6 dB in 30–30.25 s (the project session: 74 → 67 dB), still 46.6 dB under the level at 1 s.
+- **Peaks.** The loudest of 128 single hits at 1.0, HIT VARIATION on as baked: 0.244 on BOW, CENTER and their shoulders, 0.151 on EDGE, within the 0.9 cap (0.254 after the output gain). The trims tool's 99th percentile with HIT VARIATION off is higher on BOW (0.280) and CENTER (0.256): BOW is never capped, as SMOKE FLAT RIDE's BOW was not.
+- **Headroom** (`docs/BUILDS.md`, "Headroom"): the stress pattern peaks at +4.7 dBFS before the −11 dB, −6.3 dBFS after; the worst of 16 phase sequences −6.2 dBFS; the loudest single hit −1.3 → −12.3 dBFS (BOW, CENTER and their shoulders).
+- **Every other preset** plays bit for bit as on main (`tools/cymbalis_identity`, 44.1 and 96 kHz, blocks of 128 and 64, cascade and dampings on and off).
+
+Its CPU cost (`cymbalis_bench`, 60 s, every slot, EDGE hits included, this container): 4.6 % of a core at 44.1 kHz (about 22× real time), 5.0 % at 48 kHz and 8.1 % at 96 kHz. A dense run of BOW hits (one every 0.125 s for 60 s, its low modes ringing up to 40 s): 6.8× real time at 44.1 kHz and 5.4× at 96 kHz.
+
+### Things in the Stine data or engine that look wrong (ported as they are)
+
+- **EDGE is not steady in level between its first two rows.** RMS of the first 500 ms against velocity 1.0, HIT VARIATION off: −17.4 dB at 0.142 (the V1 row), −11.2 at 0.2, −11.5 at 0.25, −11.0 at 0.3, −11.1 at 0.325 (the V2 row), then rising steadily (−8.8 at 0.4, −5.5 at 0.5, −3.1 at 0.6, 0 at 1.0). Between 0.142 and 0.325 the edge jumps to the V2 row's level by 0.2 and stays flat. V1's envelope peaks at frame 4 (band 6), V2's and V3's at frame 1 (band 6): the engine normalises a blend of two rows by the blend's own peak (`startEnvelope`), which lifts blends of rows peaking in different places, as Crash 16"'s data notes describe (there the rows were aligned to one peak).
+- **The ring steps up at the 30 s window's end**, by 15.3 dB (74.9 → 59.6 dB under the hit), where the project session measured about 7 dB (74 → 67). It stays far under the level at 1 s.
+- **`edge_rms_correction` is at its cap in the five lowest bands** (×4, 89–224 Hz), as Crash 16"'s.
+- **27 modes are below the lowest band (89 Hz)**, 25 of them excited, from 29.6 Hz.
+- **EDGE stays below its SPEAR target** once capped (−2.95 dB against +19.25); at its target it would peak at 3.27 after the output gain.
+- **BOW peaks at 0.280 at velocity 1.0** after the output gain (99th percentile, with its trim), above the 0.254 limit: BOW is never capped, by the rule.
+- **`data/stine_build_info.json` has no `t60_refit` record** (null); the refit's numbers are in the manifest only. Its `edge_envelope_frames` and `edge_band_env_onset_s` are the builder's (586, 12.2 s), not the preset's (1500, 30 s).
+- **The pk_t ramps have no effect** with the envelope on (as for the other NPZ presets), and **the calibration does not see the envelope**; the trims make up for the level.
 
 ## Hi-hat
 
