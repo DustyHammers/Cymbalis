@@ -19,23 +19,22 @@ class TuningWindow;
 namespace cymbalis::ui
 {
 
-// A knob drawn from the filmstrip (UI_SPEC sections 1, 6): vertical drag, double-click
+// A knob, drawn in design units (UI_SPEC section 6, "The knob"): vertical drag, double-click
 // resets to the default. Around it, its position arc (UI_SPEC section 6): from 7 o'clock for
 // a unipolar knob, from 12 o'clock to either side for a bipolar one (Pan). The component is
-// the filmstrip's 128 x 128 plus a margin that holds the arc; only the filmstrip's square
-// takes the mouse.
+// the knob's 128 x 128 square plus a margin that holds the arc; only the knob's square takes
+// the mouse.
 class Knob final : public juce::Slider
 {
 public:
-    Knob (const Assets& assets, bool bipolar);
+    explicit Knob (bool bipolar);
     void paint (juce::Graphics& g) override;
     bool hitTest (int x, int y) override;
 
-    static constexpr int margin = 4;              // around the filmstrip, for the arc
+    static constexpr int margin = 4;              // around the knob's square, for the arc
     static constexpr int size = 128 + 2 * margin; // the component's width and height
 
 private:
-    const Assets& assets;
     const bool bipolar;
 };
 
