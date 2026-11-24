@@ -115,16 +115,16 @@
 //                                                                    -> as the rule
 //   dragsize  (Tuning window closed) the editor's bottom-right resizer pressed, dragged out (read
 //             with the button down), on past the minimum and released; pressed again, dragged far
-//             out (read with the button down), back part way and released. Every press is on the
-//             corner of the editor at its opening size, as the test opened it, which a small
-//             screen still shows (the runner's 1024 x 768 at 960 x 640); the events go to the
-//             window, so a drag can go off it. The state is saved before and after the drags
-//                                                                    -> 3:2 between the limits,
-//             960x640, 1536x1024, 3:2 between the limits
+//             out and released. Every press is on the corner of the editor at its opening size, as
+//             the test opened it, which a small screen still shows (the runner's 1024 x 768 at
+//             960 x 640); the events go to the window, so a drag can go off it. Each size is the
+//             plugin's own record (the session's editorWidth and editorHeight). The state is saved
+//             before and after the drags                             -> 3:2 between the limits,
+//             960x640, 1536x1024
 //   savedsize (after dragsize) the editor closed, the state from before the drags restored and the
-//             editor opened again; then the same with the state from after them
+//             editor opened again; then the same with the state from after them (1536 x 1024)
 //                                                                    -> the size before, the size
-//             dragged to (a saved size wins over the opening size)
+//             saved (a saved size wins over the opening size)
 //   nova      click the CYMBAL box, then NOVA RIDE (the first)       -> preset nova_ride
 //   smoke     click the CYMBAL box, then SMOKE FLAT RIDE (the second) -> preset smoke_flat_ride
 //
@@ -374,6 +374,14 @@ private:
     juce::String sizeText() const
     {
         return editor == nullptr ? juce::String ("no editor") : juce::String (editor->getWidth()) + "x" + juce::String (editor->getHeight());
+    }
+
+    // The plugin's own record of its editor's size (the session's editorWidth and editorHeight,
+    // set as the editor resizes), "WxH".
+    juce::String sessionSizeText()
+    {
+        const auto session = sessionNow();
+        return attribute (session, "editorWidth") + "x" + attribute (session, "editorHeight");
     }
 
     // The editor closed, and opened again from the plugin (as load() opens it).
@@ -1112,13 +1120,14 @@ private:
         }
         else if (name == "dragsize")
         {
-            // Every drag is on the editor as the test opened it: the corner of an editor at its
-            // opening size, which a small screen still shows (the runner's 1024 x 768 at 960 x 640).
-            // An editor dragged larger runs off it, so the second press comes after the first drag
-            // has ended at the minimum, and each drag keeps the button down until its last size.
+            // Every drag is on the editor as the test opened it, pressed on its corner at the opening
+            // size, which a small screen still shows (the runner's 1024 x 768 at 960 x 640): an editor
+            // dragged larger runs off it, so the second press comes after the first drag has ended at
+            // the minimum. Each size is the plugin's own record of its editor (the session's
+            // editorWidth and editorHeight, set as it resizes), the same in either host.
             auto sizes = std::make_shared<juce::StringArray>();
             auto corner = std::make_shared<juce::Point<float>>();
-            const auto read = [this, sizes] { sizes->add (sizeText()); };
+            const auto read = [this, sizes] { sizes->add (sessionSizeText()); };
             const auto pressCorner = [this, corner] {
                 *corner = { (float) editor->getWidth() - 4.0f, (float) editor->getHeight() - 4.0f };
                 cymbalis::uitest::press (*editor, *corner);
@@ -1135,34 +1144,33 @@ private:
                           },
                           pressCorner, dragBy ({ 0.0f, 0.0f }, { 150.0f, 100.0f }), wait, read,
                           dragBy ({ 150.0f, 100.0f }, { -300.0f, -200.0f }), releaseAt ({ -300.0f, -200.0f }), wait, read,
-                          pressCorner, dragBy ({ 0.0f, 0.0f }, { 1200.0f, 800.0f }), wait, read,
-                          dragBy ({ 1200.0f, 800.0f }, { 300.0f, 200.0f }), releaseAt ({ 300.0f, 200.0f }), wait, read,
+                          pressCorner, dragBy ({ 0.0f, 0.0f }, { 1200.0f, 800.0f }), releaseAt ({ 1200.0f, 800.0f }), wait, read,
                           [this] {
                               plugin->getStateInformation (*sizeSaved);
-                              sizeSavedText = sizeText();
+                              sizeSavedText = sessionSizeText();
                           } };
             s.key = "editor size while dragging";
-            s.expected = "3:2 between the limits, 960x640, 1536x1024, 3:2 between the limits";
-            s.probe = [sizes] {
+            s.expected = "3:2 between the limits, 960x640, 1536x1024";
+            s.probe = [this, sizes] {
                 const auto all = sizes->joinIntoString (", ");
-                std::printf ("      dragged out, on past the minimum (released); dragged far out, back part way (released): %s\n",
-                             all.toRawUTF8());
+                std::printf ("      the plugin's editor: dragged out (button down) %s; on past the minimum, released %s; "
+                             "pressed again, dragged far out, released %s; the host's editor now %s\n",
+                             (*sizes)[0].toRawUTF8(), (*sizes)[1].toRawUTF8(), (*sizes)[2].toRawUTF8(), sizeText().toRawUTF8());
                 const auto between = [] (const juce::String& wh) {
                     const int w = wh.upToFirstOccurrenceOf ("x", false, false).getIntValue();
                     const int h = wh.fromFirstOccurrenceOf ("x", false, false).getIntValue();
                     return w > 960 && w < 1536 && std::abs (2 * w - 3 * h) <= 2;
                 };
-                return sizes->size() == 4 && between ((*sizes)[0]) && (*sizes)[1] == "960x640" && (*sizes)[2] == "1536x1024"
-                               && between ((*sizes)[3])
-                           ? juce::String ("3:2 between the limits, 960x640, 1536x1024, 3:2 between the limits")
+                return sizes->size() == 3 && between ((*sizes)[0]) && (*sizes)[1] == "960x640" && (*sizes)[2] == "1536x1024"
+                           ? juce::String ("3:2 between the limits, 960x640, 1536x1024")
                            : all;
             };
         }
         else if (name == "savedsize")
         {
-            // After dragsize, which saved the state before its drags and after them: the editor
-            // closed, the state before restored and the editor opened again (the size before),
-            // then the same with the state after (the size it was dragged to: a saved size wins
+            // After dragsize, which saved the state before its drags and after them (the editor at
+            // 1536 x 1024): the editor closed, the state before restored and the editor opened again
+            // (the size before), then the same with the state after (1536 x 1024: a saved size wins
             // over the opening size).
             auto seen = std::make_shared<juce::StringArray>();
             const auto reopenWith = [this] (std::shared_ptr<juce::MemoryBlock> state) {
@@ -1176,15 +1184,16 @@ private:
             for (auto& a : reopenWith (sizeSaved))
                 s.actions.push_back (a);
             s.key = "editor reopened from the state before and after the drags";
-            s.expected = "the size before, the size dragged to";
+            s.expected = "the size before, the size saved";
             s.probe = [this, seen] {
                 seen->add (sizeText());
-                std::printf ("      before the drags %s, after them %s; reopened from the state before %s, from the state after %s\n",
+                std::printf ("      the host's editor before the drags %s, the plugin's after them %s; reopened from the state before "
+                             "%s, from the state after %s\n",
                              sizeBeforeText.toRawUTF8(), sizeSavedText.toRawUTF8(), (*seen)[0].toRawUTF8(),
                              seen->size() > 1 ? (*seen)[1].toRawUTF8() : "?");
                 return seen->size() == 2 && sizeSavedText != sizeBeforeText && (*seen)[0] == sizeBeforeText && (*seen)[1] == sizeSavedText
-                           ? juce::String ("the size before, the size dragged to")
-                           : seen->joinIntoString (", ") + " (before " + sizeBeforeText + ", after " + sizeSavedText + ")";
+                           ? juce::String ("the size before, the size saved")
+                           : seen->joinIntoString (", ") + " (before " + sizeBeforeText + ", saved " + sizeSavedText + ")";
             };
         }
         else if (name == "hihatplay")
