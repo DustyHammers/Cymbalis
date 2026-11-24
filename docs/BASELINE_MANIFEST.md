@@ -224,6 +224,31 @@ Built 2026-11-22 in the project session from Kris's SPEAR captures (Bell V1 and 
 - Build-up (LF and MF) as Bettis and Swish; wander, stick click and NL off. No velocity tables: bell and bow use the hertz law (v^2).
 - No photo: the plugin draws the wireframe (`docs/ui/wireframe_reference.py`, `azcrash`), from Kris's photos of 2026-11-22.
 
+# Stine Flat Ride
+
+Built 2026-11-23 in the project session from Kris's SPEAR captures (Bow V1-V3 with the stick tip, Edge V1-V3 with the shoulder; no bell captures) by `build_preset.py` with the T60 refit (`refit_t60.py`; both kept in the project with their documentation, `SPEAR_Preset_Builder.md`, not in this repo). Built under the working name "New Flat"; Kris named it STINE FLAT RIDE (2026-11-23). It replaces SMOKE FLAT RIDE in the plugin; the 602's data (`presets/602/`) stays in the repo, locked, and the plugin as it was is kept on the branch `backup/smoke-flat-ride-602` (main at `81c1620`). SPEAR files excluded. No baseline render check: the plugin is the reference (see `CLAUDE.md`).
+
+| File | MD5 |
+|---|---|
+| `presets/stine/Stine_Baseline1.json` | `e06267e8800a6c8f8ba4a0aad643cc5b` |
+| `presets/stine/data/stine_build_info.json` | `99d0995b37c8a7a28a6c6cbd958621c2` |
+| `presets/stine/data/stine_edge_benv_trigger.json` | `8657ebfb1096d33188da6d488cdd3b38` |
+| `presets/stine/data/stine_edge_excitation_ratios_neutral.json` | `d638cc5d85aabd995d8b314bff2c2062` |
+| `presets/stine/data/stine_edge_npz_data.json` | `37487bd3c442c9e16ae0eb6e020fb609` |
+| `presets/stine/data/stine_edge_vel_tilt.json` | `45b44a177ecd6f84e2c725115a6eed5a` |
+| `presets/stine/data/stine_fingerprint.json` | `ce353bff6f345bf0b832dde4ef491612` |
+| `presets/stine/data/stine_pkt_data.json` | `56c43c17328039029fc10e2980606051` |
+
+## Notes
+
+- Bettis format, as RAVEN, KONSTAN, EXTRA PAPER THIN and CRASH 16": fingerprint (900 modes), neutral edge ratios, NPZ edge (3 rows: velocities 0.142, 0.325, 1.0) in the plugin's 22 bands with `edge_rms_correction`, edge pk_t by velocity, edge velocity tilt, and the all-zero trigger file that switches the NPZ envelope on.
+- **No bell.** A flat ride: the builder needs `--infer-bell` to run without bell captures, but its bell ratios file is left out and the preset names none, as SMOKE FLAT RIDE has none. The plugin's bell rows play CENTER, a copy of BOW struck at position 1.0, as SMOKE FLAT RIDE's do. `data/stine_build_info.json` still records the inferred bell (`bell_inferred`, a bell level of +4.72 dB): neither is used.
+- **T60 refit from the bow captures, as KONSTAN** (see its notes): 520 of 746 bow modes refitted (median x2.29). Meant to be baked **without** V19's cap: 278 of the final T60s are above it. The longest: 39.9 s at 292.7 Hz, 33.4 s and 32.2 s at 252.9 and 253.6 Hz; the captures' low range (89-400 Hz) rings 17.5-33.8 s.
+- **The edge envelopes run 30 s (1500 frames) and the envelope window (`edge_band_env_onset_s`) is 30 s**, as CRASH 16"'s. The captures end at 11.7 s, and with the builder's 12.2 s window an edge hit's ring came back about +29 dB at 12.2 s. Each band is extended past its capture by its decay over the capture's last 3 s (T60 limited to 1-60 s); a band that dies inside its capture stays silent. `data/stine_build_info.json` records the builder's values (586 frames, 12.2 s); the preset's are the ones used. In the project session's renders, after one EDGE hit at velocity 1.0 the level stays below its level at 1 s all the way to 30 s; at the window's end it steps up from 74 to 67 dB under the hit.
+- SPEAR level target in `data/stine_build_info.json`: EDGE +19.25 dB above BOW (Edge V3 against Bow V3, first 500 ms). The 0.9 cap holds EDGE at -2.95 dB against BOW (trim +5.44 dB; BOW -8.83 dB).
+- Not the 602: the captures' strongest ringing partials (bow about 400, 557, 595, 852 Hz and 2 kHz) don't match SMOKE FLAT RIDE's (297-738 Hz). The edge has a low body (117-413 Hz) and brightens with velocity (spectral centroid 0.88, 3.1 and 4.1 kHz from Edge V1 to V3).
+- Build-up (LF and MF) as Bettis and Swish; wander, stick click and NL off. No velocity tables: bow uses the hertz law (v^2).
+
 # HI-HAT (GF A60, 14")
 
 Built 2026-11-20 in the project session from Kris's SPEAR captures of a pair of 14" hats: HH Tip V1-V3 (stick tip on the bow, closed) and HH Shoulder Edge V1-V7 (stick shoulder on the edge; V1-V3 closed at three velocities, V4-V7 opened in steps, Kris 2026-11-20). SPEAR files excluded. Not a V19 preset: its own format (`cymbalis-hihat-1`), read by the hi-hat bake, with the strike model in `docs/hihat_reference.py`. No baseline render check: the plugin is the reference (see `CLAUDE.md`).
