@@ -723,6 +723,57 @@ Step 1 of the high-priority "multi-threaded rendering" item (Kris, 2026-11-25). 
 
 Then the quiet cymbals, and the 10-cymbal cases with the workers spinning through each block (3 ms), for comparison. A one-thread row is in every table: it is the reference.
 
+**First CI numbers** (run 45648241812, 2026-11-25; Apple M1, virtual, 3 performance cores; 2 s per run, smallest of 3 runs per block; workers sleeping after 50 µs).
+
+- **Bit identity:** all 336 threaded runs are bit-identical to one thread's.
+- **The step** took 13.8 minutes and the job 47.6.
+
+Ten cymbals, block time as a percentage of the block (mean / worst / blocks over 100 %):
+
+| Rate / block | Pattern | 1 thread | 2 threads | 3 threads | 3 threads, workers spinning through |
+|---|---|---|---|---|---|
+| 44.1 kHz / 128 | groove | 36 / 87 / 0 | 24 / 64 / 0 | 17 / 42 / 0 | 8.7 / 19 / 0 |
+| 44.1 kHz / 128 | stress | 41 / 168 / 3 | 26 / 83 / 0 | 13 / 44 / 0 | 12 / 34 / 0 |
+| 44.1 kHz / 64 | groove | 45 / 174 / 7 | 23 / 80 / 0 | 20 / 75 / 0 | |
+| 44.1 kHz / 64 | stress | 42 / 272 / 17 | 23 / 155 / 1 | 22 / 109 / 1 | |
+| 96 kHz / 128 | groove | 43 / 102 / 1 | 38 / 125 / 3 | 28 / 114 / 1 | |
+| 96 kHz / 128 | stress | 45 / 136 / 7 | 35 / 184 / 2 | 32 / 134 / 2 | |
+| 96 kHz / 64 | groove | 36 / 170 / 9 | 29 / 126 / 2 | 17 / 62 / 0 | 17 / 71 / 0 |
+| 96 kHz / 64 | stress | 45 / 250 / 28 | 38 / 163 / 48 | 32 / 189 / 6 | 19 / 118 / 2 |
+
+The spinning-through runs have their own one-thread rows: 34 / 84 / 0 and 48 / 158 / 1 at 44.1 kHz / 128, 39 / 162 / 29 and 45 / 292 / 34 at 96 kHz / 64.
+
+What they say:
+
+- **How much of the difference is the runner's.**
+  - With one cymbal the pool never shares a block, so its rows at 1 and at 3 threads do the same work. Yet their means differ by up to 1.6× (stress, 44.1 kHz / 128: 12.7 % against 7.7 %) and their worst blocks by up to 1.7×. In 7 of the 8 pairs the one-thread row is the slower, which inflates the speed-ups somewhat.
+  - The same one-thread case measured in the two steps differs by up to 16 % in mean and 17 % in worst block.
+  - So, at 2 s per run on this virtual machine, differences under about 1.5× between rows are noise. The large ones hold: blocks over 100 % going from dozens to a few, worst blocks halving.
+- **Where one thread misses the deadline.**
+  - **44.1 kHz / 128:** never in the groove up to 10 cymbals (worst 87 %). In the stress pattern from 6 cymbals: 1 block at 6, 3 at 10 (worst 168 %).
+  - **44.1 kHz / 64:** from 4 cymbals in both patterns. At 10: 7 blocks in the groove, 17 in the stress pattern (worst 272 %).
+  - **96 kHz / 128:** from 2 cymbals (worst 232 % in the groove, the ride and hi-hat struck in one block).
+  - **96 kHz / 64:** already with one: 6–7 blocks over, worst 152 %. A single NOVA strike outruns a 667 µs block (`--dense`, same run: NOVA's worst block is 238 % there). The pool can't help, since the unit of work is one engine for one block.
+- **What each thread buys.**
+  - **44.1 kHz:** a second thread clears the misses but one at 10 cymbals, 64 samples; the mean speed-up is about 1.5–2× at 10 cymbals. A third thread brings the worst blocks to 42–44 % at 128 samples (75–109 % at 64), with mean speed-ups of 1.9–3.1×.
+  - **96 kHz:** less. 2 threads give 1.1–1.3×, 3 threads 1.4–2.1×, and blocks over 100 % remain at 64 samples.
+- **What waiting costs.**
+  - **Sleeping (50 µs spin), the default:**
+    - **wake-up:** median 27–44 µs, p99 110–340 µs at 96 kHz / 64 and up to 1 ms at 44.1 kHz / 128 (a longer sleep, a slower wake on this virtual machine);
+    - **CPU:** the workers' CPU beyond rendering is 2–18 % of a core;
+    - **share of wake-ups:** 83–100 % of them found the worker asleep.
+
+    At 96 kHz / 64, a 30–40 µs wake-up is 5–6 % of the block, and the p99 up to half of it. That is why 2 threads there did no better than 1 in the stress pattern (48 blocks over against 28).
+  - **Spinning through (3 ms):** the wake-up is 0.3–0.4 µs, and the misses go (96 kHz / 64 stress: 2 blocks over 100 %, 3 over 70 %, against 6 and 69 sleeping). But the two workers use about two whole cores (180–200 % of one) to render 19–43 % of one. In a host that is 1.6–1.8 cores taken from every other track and plugin. Rendering itself also got faster when the cores were kept busy (44.1 kHz / 128 groove: mean 8.7 % against 16.7 % sleeping), so this virtual machine pays for idle cores waking up. Real hardware, and an audio workgroup (AU), may pay less.
+
+    The choice between the two, or something in between, is for a later step, measured in a host:
+    - spin only after a heavy block;
+    - spin until the block's expected end;
+    - the workgroup.
+- **Quiet cymbals.**
+  - **Cost:** one silent cymbal costs between −2 and +14 µs a block here. That spread is noise: the same case's one- and three-thread rows differ by more than the nine silent cymbals add. Locally the cost is 1–2.5 µs, so a silent cymbal is close to free (under 0.5 % of a block).
+  - **What does cost:** cymbals in their quiet tails (above), which can last 70–110 s after a hit at −130 dB and below. The project session's "about 3 % each" was most likely such ringing, not silence.
+
 **Local numbers (Linux container, Intel Xeon 2.1 GHz, 4 cores, a virtual machine; not the target).** 44.1 kHz / 128, 10 cymbals, blocks back to back:
 
 | Threads | groove: mean | stress: mean | stress: worst |
