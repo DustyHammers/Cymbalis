@@ -62,13 +62,12 @@ if(APPLE)
 endif()
 
 # cymbalis_pool — several FastEngines rendering one block on the calling thread and worker
-# threads (EnginePool.h; docs/PORT_MAP.md, "Multi-cymbal rendering (step 1)"). Only
-# cymbalis_bench --kit uses it for now; the plugin does not link it.
-find_package(Threads REQUIRED)
+# threads (EnginePool.h; docs/PORT_MAP.md, "Multi-cymbal rendering"), scheduled by dhpool
+# (shared/dhpool). Only cymbalis_bench --kit uses it for now; the plugin does not link it.
 add_library(cymbalis_pool STATIC
     EnginePool.cpp
 )
-target_link_libraries(cymbalis_pool PUBLIC cymbalis_fast Threads::Threads)
+target_link_libraries(cymbalis_pool PUBLIC cymbalis_fast dhpool)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(cymbalis_pool PRIVATE -O3 -fno-fast-math -Wall -Wextra)
 endif()

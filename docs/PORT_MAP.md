@@ -804,6 +804,73 @@ What they say:
 
   This is not changed here: the skip threshold is part of the sound.
 
+### Multi-cymbal rendering (step 2): the shared job pool
+
+Step 2 (Kris, 2026-11-25) of the plan "Cymbalis + Tympanis: one physically modelled kit". The pool from step 1 becomes instrument-neutral: **dhpool** (`shared/dhpool/`, `shared/dhpool/README-pool.md`), a job pool that can schedule Cymbalis's cymbals and Tympanis's drums alike. `EnginePool` is rebuilt on top of it. **The plugin still doesn't use the pool:** nothing changes in the plugin, the sound, the UI or the parameters (`tools/cymbalis_identity`: every preset bit for bit as before).
+
+**Why scheduling and mixing are separate now.**
+- **What step 1's pool owned:** `FastEngine` only, plus the events, the float buffers and the mix.
+- **What Tympanis needs instead:**
+  - its drums render in double precision through its own `Kit`;
+  - its snare buzz is a coupling pass that runs after every drum has rendered (`Kit::renderChunk`, Tympanis `plugin/dsp/Engine.cpp`). Each snare is driven by the rest of the kit's mix, the snares in order, each hearing the earlier snares' sympathetic ring and wires.
+
+  A pool that mixes can't do that.
+- **dhpool only hands out jobs:** `run(count, order, fn, ctx)` calls `fn(ctx, order[k])` for every k, on the calling thread and the workers, and returns when all are done. `fn` is a plain function pointer, so nothing is allocated.
+- **The caller owns everything else:** the events, the buffers (float or double), the hand-out order, the mix, and any serial work between runs.
+
+**What dhpool keeps from step 1:**
+- the atomic hand-out with a generation, so a late worker never takes a job of another run;
+- the spin-then-sleep handshake, with no wake-up lost or left over;
+- the time-constraint policy on the workers. The period is now an option (one block), since the pool no longer knows the block;
+- no lock, allocation or system call on the audio path but the wake-up signal;
+- a clean shutdown;
+- with `count < 2` or one thread, the caller runs the jobs alone and wakes no worker. Each run hands the caller's floating-point control to the workers, as before.
+
+**New in dhpool:**
+- **Several runs per block.**
+  - `run()` may be called more than once in a block, for example the drums, then the snare pass on the caller, then more parallel work.
+  - After its last job a worker spins for 50 µs before it sleeps, so a run that follows a short serial pass finds it awake.
+  - In the self-test (two runs and two serial passes per block, a 1.5 ms pause every 8th block), only the first run after each pause needed a worker woken from sleep: 256 of 3966 wake-ups at 2 threads, 2000 blocks.
+  - A serial pass longer than the spin puts the workers to sleep, and the next run pays a wake-up (30–40 µs on CI's Mac, step 1).
+- **The workgroup generation.**
+  - **Step 1's limit:** each worker joined its workgroup once, at its start.
+  - **The fix:** `setWorkgroupHook(join, leave)` may now be called at any time off the audio path, as from JUCE's `audioWorkgroupContextChanged`, which hosts can call more than once. It publishes a new hook pair and bumps a generation.
+  - **Each worker** checks the generation at every wake-up and, if it changed, leaves the workgroup it joined and joins the new one before it takes a job. A worker joins the current hook at its start and leaves it at its end.
+  - **The calling thread never joins.** Hook pairs no worker holds any more are freed at `release()`. They are few: one per call.
+- **The caller's wait.** In a shared run, the time from the hand-out counter running out (the caller has nothing left to take) to the last job still on a worker returning. It is the cost of a worker being slow, late or preempted mid-job, which the review of #74 asked to see. It is kept with the wake-up delays when timing is asked for, and `cymbalis_bench --kit` reports its median, p99 and max per case.
+- **Size.** At most 4095 jobs per run: the counter holds a 40-bit generation, a 12-bit count and a 12-bit next job.
+
+**`EnginePool` on dhpool.** Its interface and behaviour stay:
+- the per-engine event queues and float buffers;
+- the hand-out order: struck, then ringing, then silent;
+- the fixed-order mix;
+- one thread when fewer than two engines need rendering.
+
+What changed:
+- **The run holds only the engines that need rendering.** The caller renders the silent ones itself after the run. Their cost is about 1 µs each. Step 1 put them at the end of the hand-out, so the caller almost always took them anyway. This keeps step 1's number of workers woken: one per engine to share, up to threads − 1.
+- **`setWorkgroupHook`** passes dhpool's through, and `callerWaitsMicros()` is new.
+- **Bit identity is checked against step 1.** `tools/cymbalis_bench/EnginePool74.*` is a copy of step 1's pool, unchanged but for its name and kept for the bench only. For every `--kit` case, the bench renders the same events through it at the case's most threads (blocks back to back) and requires the new pool's one-thread mix to match it in every block, lead included.
+
+**Checked:**
+- **ThreadSanitizer** (GCC 13, Linux): the self-test (full and `--quick`) and 4-thread `--kit` cases (stress and groove, 4 cymbals; spin 0, 50 and 1000 µs; paced and back to back) report no data race.
+- **The self-test** (`dhpool_selftest`, also in CI): every job exactly once per run; the same bits at 1–4 threads with flush to zero on and off; two runs per block; workgroup hook changes reaching every worker, never the caller, each join with its leave; 60 prepare / release cycles leaving no thread behind.
+  - **It catches a pool without the floating-point hand-over.** Checked with a copy of the pool with that line removed: its results differ at 2–4 threads.
+  - **Step 1's bench never tested that hand-over:** its workers were created after the bench turned flush to zero on, and a new thread takes its creator's mode. The self-test now starts the workers in the other mode.
+- **Locally,** every `--kit` case is bit-identical at 2–4 threads to one thread, and to step 1's pool (44 cases).
+
+**Driving Tympanis's `Kit` with dhpool.** Read at Tympanis `ab23ec8`; nothing in Tympanis is changed here.
+- **`Kit::renderChunk` does everything in one private function:** each drum into its own double buffer, the mix, the snare pass and the stereo gains. dhpool can't be put under it from outside. `Kit` would need its stages exposed:
+  - rendering one drum into its buffer, which becomes the job;
+  - the mix, the snare pass and the stereo mix, which stay on the caller after the run.
+- **The mix stays bit-identical.** `renderChunk` adds each drum into the mix in drum order as it goes, so summing the drums' buffers in drum order after a parallel run gives the same bits. `Drum::render` adds into its buffer, so each job clears its own first, as `renderChunk` does now.
+- **The snare pass is serial by nature.** Each snare is driven by the mix with the earlier snares' sympathetic head and wires already in it, so the snares can't render in parallel without changing the sound. The pass stays on the caller between runs. It is cheap: per snare, its head modes × the samples, plus a band-passed noise bank.
+- **Many short runs.**
+  - Tympanis's `processBlock` renders each stretch between note-ons separately, and `renderStereo` splits a stretch into 1024-sample chunks. Each piece would be one run, so a flam makes 2–3 runs in a block. With the spin, only the first needs a wake-up.
+  - A piece of a few samples (two hits close together) costs a whole dispatch for little work. A size below which the caller renders alone may be worth having; a later step, measured.
+- **No cost estimate yet.** `Drum` has `silent()` but no cheap measure of its work: its active-mode count is private. Heaviest first would need a getter.
+- **No shared state found.** No static or global state in Tympanis's engine; the kit data is shared read-only; every drum has its own noise generators. Double buffers make no difference to dhpool.
+- **A question for the merge:** whether the cymbals should drive the snares' buzz too. If they should, the snare pass needs the whole kit's mix, cymbals included (float into double), before it runs.
+
 ## 602 and Bettis (Smoke Flat Ride, Hammered Thin Ride)
 
 Added 2026-10-15. SMOKE FLAT RIDE was in the plugin until 2026-11-23, when STINE FLAT RIDE took its place ("Stine Flat Ride" below); its bake is kept in `resources/presets/archive/`. The plugin is the reference (`CLAUDE.md`): these presets were ported with the Python engine as a guide and are checked by ear, with no render comparison. Both are baked with `nl_amount = 0`, as Nova is (Bettis's JSON sets 1.0). Nova Ride's bake is unchanged, and so is every code path it uses: each new mechanism is used only when a bake carries its data.
