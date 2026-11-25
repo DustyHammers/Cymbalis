@@ -60,17 +60,18 @@
 // (its accessibility elements) and the page the session saves (editorPage):
 //
 //   tuning       click the TUNING tab                 -> the TUNING page: the panel in the page
-//                                                        area, the knobs hidden, editorPage 1
+//                                                        area, editorPage 1
 //   tuningclose  click the CYMBAL tab                 -> the CYMBAL page: no panel, the knobs
 //                                                        shown, editorPage 0
 //   tuningpreset (on the TUNING page) click the CYMBAL box, then STINE FLAT RIDE
 //                                                     -> still the TUNING page, the panel showing
 //                STINE FLAT RIDE's values (a row that names its CENTER articulation)
-//   savedpage    (on the TUNING page) the state saved; the CYMBAL tab clicked, the editor closed,
-//                the state restored and the editor opened again (checked in the VST3 host only,
-//                as savedsize)                        -> the TUNING page
+//   savedpage    (on the TUNING page, after dragsize: a drag on a reopened editor does nothing)
+//                the state saved; the CYMBAL tab clicked, the editor closed, the state restored
+//                and the editor opened again (checked in the VST3 host only, as savedsize)
+//                                                     -> the TUNING page
 //   tuningresize (on the TUNING page) the host's editor resized to 1200 x 800 and back to the size
-//                it had                               -> the panel's SAVE... button the same size
+//                and the place it had                 -> the panel's SAVE... button the same size
 //                (within 2 points: scaled with the editor it would grow by a quarter), RESET ALL
 //                as far from the page area's right edge: the text keeps its size and the panel
 //                fits the page area
@@ -724,17 +725,17 @@ private:
     }
 
     // The editor's page, as the window shows it and the session saves it: "TUNING page" (the
-    // panel in the page area, the knobs hidden, editorPage 1), "CYMBAL page" (no panel, the
-    // Volume knob shown, editorPage 0), or what it is instead.
+    // panel in the page area, editorPage 1), "CYMBAL page" (no panel, the Volume knob shown,
+    // editorPage 0), or what it is instead. (The knobs lie inside the page area, where the
+    // panel's own sliders are, so only the CYMBAL page reads one.)
     juce::String pageNow()
     {
         const auto panel = cymbalis::uitest::tuningPageState (*editor);
-        const auto knob = cymbalis::uitest::sliderText (*editor, at (787.0f, 881.0f)); // Volume
         const auto saved = attribute (sessionNow(), "editorPage");
-        const bool knobShown = ! knob.startsWith ("no ");
-        if (panel == "shown" && ! knobShown && saved == "1")
-            return "TUNING page";
-        if (panel == "hidden" && knobShown && saved == "0")
+        if (panel == "shown")
+            return saved == "1" ? juce::String ("TUNING page") : "panel shown, editorPage " + saved;
+        const auto knob = cymbalis::uitest::sliderText (*editor, at (787.0f, 881.0f)); // Volume
+        if (panel == "hidden" && ! knob.startsWith ("no ") && saved == "0")
             return "CYMBAL page";
         return "panel " + panel + ", Volume knob " + knob + ", editorPage " + saved;
     }
@@ -915,7 +916,10 @@ private:
                           [this] { editor->setSize (1200, 800); },
                           wait,
                           read,
-                          [this, size] { editor->setSize (size->x, size->y); },
+                          [this, size] {
+                              editor->setSize (size->x, size->y);
+                              window->setTopLeftPosition (80, 80); // where the test opened it
+                          },
                           wait,
                           read };
             s.key = "the panel while resizing";

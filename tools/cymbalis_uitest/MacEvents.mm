@@ -195,7 +195,10 @@ id findShowing (NSWindow* window, NSString* text, bool prefix)
     return nil;
 }
 
-// The slider whose frame holds the middle of `row` vertically, right of it.
+// The slider whose frame holds the middle of `row` vertically, right of it. JUCE gives each
+// frame as the smallest whole-pixel rectangle that holds it; the panel, unscaled under the
+// editor's scaled design, has fractional edges, so a frame can reach a pixel past its edge on
+// each side and a row's label and its slider overlap by up to 2.
 id sliderBeside (NSWindow* window, NSRect row)
 {
     NSMutableArray* all = [NSMutableArray array];
@@ -204,7 +207,7 @@ id sliderBeside (NSWindow* window, NSRect row)
         if ([e respondsToSelector: @selector (accessibilityRole)] && [[e accessibilityRole] isEqualToString: NSAccessibilitySliderRole])
         {
             const NSRect f = [e accessibilityFrame];
-            if (NSMidY (row) >= NSMinY (f) && NSMidY (row) <= NSMaxY (f) && NSMinX (f) >= NSMaxX (row) - 1.0)
+            if (NSMidY (row) >= NSMinY (f) && NSMidY (row) <= NSMaxY (f) && NSMinX (f) >= NSMaxX (row) - 4.0)
                 return e;
         }
     return nil;
