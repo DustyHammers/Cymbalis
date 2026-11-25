@@ -70,8 +70,9 @@
 //                the state saved; the CYMBAL tab clicked, the editor closed, the state restored
 //                and the editor opened again (checked in the VST3 host only, as savedsize)
 //                                                     -> the TUNING page
-//   tuningresize (on the TUNING page) the host's editor resized to 1200 x 800 and back to the size
-//                and the place it had                 -> the panel's SAVE... button the same size
+//   tuningresize (on the TUNING page, after dragsize: in CI the drags did nothing after it) the
+//                host's editor resized to 1200 x 800 and back to the size and the place it had
+//                                                     -> the panel's SAVE... button the same size
 //                (within 2 points: scaled with the editor it would grow by a quarter), RESET ALL
 //                as far from the page area's right edge: the text keeps its size and the panel
 //                fits the page area
