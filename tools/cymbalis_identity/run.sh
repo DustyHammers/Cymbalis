@@ -4,9 +4,11 @@
 # default tuning and with the cascade and both dampings on; with --time, block times of both
 # engines instead. The two engines and the checker are compiled into a temporary directory,
 # with cymbalis_fast's flags, and linked with an existing build's libcymbalis_engine.a (the bake
-# loader; the build must have the architecture asked for). Nothing else is written.
+# loader; the build must have the architecture asked for). Nothing else is written. With --bound,
+# for a change meant to differ only far below hearing, the bounds of check.cpp's --bound instead
+# of bit-identity (docs/PORT_MAP.md, "One silence rule: 140 dB below a full hit").
 #
-#   tools/cymbalis_identity/run.sh [--ref REF] [--build DIR] [--arch arm64|x86_64] [--time [--runs N]]
+#   tools/cymbalis_identity/run.sh [--ref REF] [--build DIR] [--arch arm64|x86_64] [--time [--runs N] | --bound]
 #
 # On a Mac, --arch x86_64 checks the Intel slice (under Rosetta on Apple Silicon).
 set -euo pipefail
@@ -15,6 +17,7 @@ REF=origin/main
 BUILD=build
 ARCH=""
 TIME=()
+BOUND=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --ref) REF=$2; shift 2 ;;
@@ -22,7 +25,8 @@ while [ $# -gt 0 ]; do
     --arch) ARCH=$2; shift 2 ;;
     --time) TIME+=(--time); shift ;;
     --runs) TIME+=(--runs "$2"); shift 2 ;;
-    *) echo "usage: $0 [--ref REF] [--build DIR] [--arch arm64|x86_64] [--time [--runs N]]" >&2; exit 2 ;;
+    --bound) BOUND=1; shift ;;
+    *) echo "usage: $0 [--ref REF] [--build DIR] [--arch arm64|x86_64] [--time [--runs N] | --bound]" >&2; exit 2 ;;
   esac
 done
 
@@ -64,7 +68,9 @@ for B in "$ROOT"/resources/presets/*.bake.json; do
 done
 echo "FastEngine of the working tree against $REF ($(git -C "$ROOT" rev-parse --short "$REF"))${ARCH:+, $ARCH}"
 # ${a[@]+"${a[@]}"}: an empty array under set -u in bash 3.2 (macOS).
-if [ ${#TIME[@]} -gt 0 ]; then
+if [ "$BOUND" = 1 ]; then
+  ${RUN[@]+"${RUN[@]}"} "$TMP/check" --bound "${BAKES[@]}"
+elif [ ${#TIME[@]} -gt 0 ]; then
   ${RUN[@]+"${RUN[@]}"} "$TMP/check" "${TIME[@]}" "${BAKES[@]}"
 else
   STATUS=0

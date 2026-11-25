@@ -596,7 +596,7 @@ These are plugin mechanisms; none is a port of Python. Kris tunes them by ear in
 ### Implementation notes for these decisions
 
 - **Calibration is applied when the strike is injected.** Python multiplies the whole output by one scalar at the end. With NL off, every remaining mechanism is linear in amplitude, so the two give the same result to within rounding.
-- **The skip threshold is scaled to match.** Python skips a mode for a segment when `|z| < 1e-9` in its uncalibrated units (line 859). The C++ state holds calibrated amplitudes, so it uses `1e-9 × calibration` of the slot that struck most recently. For a single-slot sequence this is the same test as Python's.
+- **The skip threshold is scaled to match.** Python skips a mode for a segment when `|z| < 1e-9` in its uncalibrated units (line 859). The C++ state holds calibrated amplitudes, so `Engine` uses `1e-9 × calibration` of the slot that struck most recently. For a single-slot sequence this is the same test as Python's, and `Engine` keeps it. `FastEngine` uses this too for a bake without the per-slot factor. Since 2026-11-25 it puts the threshold 140 dB below a full hit on that slot instead ("One silence rule: 140 dB below a full hit" below).
 - **Contacts in the live engine run in full.** In Python, a strike that lands while an earlier contact is still running cuts that contact short (f.7). `EngineConfig::truncateContactsLikePython` selects between the two behaviours. With `false`, the default and the live engine, every contact plays all its force samples. The contact phase of the new segment lasts until every running contact has finished. If more than 64 contacts overlap, the oldest one's remaining force is applied at once, so it still enters in full. With `true`, used with `cymbalis_render --python-contact-truncation`, a new strike discards the rest of a running contact, as Python does. The A/B sequences never overlap contacts, so both settings render them identically.
 - **The plugin uses a faster engine.** `FastEngine` (`plugin/dsp/FastEngine.h`) keeps `Engine`'s segments, strike logic and the decisions above, with the superposition described in the next section. It renders the free ring with one recursive complex oscillator per mode in float, re-anchored from double every control block (128 samples at 44.1/48 kHz, 256 at 88.2/96 kHz, about 2.8 ms; for the 602 and Bettis presets a seventh or an eighth of the band envelope's 20 ms frame, see "602 and Bettis"). Wander, onset ramp, onset gains, the LF and MF scales and each strike's own decay are evaluated at the control points and interpolated; a mode whose ramp reaches 1 inside a block gets the exact ramp for that block. Every rate-dependent value is computed from the host rate: mode steps, the right channel's high-pass (120 Hz unless tuned, decision 19), and the contact force, whose Python taus and sigma floor are samples at 44.1 kHz (13 samples at 44.1 kHz, 14 at 48 kHz, 26 at 88.2 kHz, 28 at 96 kHz for Nova). The strike position is an argument, so the blend knobs can move it. It requires tip and shoulder taus to be equal (Nova's are), so the contact length does not depend on position.
 - **Level trims (plugin only).** Each slot of the plugin's bake carries a level trim, `level_trim.gain_db`: the gain that gives a velocity-0.9 hit at its base position the same 1-second RMS (both channels) as one on BOW (tip). It is measured with `FastEngine` itself (`tools/cymbalis_trims`), stored by `tools/set_level_trims.py`, and can be edited by hand. `FastEngine` multiplies a strike's coupling by calibration × trim, and scales the skip threshold the same way; blends use their slot's trim. `Engine`, the Python-matching path, ignores it. Nova Ride: BELL shoulder +10.48 dB, BOW tip 0, EDGE −7.91 dB (bow shoulder's, decision 13; the stand-in had −8.61 dB), BELL tip +17.48 dB, BOW shoulder −7.91 dB.
@@ -791,7 +791,7 @@ What they say:
 - **The profile build's part timers are global** (`EngineProfile.h`, "for one engine on one thread"), so `--kit` is in `cymbalis_bench` only, not in `cymbalis_bench_profile`.
 - **`FastEngine` must not be copied.** Its implicit copy constructor exists, but a stick voice points into its own engine's noise buffer (`StickVoice::noise`), so a copy would read the original's. The pool holds pointers and never copies; the bench builds a fresh engine per run.
 - **The unit of work is one engine for one block.** One cymbal's strike can't be split across threads, so a block in which a single NOVA strike outruns the deadline stays over it at any thread count. Locally, at 96 kHz / 64, one cymbal's worst block was 103–110 % at every thread count.
-- **Quiet tails are rendered for a long time.** A component stops being rendered below 1e-9 × its level.
+- **Quiet tails are rendered for a long time.** A component stops being rendered below 1e-9 × its level. This is what step 1 measured; step 3, "One silence rule: 140 dB below a full hit" below, has the rule since.
   - **One strike at 0.8 on each row** (44.1 kHz) rings until `isSilent` for:
     - CRASH 16": 72–78 s;
     - EXTRA PAPER THIN 24": 81–101 s;
@@ -802,7 +802,7 @@ What they say:
   - **After 4 s of strikes** (every 200 ms, each row in turn), the others are silent within 26–33 s (HI-HAT within 2 s). CRASH 16", EXTRA PAPER THIN and STINE are still not silent 60 s later.
   - **The cost:** a cymbal in such a tail costs about 13 µs a block at 44.1 kHz / 128 (locally), against about 1 µs silent.
 
-  This is not changed here: the skip threshold is part of the sound.
+  This was not changed in step 1: the skip threshold is part of the sound. Step 3 changed it, with Kris's approval.
 
 ### Multi-cymbal rendering (step 2): the shared job pool
 
@@ -903,6 +903,105 @@ What they say:
 - **No cost estimate yet.** `Drum` has `silent()` but no cheap measure of its work: its active-mode count is private. Heaviest first would need a getter.
 - **No shared state found.** No static or global state in Tympanis's engine; the kit data is shared read-only; every drum has its own noise generators. Double buffers make no difference to dhpool.
 - **A question for the merge:** whether the cymbals should drive the snares' buzz too. If they should, the snare pass needs the whole kit's mix, cymbals included (float into double), before it runs.
+
+### One silence rule: 140 dB below a full hit (step 3)
+
+Step 3 of the plan "Cymbalis + Tympanis: one physically modelled kit". **Kris approved 140 dB on 2026-11-25.** `FastEngine` now stops rendering what has decayed 140 dB below a full hit, as Tympanis does: its −140 dB gate clears and skips a drum's slot that has decayed 140 dB below a full hit. The two engines then behave alike in the kit.
+
+This is a sound change by definition, but only far below hearing. No parameter, UI or tuning changes. The bakes gain one field per slot.
+
+**Before.** A mode or component stopped being rendered below the skip threshold, 1e-9 × the level (calibration × trim) of the last slot struck: Python's `amp_skip_threshold`, scaled to calibrated amplitudes. Against a velocity-1.0 hit on that slot, that was 159–197 dB down, depending on the slot (the table below). Quiet tails rang for up to 113 s ("Multi-cymbal rendering (step 1)", "Quiet tails are rendered for a long time").
+
+**The measurement: why each slot has its own factor.**
+- **What was measured:** per preset and slot, the peak of a velocity-1.0 hit at the slot's base position against the slot's level, with `tools/cymbalis_trims --skip-thresholds`:
+  - the median peak of 16 hits, each with the next phase draw, first second, both channels;
+  - HIT VARIATION off;
+  - no trim, since a trim scales the peak and the level alike.
+- **The result:** the ratios span −21.1 dB (HI-HAT TIP) to +16.7 dB (SWISH EDGE), 37.8 dB, not within ±6 dB of one value.
+- **Why they spread:** the trims bring every slot's peak close to the others (0.07–0.27 at the plugin's level), while the levels themselves range from 0.03 to 2.45.
+- **The consequence:** one constant would have left some slots' thresholds over 20 dB from 140 dB. So each slot gets its own factor:
+  - **Where it lives:** `skip_threshold.rel` in the bake, stored by `tools/set_skip_thresholds.py` with the measurement beside it (`docs/BUILDS.md`).
+  - **What it gives:** rel × calibration × trim is 140 dB below that slot's full hit.
+  - **How the engine uses it:** in place of `amp_skip_threshold`, for the last slot struck, as before.
+- **A bake without the factor** keeps `amp_skip_threshold` × level.
+
+| Preset | Full-hit peak re level, by row (dB) | Old threshold re full hit (dB) |
+|---|---|---|
+| NOVA RIDE | BELL −15.0, BOW −8.1, EDGE −1.2, BELL2 −20.5, BOW2 +0.1 | −159.5 to −180.1 |
+| HI-HAT | TIP −21.1, EDGE −11.2, FOOT −19.3 | −158.9 to −168.8 |
+| CRASH 16" | BELL −9.5, BOW +5.4, EDGE +6.2 (shoulders as their rows) | −170.5 to −186.2 |
+| KONSTAN CRASH 18" | BELL −16.1, BOW +12.1, EDGE +6.1 | −163.9 to −192.1 |
+| STINE FLAT RIDE | BOW +14.0, EDGE −2.5, CENTER +13.4 | −177.5 to −194.0 |
+| RAVEN | BELL −2.6, BOW +12.0, EDGE +4.4 | −177.4 to −192.0 |
+| SWISH | BELL +5.2, BOW +7.3, BOW_SHOULDER +5.5, EDGE +16.7 | −185.2 to −196.7 |
+| EXTRA PAPER THIN 24" | BELL +0.4, BOW +14.3, EDGE −0.2 | −179.8 to −194.3 |
+| HAMMERED THIN RIDE | BELL −3.6, BOW +8.4, EDGE +3.5 | −176.4 to −188.4 |
+| SMOKE FLAT RIDE (archive) | BOW and CENTER +10.7, EDGE +7.7 | −187.7 to −190.7 |
+
+**Where it applies.** Every use of the skip threshold moves together:
+- the segment threshold at the start of each free phase, which drops a mode and clears what the components and contacts left in it;
+- the periodic drop of quiet modes and of components below it in every mode, every few control blocks.
+
+Nothing else changes: the onset, the cascade, the dampings, the build-up, the hi-hat's choke and ring floor, and the NPZ edge envelopes. `Engine`, the Python-matching path, keeps 1e-9: the Python engine is locked and `Engine` mirrors it.
+
+**The HI-HAT does not change at all.** Its strikes end by their own rules, at 120 dB under the strike's peak or after 8 s ("Hi-hat"), before the skip threshold matters. Its output is bit for bit as before in every check below, and its factors are stored only so that every slot has one.
+
+**Checked in memory against `main`** (`tools/cymbalis_identity/run.sh --bound`, at 44.1 and 96 kHz, 128-sample blocks). Each sequence was rendered by both engines and compared as it went:
+- **Single hits:** every row at velocities 0.2, 0.5 and 1.0, 120 s each.
+- **Dense:** the `--dense` pattern for 60 s, with the bake's build-up, cascade and dampings, and the pedal moving on HI-HAT.
+
+| Preset | Single hits: worst 10 ms window, 44.1 / 96 kHz (dB re full BOW hit) | Dense | RMS in the first 30 s, largest deviation |
+|---|---|---|---|
+| NOVA RIDE | −134.1 / −134.2 | −124.2 / −124.5 | 0.0004 dB |
+| HI-HAT (re TIP) | identical | identical | 0 |
+| CRASH 16" | −140.6 / −140.7 | identical | 0.0003 dB |
+| KONSTAN CRASH 18" | −140.8 / −140.8 | identical | 0.0006 dB |
+| STINE FLAT RIDE | −142.6 / −142.9 | identical | 0.0005 dB |
+| RAVEN | −140.9 / −141.1 | identical | 0.0023 dB |
+| SWISH | −139.3 / −141.5 | identical | 0.0074 dB |
+| EXTRA PAPER THIN 24" | −140.4 / −140.5 | identical | 0.0005 dB |
+| HAMMERED THIN RIDE | −138.0 / −138.1 | identical | 0.0022 dB |
+
+- **The difference stays inside the bound.** Its RMS over 10 ms windows stays under −120 dB re a velocity-1.0 BOW hit (HI-HAT: TIP), as `main` plays it, everywhere: at worst −124.2 dB (NOVA, dense), and −134 to −143 dB for single hits. The largest single sample is −119.7 dB (NOVA, 96 kHz), far below 24-bit resolution at the plugin's output level.
+- **No step at a drop.** A mode dropped at −140 dB leaves a step under −140 dB of the full hit, and no window around a drop shows more than that.
+- **Loudness is unchanged.** In the first 30 s after each hit, the RMS of every 1 s window where `main`'s is above −100 dB re the hit is within 0.0074 dB of `main`'s (bound 0.01 dB).
+- **Why dense playing barely changes:** strikes every 24 ms keep almost every mode above both thresholds. Only NOVA differs there, by −124 dB. Most likely, among its 2270 modes, some are excited by a strike below the new threshold and are dropped at the segment's start. Each is under −140 dB, and together they give the −124 dB. This is not traced mode by mode.
+
+**The tails, one hit at 0.8 on each row, 44.1 kHz,** time until `isSilent`, `main` → now:
+- CRASH 16": 72–78 → 53–57 s;
+- EXTRA PAPER THIN 24": 81–101 → 57–68 s;
+- STINE FLAT RIDE: 102–113 → 66–88 s;
+- KONSTAN CRASH 18": 40–48 → 33–35 s;
+- NOVA RIDE: 19–27 → 16–21 s;
+- RAVEN: 27–33 → 21–24 s;
+- SWISH: 29–30 → 21 s;
+- HAMMERED THIN RIDE: 27–30 → 21–23 s;
+- HI-HAT: 1.8–2.3 s, unchanged.
+
+The long rides still ring for a minute or more. Their slowest modes (T60 of 25–40 s) need that long to fall 140 dB below the hit, and the rule keeps them until then. The cost of a cymbal in its tail falls as its modes drop one by one, and the tail ends 20–35 s sooner than before.
+
+**Cost.**
+- **One hit's tail, timed directly** (a BOW hit at 0.8, 120 s at 44.1 kHz / 128, both engines in one program, smallest of 3 runs, the Linux container):
+  - the whole ring costs 18–35 % less CPU;
+  - at 20–30 s after the hit a block costs a third to two-thirds less;
+  - by 40 s both engines are close to the silent floor of about 1 µs a block.
+
+| Preset | CPU for the 120 s, main → now (ms) | µs per block at 20–30 s | at 40–50 s |
+|---|---|---|---|
+| NOVA RIDE | 217 → 179 | 2.8 → 1.8 | 1.7 → 1.8 |
+| CRASH 16" | 192 → 145 | 3.3 → 1.8 | 1.5 → 1.4 |
+| KONSTAN CRASH 18" | 205 → 153 | 3.6 → 1.6 | 1.3 → 0.9 |
+| STINE FLAT RIDE | 256 → 193 | 7.5 → 4.0 | 2.4 → 1.6 |
+| RAVEN | 163 → 125 | 3.1 → 1.0 | 1.0 → 1.0 |
+| SWISH | 150 → 105 | 1.9 → 0.9 | 0.9 → 0.9 |
+| EXTRA PAPER THIN 24" | 304 → 214 | 7.5 → 3.2 | 2.5 → 1.7 |
+| HAMMERED THIN RIDE | 275 → 178 | 1.9 → 1.0 | 0.9 → 0.9 |
+
+- **On CI** (run 45685356961, against #75's run 45664324717):
+  - **Real time:** every preset stays at 3× real time or better. The CPU benchmark's worst is NOVA at 96 kHz, 13.7 % of a core (#75's run: 16.5 %).
+  - **`cymbalis_bench --kit` shows no change it can measure, and none was expected.** Its quiet cymbals were never struck, so the rule doesn't touch them. Its groove and stress patterns strike every cymbal within seconds, so no tail comes near −140 dB inside a 2 s window.
+  - **The differences are the runner's.** The kit's means moved by +4 to +18 % against #75's run, and its blocks over 100 % by up to ±70, in both directions. The one-thread rows, whose work the rule leaves unchanged inside those windows, moved just as much.
+  - **Every threaded mix was again bit-identical to one thread, and to #74's pool,** for 316 + 20 runs and 48 cases.
 
 ## 602 and Bettis (Smoke Flat Ride, Hammered Thin Ride)
 

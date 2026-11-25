@@ -164,6 +164,12 @@ struct SlotData
     // by 1-second RMS, and editable by hand. 1.0 when the bake has none. FastEngine applies
     // it with the calibration; Engine, the Python-matching path, does not.
     double levelTrim = 1.0;
+    // Skip threshold factor (plugin bake only): skip_threshold.rel of the bake, measured with
+    // FastEngine (tools/cymbalis_trims --skip-thresholds) so that rel x calibration x trim lies
+    // 140 dB below a velocity-1.0 hit on this slot (docs/PORT_MAP.md, "One silence rule: 140 dB
+    // below a full hit"). 0 when the bake has none: FastEngine then uses ampSkipThreshold, as
+    // Engine, the Python-matching path, always does.
+    double skipThresholdRel = 0.0;
     VelocityTable bowVp;
     bool hasBellVp = false;
     VelocityTable bellVp;

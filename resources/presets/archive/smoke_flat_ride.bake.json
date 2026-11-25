@@ -362,6 +362,17 @@
         "peak_hits": 1024,
         "peak_percentile": 99.0,
         "peak_window_s": 1.0
+      },
+      "skip_threshold": {
+        "rel": 3.419e-07,
+        "below_full_hit_db": 140.0,
+        "full_hit_peak_db_re_level": 10.68,
+        "measured_by": "tools/cymbalis_trims --skip-thresholds (FastEngine)",
+        "sample_rate": 44100,
+        "velocity": 1.0,
+        "peak_hits": 16,
+        "peak_statistic": "median",
+        "peak_window_s": 1.0
       }
     },
     {
@@ -510,6 +521,17 @@
         "peak_limit": 0.9,
         "peak_hits": 1024,
         "peak_percentile": 99.0,
+        "peak_window_s": 1.0
+      },
+      "skip_threshold": {
+        "rel": 2.415e-07,
+        "below_full_hit_db": 140.0,
+        "full_hit_peak_db_re_level": 7.66,
+        "measured_by": "tools/cymbalis_trims --skip-thresholds (FastEngine)",
+        "sample_rate": 44100,
+        "velocity": 1.0,
+        "peak_hits": 16,
+        "peak_statistic": "median",
         "peak_window_s": 1.0
       }
     },
@@ -662,6 +684,17 @@
         "peak_percentile": 99.0,
         "peak_window_s": 1.0,
         "set_by": "initialised to BOW's trim (CENTER starts as a copy of BOW, 2026-10-17); the measurement fields are BOW's"
+      },
+      "skip_threshold": {
+        "rel": 3.419e-07,
+        "below_full_hit_db": 140.0,
+        "full_hit_peak_db_re_level": 10.68,
+        "measured_by": "tools/cymbalis_trims --skip-thresholds (FastEngine)",
+        "sample_rate": 44100,
+        "velocity": 1.0,
+        "peak_hits": 16,
+        "peak_statistic": "median",
+        "peak_window_s": 1.0
       }
     },
     {
@@ -813,6 +846,17 @@
         "peak_percentile": 99.0,
         "peak_window_s": 1.0,
         "set_by": "copied from BOW (2026-10-17T12:05:19Z): a new articulation starts as an exact copy of its source"
+      },
+      "skip_threshold": {
+        "rel": 3.419e-07,
+        "below_full_hit_db": 140.0,
+        "full_hit_peak_db_re_level": 10.68,
+        "measured_by": "tools/cymbalis_trims --skip-thresholds (FastEngine)",
+        "sample_rate": 44100,
+        "velocity": 1.0,
+        "peak_hits": 16,
+        "peak_statistic": "median",
+        "peak_window_s": 1.0
       }
     },
     {
@@ -964,6 +1008,17 @@
         "peak_percentile": 99.0,
         "peak_window_s": 1.0,
         "set_by": "copied from CENTER (2026-10-17T12:05:19Z): a new articulation starts as an exact copy of its source"
+      },
+      "skip_threshold": {
+        "rel": 3.419e-07,
+        "below_full_hit_db": 140.0,
+        "full_hit_peak_db_re_level": 10.68,
+        "measured_by": "tools/cymbalis_trims --skip-thresholds (FastEngine)",
+        "sample_rate": 44100,
+        "velocity": 1.0,
+        "peak_hits": 16,
+        "peak_statistic": "median",
+        "peak_window_s": 1.0
       }
     }
   ],

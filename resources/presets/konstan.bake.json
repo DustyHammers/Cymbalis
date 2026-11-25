@@ -406,6 +406,17 @@
         "peak_hits": 1024,
         "peak_percentile": 99.0,
         "peak_window_s": 1.0
+      },
+      "skip_threshold": {
+        "rel": 1.573e-08,
+        "below_full_hit_db": 140.0,
+        "full_hit_peak_db_re_level": -16.06,
+        "measured_by": "tools/cymbalis_trims --skip-thresholds (FastEngine)",
+        "sample_rate": 44100,
+        "velocity": 1.0,
+        "peak_hits": 16,
+        "peak_statistic": "median",
+        "peak_window_s": 1.0
       }
     },
     {
@@ -569,6 +580,17 @@
         "peak_limit": 0.25365,
         "peak_hits": 1024,
         "peak_percentile": 99.0,
+        "peak_window_s": 1.0
+      },
+      "skip_threshold": {
+        "rel": 4.013e-07,
+        "below_full_hit_db": 140.0,
+        "full_hit_peak_db_re_level": 12.07,
+        "measured_by": "tools/cymbalis_trims --skip-thresholds (FastEngine)",
+        "sample_rate": 44100,
+        "velocity": 1.0,
+        "peak_hits": 16,
+        "peak_statistic": "median",
         "peak_window_s": 1.0
       }
     },
@@ -737,6 +759,17 @@
         "peak_limit": 0.25365,
         "peak_hits": 1024,
         "peak_percentile": 99.0,
+        "peak_window_s": 1.0
+      },
+      "skip_threshold": {
+        "rel": 2.014e-07,
+        "below_full_hit_db": 140.0,
+        "full_hit_peak_db_re_level": 6.08,
+        "measured_by": "tools/cymbalis_trims --skip-thresholds (FastEngine)",
+        "sample_rate": 44100,
+        "velocity": 1.0,
+        "peak_hits": 16,
+        "peak_statistic": "median",
         "peak_window_s": 1.0
       }
     },
@@ -908,6 +941,17 @@
         "peak_hits": 1024,
         "peak_percentile": 99.0,
         "peak_window_s": 1.0
+      },
+      "skip_threshold": {
+        "rel": 1.573e-08,
+        "below_full_hit_db": 140.0,
+        "full_hit_peak_db_re_level": -16.06,
+        "measured_by": "tools/cymbalis_trims --skip-thresholds (FastEngine)",
+        "sample_rate": 44100,
+        "velocity": 1.0,
+        "peak_hits": 16,
+        "peak_statistic": "median",
+        "peak_window_s": 1.0
       }
     },
     {
@@ -1073,6 +1117,17 @@
         "peak_limit": 0.25365,
         "peak_hits": 1024,
         "peak_percentile": 99.0,
+        "peak_window_s": 1.0
+      },
+      "skip_threshold": {
+        "rel": 4.013e-07,
+        "below_full_hit_db": 140.0,
+        "full_hit_peak_db_re_level": 12.07,
+        "measured_by": "tools/cymbalis_trims --skip-thresholds (FastEngine)",
+        "sample_rate": 44100,
+        "velocity": 1.0,
+        "peak_hits": 16,
+        "peak_statistic": "median",
         "peak_window_s": 1.0
       }
     }

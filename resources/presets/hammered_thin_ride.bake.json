@@ -398,6 +398,17 @@
         "peak_hits": 1024,
         "peak_percentile": 99.0,
         "peak_window_s": 1.0
+      },
+      "skip_threshold": {
+        "rel": 6.583e-08,
+        "below_full_hit_db": 140.0,
+        "full_hit_peak_db_re_level": -3.63,
+        "measured_by": "tools/cymbalis_trims --skip-thresholds (FastEngine)",
+        "sample_rate": 44100,
+        "velocity": 1.0,
+        "peak_hits": 16,
+        "peak_statistic": "median",
+        "peak_window_s": 1.0
       }
     },
     {
@@ -553,6 +564,17 @@
         "peak_limit": 0.9,
         "peak_hits": 1024,
         "peak_percentile": 99.0,
+        "peak_window_s": 1.0
+      },
+      "skip_threshold": {
+        "rel": 2.636e-07,
+        "below_full_hit_db": 140.0,
+        "full_hit_peak_db_re_level": 8.42,
+        "measured_by": "tools/cymbalis_trims --skip-thresholds (FastEngine)",
+        "sample_rate": 44100,
+        "velocity": 1.0,
+        "peak_hits": 16,
+        "peak_statistic": "median",
         "peak_window_s": 1.0
       }
     },
@@ -713,6 +735,17 @@
         "peak_limit": 0.9,
         "peak_hits": 1024,
         "peak_percentile": 99.0,
+        "peak_window_s": 1.0
+      },
+      "skip_threshold": {
+        "rel": 1.493e-07,
+        "below_full_hit_db": 140.0,
+        "full_hit_peak_db_re_level": 3.48,
+        "measured_by": "tools/cymbalis_trims --skip-thresholds (FastEngine)",
+        "sample_rate": 44100,
+        "velocity": 1.0,
+        "peak_hits": 16,
+        "peak_statistic": "median",
         "peak_window_s": 1.0
       }
     },
@@ -877,6 +910,17 @@
         "peak_percentile": 99.0,
         "peak_window_s": 1.0,
         "set_by": "copied from BELL (2026-10-17T12:05:19Z): a new articulation starts as an exact copy of its source"
+      },
+      "skip_threshold": {
+        "rel": 6.583e-08,
+        "below_full_hit_db": 140.0,
+        "full_hit_peak_db_re_level": -3.63,
+        "measured_by": "tools/cymbalis_trims --skip-thresholds (FastEngine)",
+        "sample_rate": 44100,
+        "velocity": 1.0,
+        "peak_hits": 16,
+        "peak_statistic": "median",
+        "peak_window_s": 1.0
       }
     },
     {
@@ -1036,6 +1080,17 @@
         "peak_percentile": 99.0,
         "peak_window_s": 1.0,
         "set_by": "copied from BOW (2026-10-17T12:05:19Z): a new articulation starts as an exact copy of its source"
+      },
+      "skip_threshold": {
+        "rel": 2.636e-07,
+        "below_full_hit_db": 140.0,
+        "full_hit_peak_db_re_level": 8.42,
+        "measured_by": "tools/cymbalis_trims --skip-thresholds (FastEngine)",
+        "sample_rate": 44100,
+        "velocity": 1.0,
+        "peak_hits": 16,
+        "peak_statistic": "median",
+        "peak_window_s": 1.0
       }
     }
   ],

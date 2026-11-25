@@ -127,6 +127,18 @@ EXTRA PAPER THIN 24"'s EDGE is boosted after its trims are measured (`docs/PORT_
 
 CRASH 16"'s BELL target, −0.7 dB against BOW, is not the level of its loudest bell capture against the loudest bow, as the others' are: its only bell capture is soft (Bell V1, −9.66 dB against Bow V2, about level with the soft Bow V1), so the target is the level the renders Kris heard had (`docs/BASELINE_MANIFEST.md`, Crash 16"). BELL reaches it uncapped (+16.81 dB); EDGE is capped at +1.02 dB, 2.56 dB under BOW (`docs/PORT_MAP.md`, "Crash 16"").
 
+Every slot also carries its **skip threshold factor**, `skip_threshold.rel` (2026-11-25; `docs/PORT_MAP.md`, "One silence rule: 140 dB below a full hit").
+- **What it does:** `FastEngine` stops rendering a mode or component once it is below `rel` × calibration × trim, 140 dB under a velocity-1.0 hit on that slot.
+- **How it is measured:** with the same tool, from the median peak of 16 velocity-1.0 hits at the slot's base position, with HIT VARIATION off.
+- **When to measure:** a trim scales the peak and the level alike, so the factor does not depend on the trims, and it can be measured before or after them. Measure it again after a tuning change that moves a slot's level against its calibration (its band gains, its stereo gains) by more than a few dB.
+
+For every preset, archive included:
+
+```
+build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/nova_ride.bake.json --skip-thresholds --json skip.json
+python tools/set_skip_thresholds.py resources/presets/nova_ride.bake.json skip.json
+```
+
 A new preset gets its tuning block (the output gain below, and any velocity curve) before its trims are measured: the trims tool measures the reference, Nova, with its −11 dB, so a bake without it would come out 11 dB too quiet once the block is added (Raven, `docs/PORT_MAP.md`, "Raven"; Konstan, "Konstan Crash 18""; Paper Thin, "Extra Paper Thin Ride 24""; Crash 16, "Crash 16""; Stine, "Stine Flat Ride").
 
 The tuning block also holds EDGE VOICE FROM BOW (`edge_voice_from_bow`, `docs/TUNING.md`), which changes an edge strike's level, and SWISH's edge click and attack, so EDGE is measured with them in place. KONSTAN CRASH 18"'s EDGE trim was measured with the value at 100 % (2026-10-29), with the commands above, and only EDGE's trim was stored; after its T60 refit (2026-10-31) every KONSTAN trim was measured again, with the tuning block in place. SMOKE FLAT RIDE was at 0 % (Kris, 2026-10-31), and its bake was main's, unchanged. STINE FLAT RIDE's block does not hold the value, so it starts at 0 %, and its EDGE trim was measured that way. SWISH's EDGE trim was left as it was (measured again it would be −3.88 dB instead of −3.44, under 1 dB). A new value in the block calls for EDGE to be measured again.

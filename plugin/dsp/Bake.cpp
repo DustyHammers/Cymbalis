@@ -660,6 +660,16 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
                 slot.levelTrim = std::pow(10.0, db / 20.0);
                 rep.push_back("level trim   slot " + slot.name + ": " + fmt("%+.2f dB", db));
             }
+            // Optional (plugin bake): FastEngine's skip threshold factor for this slot, measured
+            // with tools/cymbalis_trims --skip-thresholds and stored by tools/set_skip_thresholds.py.
+            if (const auto* skip = s.find("skip_threshold"); skip != nullptr && !skip->isNull())
+            {
+                const double rel = skip->at("rel").number();
+                if (!std::isfinite(rel) || !(rel > 0.0) || !(rel < 1e-3))
+                    throw BakeError("slot " + slot.name + ": skip_threshold.rel must be a finite value in (0, 1e-3)");
+                slot.skipThresholdRel = rel;
+                rep.push_back("skip thresh. slot " + slot.name + ": " + fmt("%.4g x level", rel));
+            }
             // Optional (plugin bake, docs/TUNING.md): this articulation's excitation gain per
             // one-third-octave band, written by tools/apply_tuning.py.
             if (const auto* bands = s.find("excitation_band_gains_db"); bands != nullptr && ! bands->isNull())

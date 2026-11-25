@@ -37,7 +37,10 @@
 //     have settled and whose decays are closest are merged (amplitudes added, decay weighted
 //     by energy); failing that, the two oldest are merged and their remaining onset
 //     envelopes are dropped.
-//   - Modes and components below the skip threshold (1e-9 x level) stop being rendered.
+//   - Modes and components below the skip threshold stop being rendered: 140 dB below a
+//     velocity-1.0 hit on the last slot struck (each slot's skip_threshold.rel x level, measured
+//     by the bake; docs/PORT_MAP.md, "One silence rule"), or 1e-9 x level for a bake without it,
+//     as Engine always uses.
 //   - Every rate-dependent coefficient comes from the host sample rate: mode steps, the
 //     contact force (Python's taus are 44.1 kHz samples) and the right-channel 120 Hz
 //     high-pass.
