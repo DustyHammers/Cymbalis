@@ -34,6 +34,15 @@ const juce::Colour openOutline { 0xffa5a299 }; // outline of a box whose popup i
 const juce::Colour arcTrack { 0xff1c1a18 };
 const juce::Colour arcDark { 0xff5a4a36 };
 const juce::Colour arcBright { 0xffecc88c };
+// The knob (UI_SPEC section 6, "The knob"), lit from the top left: its body's gradient, light
+// to dark; its rim's gradient, at 0, 0.06, 0.14, 0.5, 0.8 and 1 along the same line; its
+// pointer, and the pointer's shadow (black at alpha 0.48).
+const juce::Colour knobBodyLight { 0xff555555 };
+const juce::Colour knobBodyDark { 0xff191919 };
+const juce::Colour knobRim[] { juce::Colour (0xff969696), juce::Colour (0xff606060), juce::Colour (0xff3c3c3c),
+                               juce::Colour (0xff1a1a1a), juce::Colour (0xff060606), juce::Colour (0xff000000) };
+const juce::Colour knobPointer { 0xffb8b8b8 };
+const juce::Colour knobPointerShadow { (juce::uint8) 0, (juce::uint8) 0, (juce::uint8) 0, 0.48f };
 // The DHammers logo (UI_SPEC section 4): a vertical gradient over its ink.
 const juce::Colour logoTop { 0xff8e7550 };
 const juce::Colour logoBottom { 0xff4a3d2d };
@@ -52,7 +61,6 @@ public:
     Assets();
 
     juce::Image background; // CYMBALIS_Background_logo.png, logo included
-    juce::Image knobStrip;  // knob.png, 91 frames of 128 x 128
     juce::Typeface::Ptr typeface;
     bool isCalibriLight = false; // false: Carlito Regular stands in
 
@@ -72,9 +80,6 @@ public:
 
     // The logo font at `sizePx` (em size, design units).
     juce::Font logoFont (float sizePx) const;
-
-    static constexpr int knobFrames = 91;
-    static constexpr int knobFrameSize = 128;
 };
 
 // Tight ink bounds of `text` set on a baseline at y = 0.

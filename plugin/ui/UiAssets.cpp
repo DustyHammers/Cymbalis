@@ -86,7 +86,6 @@ juce::GlyphArrangement arrange (const juce::Font& font, const juce::String& text
 Assets::Assets()
 {
     background = image ("CYMBALIS_Background_logo.png");
-    knobStrip = image ("knob.png");
 
     // Calibri Light when resources/ui/calibril.ttf is in the build, Carlito Regular otherwise
     // (UI_SPEC section 1).

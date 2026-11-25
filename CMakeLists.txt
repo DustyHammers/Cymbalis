@@ -114,7 +114,6 @@ endforeach()
 set(CYMBALIS_RESOURCES
     ${CYMBALIS_PACKED_PRESETS}
     resources/ui/CYMBALIS_Background_logo.png
-    resources/ui/knob.png
     resources/ui/Carlito-Regular.ttf
     resources/ui/PinyonScript-Regular.ttf
 )
