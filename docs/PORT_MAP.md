@@ -641,6 +641,169 @@ tools/cymbalis_identity/run.sh --build build --arch x86_64  # the Intel slice (M
 tools/cymbalis_identity/run.sh --build build --time --runs 4
 ```
 
+### Multi-cymbal rendering (step 1)
+
+Step 1 of the high-priority "multi-threaded rendering" item (Kris, 2026-11-25). The goal is 4–10 cymbals in one Cymbalis instance. A plugin renders on the host's one audio thread, and a NOVA RIDE strike block costs about 650 µs of a 2.9 ms block (above), so several cymbals struck in one block would miss the deadline on one core. This step adds an engine pool and a kit benchmark to measure it on CI's Mac. **The plugin doesn't use the pool yet:** nothing in the plugin, the sound, the UI or the parameters changes (`tools/cymbalis_identity`: every preset bit for bit as before).
+
+**The pool** (`plugin/dsp/EnginePool.h/.cpp`, library `cymbalis_pool`; plain C++, no JUCE; only `cymbalis_bench` links it):
+
+- **One block.** The caller queues each engine's strikes and pedal moves at their sample offsets, then `render()` renders every engine into its own buffer, split at its events as the plugin splits at MIDI events, and mixes the buffers.
+- **The mix, in a fixed order.** The buffers are summed engine 0, 1, 2 … into the output, whichever thread rendered them. Float addition is not associative, so summing in the order the engines finish would change the last bits from run to run. With a fixed order the output is bit-identical at any number of threads:
+  - each engine keeps its own state and random sequences;
+  - an engine is rendered by one thread at a time;
+  - the workers take the calling thread's floating-point mode (flush to zero) before each engine.
+- **The hand-out.** One atomic counter hands the engines out, heaviest first, and the calling thread takes engines from it too:
+  - **struck in this block:** by their number of strikes, then their ringing modes;
+  - **still ringing:** by their ringing modes (`FastEngine::activeModes`: every mode during a contact). It is a field read, as cheap a cost estimate as the engine has; a strike costs far more than a block of ringing (above), hence strikes first;
+  - **silent** (`isSilent`) last: about 1 µs a block.
+
+  The counter also carries the block's number, so a worker that wakes late can't take an engine of the next block.
+- **Waiting.**
+  - **The caller** waits only for engines already in progress on a worker, never for work it could take itself.
+  - **When fewer than two engines need rendering** (struck, or not silent), the caller renders the block alone and no worker is woken.
+  - **Otherwise** it wakes as many workers as there are engines to share, up to threads − 1.
+- **The workers** (threads − 1) are made in `prepare()` (sample rate, block size, engines), never on the audio path. Between blocks a worker:
+  - spins for 50 µs (`EnginePool::kDefaultSpinMicros`), then sleeps on a semaphore of its own (macOS: a Mach semaphore, available from macOS 11, unlike `os_sync_wait_on_address`; Linux: a POSIX semaphore);
+  - is woken by the caller with a flag exchange and a signal: no lock, no allocation, and no system call on the audio path but that signal.
+
+  **Why 50 µs.**
+  - **It is about twice what waking a sleeping real-time thread costs** on a Mac, so a worker never wastes more than about two wake-ups' worth of CPU waiting.
+  - **It is a small part of the shortest block** (667 µs at 96 kHz / 64), so it bounds the cost: at most 50 µs per worker per block, 7.5 % of a core at 96 kHz / 64 and 1.7 % at 44.1 kHz / 128.
+  - **It bridges the gap to the next block only when that gap is short,** which is when blocks come back to back and the deadline is near. Otherwise the workers sleep and the next block pays a wake-up.
+
+  The bench measures the alternative, workers spinning through the whole block.
+- **Real time.**
+  - **Policy.** The workers run with the time-constraint policy `cymbalis_bench --dense` gives its own thread (`EnginePool::makeRealtime`): period one block, computation half of it, constraint one block. Linux: SCHED_FIFO where permitted.
+  - **The workgroup hook.** `Options::joinWorkgroup` and `leaveWorkgroup` are called once on each worker thread, at its start and its end, for the host's audio workgroup. The plugin will pass JUCE's `AudioWorkgroup` there in a later step. JUCE 7.0.12's AU wrapper delivers it (`AudioProcessor::audioWorkgroupContextChanged`); its VST3 wrapper doesn't, so there the time-constraint policy is the only route. The bench has no workgroup and leaves the hook empty.
+- **The engine count** is fixed for the pool's life; changing it means `prepare()` again, off the audio path. `release()` (and the destructor) stop and join every worker.
+- **Checked:**
+  - a ThreadSanitizer build of the bench on Linux (GCC 13), on short 4-thread kit cases, reports no data race, with workers spinning 0, 5, 50 and 1000 µs;
+  - every threaded mix in every bench run is bit-identical to one thread's.
+
+**The kit benchmark** (`cymbalis_bench --kit`, `tools/cymbalis_bench/Kit.cpp`):
+
+- **The kit, in order** (the first N play):
+  1. NOVA RIDE
+  2. HI-HAT, its pedal moving as in `--dense`
+  3. CRASH 16"
+  4. KONSTAN CRASH 18"
+  5. STINE FLAT RIDE
+  6. RAVEN
+  7. SWISH
+  8. EXTRA PAPER THIN 24"
+  9. HAMMERED THIN RIDE
+  10. SMOKE FLAT RIDE, from `resources/presets/archive/`, read as a file
+- **The patterns.** Each comes from fixed seeds, one random sequence per cymbal, so the first N cymbals play the same at every N and every sample rate.
+  - **groove:** 140 bpm.
+    - The ride plays 8ths on BOW, one in four on BELL, at velocities 0.45–0.75.
+    - The hi-hat plays 8ths on TIP.
+    - Each other cymbal crashes on EDGE (0.8–1.0) once every 2 bars, cymbal k on beat k − 3 of the two bars.
+    - On bar 1 of every 4, the ride, CRASH 16" and KONSTAN hit on the same sample.
+    - It starts one bar early (the lead, in which cymbals 7–10 crash). The timed part starts on bar 1.
+  - **stress:** every cymbal is hit every 200 ms, on a random row at a random velocity (0.3–1.0). Every 4th hit lands on the same sample for all cymbals; the others are 20 ms apart from cymbal to cymbal. The lead is 0.8 s, and the timed part starts on a hit of every cymbal.
+  - **quiet:** 10 cymbals, the ride playing its groove part and the nine others silent. They are never struck, which is the same state as rung out (`isSilent`). Against the ride alone it gives what a silent cymbal costs per block.
+- **The cases:** N = 1, 2, 4, 6 and 10 cymbals; threads 1 up to the performance cores (1 cymbal only at 1 and the most, since the pool never wakes a worker for one); 44.1 and 96 kHz; 128- and 64-sample blocks.
+- **Each run:**
+  - builds fresh engines, so every run starts from the same state;
+  - renders the lead back to back;
+  - waits for the workers to fall asleep;
+  - then renders the timed seconds block by block, each block waiting for its deadline, on a real-time thread as `--dense` does.
+- **Repeats.** Each case runs three times in turn, at every thread count each time, and the smallest time per block is kept: the runner is a virtual machine.
+- **Failures.** The run fails if any run's mix differs from its case's one-thread mix by a single bit in any block (lead included), or if a sample is not finite. It never fails on timing.
+- **Run length.** The bench defaults to 60 s per run. CI runs 2 s: the whole set at 60 s would take about 6 hours. A step of about 15 minutes keeps the job within its hour.
+
+**Reading it.** One table per pattern, one row per case:
+
+- **Mean, p99, p99.9, worst:** the block time as a percentage of the block's duration. The p99.9 of a 2 s run is close to its worst: 689 blocks at 44.1 kHz / 128, 3000 at 96 kHz / 64.
+- **Over 100 % / over 70 %:** blocks that missed the deadline, and blocks with little margin left.
+- **Speed-up:** one thread's mean and p99 over this row's.
+- **Workers' CPU:** all the workers together, as a percentage of one core, spinning included, and the part spent rendering. The difference is what waiting costs.
+- **Wake-up:** from the caller's dispatch to a worker starting, median and p99, and how many wake-ups found the worker asleep. A spinning worker starts in under a microsecond.
+- **Blocks shared:** the blocks the workers were woken for.
+
+Then the quiet cymbals, and the 10-cymbal cases with the workers spinning through each block (3 ms), for comparison. A one-thread row is in every table: it is the reference.
+
+**First CI numbers** (run 45648241812, 2026-11-25; Apple M1, virtual, 3 performance cores; 2 s per run, smallest of 3 runs per block; workers sleeping after 50 µs).
+
+- **Bit identity:** all 336 threaded runs are bit-identical to one thread's.
+- **The step** took 13.8 minutes and the job 47.6.
+
+Ten cymbals, block time as a percentage of the block (mean / worst / blocks over 100 %):
+
+| Rate / block | Pattern | 1 thread | 2 threads | 3 threads | 3 threads, workers spinning through |
+|---|---|---|---|---|---|
+| 44.1 kHz / 128 | groove | 36 / 87 / 0 | 24 / 64 / 0 | 17 / 42 / 0 | 8.7 / 19 / 0 |
+| 44.1 kHz / 128 | stress | 41 / 168 / 3 | 26 / 83 / 0 | 13 / 44 / 0 | 12 / 34 / 0 |
+| 44.1 kHz / 64 | groove | 45 / 174 / 7 | 23 / 80 / 0 | 20 / 75 / 0 | |
+| 44.1 kHz / 64 | stress | 42 / 272 / 17 | 23 / 155 / 1 | 22 / 109 / 1 | |
+| 96 kHz / 128 | groove | 43 / 102 / 1 | 38 / 125 / 3 | 28 / 114 / 1 | |
+| 96 kHz / 128 | stress | 45 / 136 / 7 | 35 / 184 / 2 | 32 / 134 / 2 | |
+| 96 kHz / 64 | groove | 36 / 170 / 9 | 29 / 126 / 2 | 17 / 62 / 0 | 17 / 71 / 0 |
+| 96 kHz / 64 | stress | 45 / 250 / 28 | 38 / 163 / 48 | 32 / 189 / 6 | 19 / 118 / 2 |
+
+The spinning-through runs have their own one-thread rows: 34 / 84 / 0 and 48 / 158 / 1 at 44.1 kHz / 128, 39 / 162 / 29 and 45 / 292 / 34 at 96 kHz / 64.
+
+What they say:
+
+- **How much of the difference is the runner's.**
+  - With one cymbal the pool never shares a block, so its rows at 1 and at 3 threads do the same work. Yet their means differ by up to 1.6× (stress, 44.1 kHz / 128: 12.7 % against 7.7 %) and their worst blocks by up to 1.7×. In 7 of the 8 pairs the one-thread row is the slower, which inflates the speed-ups somewhat.
+  - The same one-thread case measured in the two steps differs by up to 16 % in mean and 17 % in worst block.
+  - So, at 2 s per run on this virtual machine, differences under about 1.5× between rows are noise. The large ones hold: blocks over 100 % going from dozens to a few, worst blocks halving.
+- **Where one thread misses the deadline.**
+  - **44.1 kHz / 128:** never in the groove up to 10 cymbals (worst 87 %). In the stress pattern from 6 cymbals: 1 block at 6, 3 at 10 (worst 168 %).
+  - **44.1 kHz / 64:** from 4 cymbals in both patterns. At 10: 7 blocks in the groove, 17 in the stress pattern (worst 272 %).
+  - **96 kHz / 128:** from 2 cymbals (worst 232 % in the groove, the ride and hi-hat struck in one block).
+  - **96 kHz / 64:** already with one: 6–7 blocks over, worst 152 %. A single NOVA strike outruns a 667 µs block (`--dense`, same run: NOVA's worst block is 238 % there). The pool can't help, since the unit of work is one engine for one block.
+- **What each thread buys.**
+  - **44.1 kHz:** a second thread clears the misses but one at 10 cymbals, 64 samples; the mean speed-up is about 1.5–2× at 10 cymbals. A third thread brings the worst blocks to 42–44 % at 128 samples (75–109 % at 64), with mean speed-ups of 1.9–3.1×.
+  - **96 kHz:** less. 2 threads give 1.1–1.3×, 3 threads 1.4–2.1×, and blocks over 100 % remain at 64 samples.
+- **What waiting costs.**
+  - **Sleeping (50 µs spin), the default:**
+    - **wake-up:** median 27–44 µs, p99 110–340 µs at 96 kHz / 64 and up to 1 ms at 44.1 kHz / 128 (a longer sleep, a slower wake on this virtual machine);
+    - **CPU:** the workers' CPU beyond rendering is 2–18 % of a core;
+    - **share of wake-ups:** 83–100 % of them found the worker asleep.
+
+    At 96 kHz / 64, a 30–40 µs wake-up is 5–6 % of the block, and the p99 up to half of it. That is why 2 threads there did no better than 1 in the stress pattern (48 blocks over against 28).
+  - **Spinning through (3 ms):** the wake-up is 0.3–0.4 µs, and the misses go (96 kHz / 64 stress: 2 blocks over 100 %, 3 over 70 %, against 6 and 69 sleeping). But the two workers use about two whole cores (180–200 % of one) to render 19–43 % of one. In a host that is 1.6–1.8 cores taken from every other track and plugin. Rendering itself also got faster when the cores were kept busy (44.1 kHz / 128 groove: mean 8.7 % against 16.7 % sleeping), so this virtual machine pays for idle cores waking up. Real hardware, and an audio workgroup (AU), may pay less.
+
+    The choice between the two, or something in between, is for a later step, measured in a host:
+    - spin only after a heavy block;
+    - spin until the block's expected end;
+    - the workgroup.
+- **Quiet cymbals.**
+  - **Cost:** one silent cymbal costs between −2 and +14 µs a block here. That spread is noise: the same case's one- and three-thread rows differ by more than the nine silent cymbals add. Locally the cost is 1–2.5 µs, so a silent cymbal is close to free (under 0.5 % of a block).
+  - **What does cost:** cymbals in their quiet tails (above), which can last 70–110 s after a hit at −130 dB and below. The project session's "about 3 % each" was most likely such ringing, not silence.
+
+**Local numbers (Linux container, Intel Xeon 2.1 GHz, 4 cores, a virtual machine; not the target).** 44.1 kHz / 128, 10 cymbals, blocks back to back:
+
+| Threads | groove: mean | stress: mean | stress: worst |
+|---|---|---|---|
+| 1 | 28 % | 35 % | 89 % |
+| 4 | 9.6 % | 11.7 % | 31 % |
+
+- **Speed-ups:** about 1.9× with 2 threads, 2.5× with 3 and 3× with 4.
+- **A sleeping worker wakes in about 13–50 µs** (p99 40–160 µs); a spinning one in 0.5 µs.
+- **A silent cymbal costs about 1–2.5 µs a block.**
+
+**What makes splitting harder** (nothing changed here):
+
+- **The engine shares nothing between instances.** No static or global state; the bake is shared read-only. So engines render in parallel without locks.
+- **The profile build's part timers are global** (`EngineProfile.h`, "for one engine on one thread"), so `--kit` is in `cymbalis_bench` only, not in `cymbalis_bench_profile`.
+- **`FastEngine` must not be copied.** Its implicit copy constructor exists, but a stick voice points into its own engine's noise buffer (`StickVoice::noise`), so a copy would read the original's. The pool holds pointers and never copies; the bench builds a fresh engine per run.
+- **The unit of work is one engine for one block.** One cymbal's strike can't be split across threads, so a block in which a single NOVA strike outruns the deadline stays over it at any thread count. Locally, at 96 kHz / 64, one cymbal's worst block was 103–110 % at every thread count.
+- **Quiet tails are rendered for a long time.** A component stops being rendered below 1e-9 × its level.
+  - **One strike at 0.8 on each row** (44.1 kHz) rings until `isSilent` for:
+    - CRASH 16": 72–78 s;
+    - EXTRA PAPER THIN 24": 81–101 s;
+    - STINE FLAT RIDE: 102–113 s;
+    - KONSTAN: 40–48 s.
+
+    For CRASH 16", EXTRA PAPER THIN and STINE, everything after 60 s is 130–180 dB below full scale.
+  - **After 4 s of strikes** (every 200 ms, each row in turn), the others are silent within 26–33 s (HI-HAT within 2 s). CRASH 16", EXTRA PAPER THIN and STINE are still not silent 60 s later.
+  - **The cost:** a cymbal in such a tail costs about 13 µs a block at 44.1 kHz / 128 (locally), against about 1 µs silent.
+
+  This is not changed here: the skip threshold is part of the sound.
+
 ## 602 and Bettis (Smoke Flat Ride, Hammered Thin Ride)
 
 Added 2026-10-15. SMOKE FLAT RIDE was in the plugin until 2026-11-23, when STINE FLAT RIDE took its place ("Stine Flat Ride" below); its bake is kept in `resources/presets/archive/`. The plugin is the reference (`CLAUDE.md`): these presets were ported with the Python engine as a guide and are checked by ear, with no render comparison. Both are baked with `nl_amount = 0`, as Nova is (Bettis's JSON sets 1.0). Nova Ride's bake is unchanged, and so is every code path it uses: each new mechanism is used only when a bake carries its data.
