@@ -858,6 +858,39 @@ What changed:
   - **Step 1's bench never tested that hand-over:** its workers were created after the bench turned flush to zero on, and a new thread takes its creator's mode. The self-test now starts the workers in the other mode.
 - **Locally,** every `--kit` case is bit-identical at 2–4 threads to one thread, and to step 1's pool (44 cases).
 
+**First CI numbers** (run 45664324717, 2026-11-25; Apple M1, virtual, 3 cores; against step 1's run 45648241812).
+
+- **Checks.** All 336 threaded runs are bit-identical to one thread, and all 48 cases' one-thread mixes to step 1's pool. The self-test passed, in 0.3 minutes.
+- **Time.** The kit step took 14.1 minutes (step 1: 13.8), the job 47.9 (47.6).
+
+Ten cymbals, mean / worst / blocks over 100 % (% of the block), step 1 → step 2, and step 2's caller wait at 3 threads (median / p99 / max, µs):
+
+| Rate / block | Pattern | 2 threads | 3 threads | Caller's wait, 3 threads |
+|---|---|---|---|---|
+| 44.1 kHz / 128 | groove | 24 / 64 / 0 → 23 / 52 / 0 | 17 / 42 / 0 → 15 / 40 / 0 | 0.2 / 305 / 1816 |
+| 44.1 kHz / 128 | stress | 26 / 83 / 0 → 33 / 90 / 0 | 13 / 44 / 0 → 16 / 36 / 0 | 58 / 283 / 2735 |
+| 44.1 kHz / 64 | groove | 23 / 80 / 0 → 26 / 159 / 1 | 20 / 74 / 0 → 17 / 74 / 0 | 10 / 270 / 9991 |
+| 44.1 kHz / 64 | stress | 23 / 155 / 1 → 25 / 99 / 0 | 22 / 109 / 1 → 23 / 109 / 1 | 16 / 427 / 5074 |
+| 96 kHz / 128 | groove | 38 / 125 / 3 → 43 / 108 / 2 | 28 / 114 / 1 → 29 / 93 / 0 | 34 / 886 / 5662 |
+| 96 kHz / 128 | stress | 35 / 184 / 2 → 34 / 191 / 1 | 32 / 134 / 2 → 26 / 129 / 1 | 30 / 650 / 6668 |
+| 96 kHz / 64 | groove | 29 / 126 / 2 → 29 / 164 / 3 | 17 / 62 / 0 → 21 / 70 / 0 | 9.3 / 185 / 6536 |
+| 96 kHz / 64 | stress | 38 / 163 / 48 → 38 / 194 / 23 | 32 / 189 / 6 → 32 / 191 / 5 | 20 / 301 / 6554 |
+
+What they say:
+
+- **No measurable change from step 1.**
+  - Over all groove and stress cases, the mean block time is within 1 % of step 1's at 2 and 3 threads (geometric mean of the ratios: 1.01 and 1.01), and the worst blocks 4 % lower (0.96).
+  - Blocks over 100 %: 98 → 64 at 2 threads, 54 → 49 at 3.
+  - The one-thread rows, whose code did not change, move as much: 0.99 in mean, 275 → 278 blocks over. So these differences are the runner's.
+- **The caller's wait, in shared blocks, pooled over the three runs:**
+  - **Median:** usually about 0.1 µs (the caller finishes last or waits for nothing). It is 28–77 µs in a few cases, where a worker holds the heaviest cymbal, a NOVA strike, while the caller finishes the light ones.
+  - **p99:** 20–890 µs, typically about 220 µs.
+  - **Max:** 0.3 to 12 ms in every threaded case, typically about 4 ms. That is a worker stopped mid-job for several milliseconds. On this virtual machine a thread on the deadline sometimes loses its core for that long, and the one-thread runs see the same directly (`--dense`'s worst block per run: 3–27 ms).
+  - **Why the block tables don't show them:** the block tables keep the smallest of the three runs per block, and no stall falls on the same block twice. The caller-wait stat, pooled over the runs, shows what each such stall costs once a cymbal is on another thread: the caller can't take back an engine in the middle of its block.
+  - **What could reduce them** is for a later step, measured in a host on real hardware: the host's audio workgroup (the hook is ready), smaller jobs, or the caller taking the heaviest engine itself before waking the workers.
+- **Wake-ups:** median 27–28 µs, as in step 1 (27–44 µs).
+- **Quiet cymbals:** again within the noise (−12 to +12 µs per silent cymbal).
+
 **Driving Tympanis's `Kit` with dhpool.** Read at Tympanis `ab23ec8`; nothing in Tympanis is changed here.
 - **`Kit::renderChunk` does everything in one private function:** each drum into its own double buffer, the mix, the snare pass and the stereo gains. dhpool can't be put under it from outside. `Kit` would need its stages exposed:
   - rendering one drum into its buffer, which becomes the job;
