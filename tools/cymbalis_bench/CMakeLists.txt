@@ -1,7 +1,10 @@
 # cymbalis_bench — CPU cost of the plugin's real-time engine (FastEngine).
 
-add_executable(cymbalis_bench main.cpp Dense.cpp)
-target_link_libraries(cymbalis_bench PRIVATE cymbalis_fast)
+add_executable(cymbalis_bench main.cpp Dense.cpp Kit.cpp)
+target_link_libraries(cymbalis_bench PRIVATE cymbalis_fast cymbalis_pool)
+# --kit: several cymbals through the engine pool (Kit.cpp). Not in the profile build, whose
+# part timers are global, for one engine on one thread.
+target_compile_definitions(cymbalis_bench PRIVATE CYMBALIS_BENCH_KIT=1)
 
 # cymbalis_bench_profile — the same, with FastEngine's parts timed (cymbalis_fast_profile):
 # --dense then also reports where strike() and the slowest blocks spend their time.

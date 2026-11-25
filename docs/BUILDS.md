@@ -19,6 +19,20 @@ The run's **Artifacts** section has one artifact, `Cymbalis-macOS-<shortsha>`, w
 
 The job summary also shows the CPU cost of the engine on the runner for each preset (`cymbalis_bench`, every slot playing, and on HI-HAT the pedal moving: a CC every 10 ms, open and closed every 1.5 s; it fails if the output is not finite), and its block times in dense playing (`cymbalis_bench --dense`: a strike every 24 ms, HI-HAT's pedal moving too, every preset at 44.1 and 96 kHz with 128- and 64-sample blocks on a real-time thread, each case three times; then `cymbalis_bench_profile`, the time of the engine's parts; docs/PORT_MAP.md, "Cost of a strike"). The runner is a virtual machine: a block that is slow in one run only is the machine's, not the engine's, which is why the dense mode reports the smallest of the three runs per block. Pushing a `v*` tag also creates a GitHub Release with the two zips attached.
 
+The job summary's **Kit benchmark (engine pool)** section (`cymbalis_bench --kit`; `docs/PORT_MAP.md`, "Multi-cymbal rendering (step 1)") shows several cymbals rendered together, on one thread and on several, through the engine pool the plugin will use for a kit (it doesn't use it yet). The kit is NOVA RIDE, HI-HAT (its pedal moving), CRASH 16", KONSTAN CRASH 18", STINE FLAT RIDE, RAVEN, SWISH, EXTRA PAPER THIN 24", HAMMERED THIN RIDE and SMOKE FLAT RIDE (from `resources/presets/archive/`, read as a file), the first N playing. It runs:
+
+- **Two patterns.** In the groove, the ride plays 8ths at 140 bpm, the hi-hat 8ths, and the other cymbals crash in turn; on bar 1 of every 4, three cymbals land on the same sample. In the stress pattern, every cymbal is hit every 200 ms, and every fourth hit lands on the same sample for all of them.
+- **The cases:** 1, 2, 4, 6 and 10 cymbals; 1 to 3 threads (the runner's performance cores); 44.1 and 96 kHz; 128- and 64-sample blocks.
+- **How each case runs:** on a real-time thread, each block at its deadline, three times; the smallest of the three times per block is kept.
+
+The tables:
+
+- **One per pattern.** Each row gives the block time's mean, p99, p99.9 and worst as a percentage of the block's duration, and the blocks over 100 % and over 70 %. Then the speed-up against one thread. Then the workers' CPU per second of audio (all the workers, spinning included) and the part of it spent rendering. Then the wake-up delay (dispatch to a worker starting, median and p99) and how often a worker had to be woken from sleep.
+- **Quiet cymbals.** 10 cymbals with only the ride playing: what a silent cymbal costs per block.
+- **Workers spinning through.** The 10-cymbal cases again, at 44.1 kHz / 128 and 96 kHz / 64, with the workers spinning through each block instead of sleeping between blocks.
+
+Each run is 2 s of audio, not the bench's default 60 s, to keep the job within its hour; the step takes about 15 minutes. The step fails only if a threaded mix differs from the one-thread mix by a single bit, or a sample is not finite. It never fails on timing: the runner is a virtual machine.
+
 If Configure or Build fails, its error lines also appear as the job's annotations (`.github/scripts/annotate_errors.sh`), and Configure prints the toolchain (CMake, Xcode, SDK, deployment target) as a notice, so a failure can be read without the job's log.
 
 ### The runner and Xcode

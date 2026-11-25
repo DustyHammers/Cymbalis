@@ -15,9 +15,17 @@
 //   cymbalis_bench --dense --bake BAKE.json [--bake ...] [options]
 //
 // Dense playing instead: a strike every 24 ms, block times and strike() times (Dense.cpp).
+//
+//   cymbalis_bench --kit [options]
+//
+// Several cymbals together through the engine pool, on one thread and on several (Kit.cpp;
+// not in cymbalis_bench_profile).
 #include "Bake.h"
 #include "Dense.h"
 #include "FastEngine.h"
+#if CYMBALIS_BENCH_KIT
+#include "Kit.h"
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -51,10 +59,26 @@ int main(int argc, char** argv)
 {
     noDenormals();
     for (int i = 1; i < argc; ++i)
-        if (std::string(argv[i]) == "--dense")
+    {
+        const std::string a = argv[i];
+#if CYMBALIS_BENCH_KIT
+        const bool kit = a == "--kit";
+#else
+        const bool kit = false;
+        if (a == "--kit")
+        {
+            std::fprintf(stderr, "cymbalis_bench: --kit is not in this build (cymbalis_bench has it)\n");
+            return 2;
+        }
+#endif
+        if (a == "--dense" || kit)
         {
             try
             {
+#if CYMBALIS_BENCH_KIT
+                if (kit)
+                    return runKit(argc, argv);
+#endif
                 return runDense(argc, argv);
             }
             catch (const std::exception& e)
@@ -63,6 +87,7 @@ int main(int argc, char** argv)
                 return 1;
             }
         }
+    }
     std::string bakePath;
     std::vector<double> rates;
     double seconds = 60.0;

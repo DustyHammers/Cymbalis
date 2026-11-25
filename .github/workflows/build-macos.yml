@@ -139,6 +139,37 @@ jobs:
           } | tee -a "$GITHUB_STEP_SUMMARY"
           test "${PIPESTATUS[0]}" -eq 0
 
+      # Several cymbals rendered together through the engine pool (plugin/dsp/EnginePool.h; the
+      # plugin doesn't use it yet; docs/PORT_MAP.md, "Multi-cymbal rendering (step 1)"): the kit
+      # (NOVA RIDE, HI-HAT with its pedal moving, CRASH 16", KONSTAN, STINE, RAVEN, SWISH, EXTRA
+      # PAPER THIN, HAMMERED, SMOKE FLAT RIDE) in a groove and a stress pattern, 1, 2, 4, 6 and 10
+      # cymbals, 1 to 3 threads (the runner's performance cores; 1 cymbal at 1 and 3), 44.1 and
+      # 96 kHz, 128- and 64-sample blocks, the calling thread real-time, each case three times in
+      # turn, and 10 cymbals with only the ride playing (the quiet cymbals); then the 10-cymbal
+      # cases with the workers spinning through each block (3 ms) instead of sleeping, at 44.1 kHz /
+      # 128 and 96 kHz / 64. It fails only if a threaded mix differs from one thread's by a bit, or
+      # a sample is not finite; never on timing. 2 s timed per run, not the 60 s the bench defaults
+      # to (at 60 s these cases would take about 6 hours): about 15 minutes in all. Printed to the
+      # log and the job summary only; nothing is uploaded.
+      - name: Kit benchmark (engine pool)
+        timeout-minutes: 20
+        run: |
+          BENCH=build/tools/cymbalis_bench/cymbalis_bench
+          (
+            echo "### Kit benchmark (engine pool)"
+            echo
+            A=0; B=0; C=0
+            "$BENCH" --kit --seconds 2 || A=$?
+            echo
+            echo "### Kit benchmark: workers spinning through each block (3 ms) instead of sleeping"
+            echo
+            "$BENCH" --kit --seconds 2 --cymbals 10 --threads 3 --no-quiet --spin-us 3000 --sample-rate 44100 --block 128 || B=$?
+            echo
+            "$BENCH" --kit --seconds 2 --cymbals 10 --threads 3 --no-quiet --spin-us 3000 --sample-rate 96000 --block 64 || C=$?
+            exit $(( A != 0 || B != 0 || C != 0 ))
+          ) | tee -a "$GITHUB_STEP_SUMMARY"
+          test "${PIPESTATUS[0]}" -eq 0
+
       - name: Locate bundles
         run: |
           ART="build/${PRODUCT}_artefacts/${BUILD_TYPE}"

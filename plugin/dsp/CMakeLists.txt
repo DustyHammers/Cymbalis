@@ -60,3 +60,18 @@ endif()
 if(APPLE)
     target_compile_options(cymbalis_fast_profile PRIVATE "SHELL:-Xarch_x86_64 -msse4.1")
 endif()
+
+# cymbalis_pool — several FastEngines rendering one block on the calling thread and worker
+# threads (EnginePool.h; docs/PORT_MAP.md, "Multi-cymbal rendering (step 1)"). Only
+# cymbalis_bench --kit uses it for now; the plugin does not link it.
+find_package(Threads REQUIRED)
+add_library(cymbalis_pool STATIC
+    EnginePool.cpp
+)
+target_link_libraries(cymbalis_pool PUBLIC cymbalis_fast Threads::Threads)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(cymbalis_pool PRIVATE -O3 -fno-fast-math -Wall -Wextra)
+endif()
+if(APPLE)
+    target_compile_options(cymbalis_pool PRIVATE "SHELL:-Xarch_x86_64 -msse4.1")
+endif()

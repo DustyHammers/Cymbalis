@@ -1,9 +1,13 @@
 #pragma once
 
 #include <cmath>
+#include <string>
 
 // cymbalis_bench --dense (Dense.cpp): FastEngine's block times in dense playing.
 int runDense(int argc, char** argv);
+
+// The CPU and its cores (macOS: also the performance and efficiency cores), for the reports.
+std::string machine();
 
 // The hi-hat pedal in both benches: a CC every kPedalStepS, the openness going from closed to
 // open and back every kPedalPeriodS (a raised cosine, in the CC's 127 steps), so the choke runs

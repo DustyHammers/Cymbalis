@@ -112,6 +112,9 @@ bool makeRealtime(double periodMs)
 #endif
 }
 
+} // namespace
+
+// The machine, for the reports (Dense.h).
 std::string machine()
 {
     std::string cpu = "unknown CPU";
@@ -148,6 +151,8 @@ std::string machine()
 #endif
 }
 
+namespace
+{
 struct Options
 {
     std::vector<std::string> bakes;
