@@ -1211,8 +1211,8 @@ void FastEngine::renderKinks(float* left, float* right, int j0, int m) noexcept
 }
 
 // Every kDropEvery blocks: modes whose total amplitude bound is below the skip threshold
-// stop being rendered (their components are cleared: what is left is below 1e-9 x level),
-// and components that are below it in every mode are released.
+// stop being rendered (their components are cleared: what is left is below the threshold, 140
+// dB under a full hit), and components that are below it in every mode are released.
 void FastEngine::dropQuietModes() noexcept
 {
     const double thr2 = segThreshold_ * segThreshold_;
@@ -3914,9 +3914,16 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
 {
     const BakeData& b = *bake_;
     const EngineParams& p = params_;
-    const double threshold =
-        b.ampSkipThreshold *
-        (lastSlot_ >= 0 ? b.slots[size_t(lastSlot_)].calibScalar * slotTrim_[size_t(lastSlot_)] : 1.0);
+    // The skip threshold: 140 dB below a velocity-1.0 hit on the last slot struck (its
+    // skip_threshold.rel x calibration x trim; docs/PORT_MAP.md, "One silence rule: 140 dB below
+    // a full hit"), or, for a bake without the factor, Python's amp_skip_threshold x level.
+    double threshold = b.ampSkipThreshold;
+    if (lastSlot_ >= 0)
+    {
+        const SlotData& s = b.slots[size_t(lastSlot_)];
+        threshold = (s.skipThresholdRel > 0.0 ? s.skipThresholdRel : b.ampSkipThreshold) * s.calibScalar *
+                    slotTrim_[size_t(lastSlot_)];
+    }
     const int64_t m = sampleNow_ - baseSample_; // contact samples since the components' base
 
     // Older components step (undamped, as the contact phase did) to this sample; new ones

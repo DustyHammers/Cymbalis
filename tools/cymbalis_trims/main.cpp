@@ -31,6 +31,17 @@
 //
 // The trims are printed and, with --json, written for tools/set_level_trims.py, which stores
 // them in the bake. The audio is only measured in memory; nothing is written but the JSON.
+//
+//   cymbalis_trims --bake BAKE.json --skip-thresholds [--peak-hits N] [--json SKIP.json]
+//
+// The skip threshold instead (docs/PORT_MAP.md, "One silence rule: 140 dB below a full hit"):
+// per slot, the peak of a velocity-1.0 hit at the slot's base position (the median of the peaks
+// of N hits, default 16, each with the next phase draw; first second, both channels; HIT
+// VARIATION off, no trim) against the slot's level (its calibration; a trim scales both alike),
+// and the factor that puts FastEngine's skip threshold 140 dB below that peak:
+// skip_threshold_rel = 10^((peak dB re level - 140) / 20), the threshold being
+// skip_threshold_rel x calibration x trim. With --json, written for tools/set_skip_thresholds.py,
+// which stores the factors in the bake.
 #include "Bake.h"
 #include "FastEngine.h"
 
@@ -49,6 +60,8 @@ constexpr const char* kReferenceOverlay = "bow_tip"; // Nova BOW (tip)
 constexpr double kReferencePosition = 0.5;
 constexpr double kPeakSeconds = 1.0;    // a hit's peak falls well inside its first second
 constexpr double kPeakPercentile = 0.99;
+constexpr double kSkipBelowFullHitDb = 140.0; // the silence rule (Kris, 2026-11-25)
+constexpr int kSkipHits = 16;
 
 // Renders seconds of the strike just made; returns the sum of squares of the first
 // rmsSamples samples (both channels) and puts the peak of all of it in *peak.
@@ -85,11 +98,11 @@ double strikeRms(const std::shared_ptr<const cymbalis::BakeData>& bake, int slot
     return std::sqrt(renderStrike(engine, std::max(windowSeconds, kPeakSeconds), total, peak) / (2.0 * double(total)));
 }
 
-// Peak of one hit: the 99th percentile of the peaks of `hits` hits, each with the next
-// phase draw (prepare() stops the ringing and keeps the random sequence). With hits = 1 it
-// is the first hit's peak.
+// Peak of one hit: the given percentile (default the 99th) of the peaks of `hits` hits, each
+// with the next phase draw (prepare() stops the ringing and keeps the random sequence). With
+// hits = 1 it is the first hit's peak.
 double hitPeak(const std::shared_ptr<const cymbalis::BakeData>& bake, int slot, double sampleRate, double velocity,
-               int hits)
+               int hits, double percentile = kPeakPercentile)
 {
     cymbalis::FastEngine engine(bake);
     std::vector<double> peaks(static_cast<size_t>(hits));
@@ -100,8 +113,49 @@ double hitPeak(const std::shared_ptr<const cymbalis::BakeData>& bake, int slot, 
         renderStrike(engine, kPeakSeconds, 0, &p);
     }
     std::sort(peaks.begin(), peaks.end());
-    const int k = std::max(0, static_cast<int>(std::ceil(kPeakPercentile * hits)) - 1);
+    const int k = std::max(0, static_cast<int>(std::ceil(percentile * hits)) - 1);
     return peaks[size_t(k)];
+}
+
+// --skip-thresholds: per slot, the median peak of a velocity-1.0 hit against the slot's level,
+// and the skip threshold factor 140 dB below it.
+int skipThresholds(const std::shared_ptr<const cymbalis::BakeData>& bake, int hits, const std::string& jsonPath)
+{
+    const double sr = bake->sampleRate;
+    const int numSlots = static_cast<int>(bake->slots.size());
+    std::vector<double> ratioDb(static_cast<size_t>(numSlots)), rel(static_cast<size_t>(numSlots));
+    std::printf("Velocity 1.0, peak of one hit: median of %d hits (first %.1f s, both channels), no trim, HIT VARIATION "
+                "off; skip threshold %.0f dB below it\n\n| Slot | Position | Level (calibration) | Full-hit peak | "
+                "Peak re level (dB) | skip_threshold_rel | Was (amp_skip_threshold) re peak (dB) |\n|---|---|---|---|---|---|---|\n",
+                hits, kPeakSeconds, kSkipBelowFullHitDb);
+    for (int k = 0; k < numSlots; ++k)
+    {
+        const auto& s = bake->slots[size_t(k)];
+        const double peak = hitPeak(bake, k, sr, 1.0, hits, 0.5);
+        const double level = s.calibScalar;
+        ratioDb[size_t(k)] = 20.0 * std::log10(peak / level);
+        rel[size_t(k)] = std::pow(10.0, (ratioDb[size_t(k)] - kSkipBelowFullHitDb) / 20.0);
+        std::printf("| %s | %.2f | %.6g | %.6g | %+.2f | %.4g | %.1f |\n", s.name.c_str(), s.position, level, peak,
+                    ratioDb[size_t(k)], rel[size_t(k)], 20.0 * std::log10(bake->ampSkipThreshold * level / peak));
+    }
+    if (!jsonPath.empty())
+    {
+        std::FILE* f = std::fopen(jsonPath.c_str(), "w");
+        if (f == nullptr)
+            throw std::runtime_error("cannot write " + jsonPath);
+        std::fprintf(f, "{\n  \"measured_by\": \"tools/cymbalis_trims --skip-thresholds (FastEngine)\",\n");
+        std::fprintf(f, "  \"sample_rate\": %.17g,\n  \"velocity\": 1.0,\n  \"peak_hits\": %d,\n"
+                        "  \"peak_statistic\": \"median\",\n  \"peak_window_s\": %.17g,\n  \"below_full_hit_db\": %.17g,\n",
+                     sr, hits, kPeakSeconds, kSkipBelowFullHitDb);
+        std::fprintf(f, "  \"slots\": {\n");
+        for (int k = 0; k < numSlots; ++k)
+            std::fprintf(f, "    \"%s\": {\"position\": %.17g, \"full_hit_peak_db_re_level\": %.17g, \"skip_threshold_rel\": %.17g}%s\n",
+                         bake->slots[size_t(k)].name.c_str(), bake->slots[size_t(k)].position, ratioDb[size_t(k)],
+                         rel[size_t(k)], k + 1 < numSlots ? "," : "");
+        std::fprintf(f, "  }\n}\n");
+        std::fclose(f);
+    }
+    return 0;
 }
 } // namespace
 
@@ -110,6 +164,7 @@ int main(int argc, char** argv)
     std::string bakePath, jsonPath, referencePath;
     double velocity = 0.9, windowSeconds = 1.0, peakLimit = 0.0;
     int peakHits = 1024;
+    bool skipMode = false, peakHitsGiven = false;
     std::map<std::string, double> targets;
     std::map<std::string, std::string> sameAs;
     bool usage = false;
@@ -122,7 +177,12 @@ int main(int argc, char** argv)
         else if (a == "--velocity" && i + 1 < argc) velocity = std::stod(argv[++i]);
         else if (a == "--window" && i + 1 < argc) windowSeconds = std::stod(argv[++i]);
         else if (a == "--peak-limit" && i + 1 < argc) peakLimit = std::stod(argv[++i]);
-        else if (a == "--peak-hits" && i + 1 < argc) peakHits = std::stoi(argv[++i]);
+        else if (a == "--peak-hits" && i + 1 < argc)
+        {
+            peakHits = std::stoi(argv[++i]);
+            peakHitsGiven = true;
+        }
+        else if (a == "--skip-thresholds") skipMode = true;
         else if (a == "--spear-target" && i + 1 < argc)
         {
             const std::string t = argv[++i];
@@ -143,7 +203,8 @@ int main(int argc, char** argv)
     {
         std::fprintf(stderr, "usage: cymbalis_trims --bake BAKE.json [--reference NOVA_BAKE.json] [--velocity V] "
                              "[--window S] [--spear-target SLOT=DB ...] [--peak-limit P] [--peak-hits N] "
-                             "[--same-as SLOT=SOURCE ...] [--json TRIMS.json]\n");
+                             "[--same-as SLOT=SOURCE ...] [--json TRIMS.json]\n"
+                             "       cymbalis_trims --bake BAKE.json --skip-thresholds [--peak-hits N] [--json SKIP.json]\n");
         return 2;
     }
     try
@@ -157,6 +218,8 @@ int main(int argc, char** argv)
             return b;
         };
         auto bake = untrimmed(bakePath);
+        if (skipMode)
+            return skipThresholds(bake, peakHitsGiven ? peakHits : kSkipHits, jsonPath);
         auto refBake = referencePath.empty() ? bake : untrimmed(referencePath);
         const double sr = bake->sampleRate;
         const int numSlots = static_cast<int>(bake->slots.size());
