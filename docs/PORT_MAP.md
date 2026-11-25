@@ -980,6 +980,29 @@ Nothing else changes: the onset, the cascade, the dampings, the build-up, the hi
 
 The long rides still ring for a minute or more. Their slowest modes (T60 of 25–40 s) need that long to fall 140 dB below the hit, and the rule keeps them until then. The cost of a cymbal in its tail falls as its modes drop one by one, and the tail ends 20–35 s sooner than before.
 
+**Cost.**
+- **One hit's tail, timed directly** (a BOW hit at 0.8, 120 s at 44.1 kHz / 128, both engines in one program, smallest of 3 runs, the Linux container):
+  - the whole ring costs 18–35 % less CPU;
+  - at 20–30 s after the hit a block costs a third to two-thirds less;
+  - by 40 s both engines are close to the silent floor of about 1 µs a block.
+
+| Preset | CPU for the 120 s, main → now (ms) | µs per block at 20–30 s | at 40–50 s |
+|---|---|---|---|
+| NOVA RIDE | 217 → 179 | 2.8 → 1.8 | 1.7 → 1.8 |
+| CRASH 16" | 192 → 145 | 3.3 → 1.8 | 1.5 → 1.4 |
+| KONSTAN CRASH 18" | 205 → 153 | 3.6 → 1.6 | 1.3 → 0.9 |
+| STINE FLAT RIDE | 256 → 193 | 7.5 → 4.0 | 2.4 → 1.6 |
+| RAVEN | 163 → 125 | 3.1 → 1.0 | 1.0 → 1.0 |
+| SWISH | 150 → 105 | 1.9 → 0.9 | 0.9 → 0.9 |
+| EXTRA PAPER THIN 24" | 304 → 214 | 7.5 → 3.2 | 2.5 → 1.7 |
+| HAMMERED THIN RIDE | 275 → 178 | 1.9 → 1.0 | 0.9 → 0.9 |
+
+- **On CI** (run 45685356961, against #75's run 45664324717):
+  - **Real time:** every preset stays at 3× real time or better. The CPU benchmark's worst is NOVA at 96 kHz, 13.7 % of a core (#75's run: 16.5 %).
+  - **`cymbalis_bench --kit` shows no change it can measure, and none was expected.** Its quiet cymbals were never struck, so the rule doesn't touch them. Its groove and stress patterns strike every cymbal within seconds, so no tail comes near −140 dB inside a 2 s window.
+  - **The differences are the runner's.** The kit's means moved by +4 to +18 % against #75's run, and its blocks over 100 % by up to ±70, in both directions. The one-thread rows, whose work the rule leaves unchanged inside those windows, moved just as much.
+  - **Every threaded mix was again bit-identical to one thread, and to #74's pool,** for 316 + 20 runs and 48 cases.
+
 ## 602 and Bettis (Smoke Flat Ride, Hammered Thin Ride)
 
 Added 2026-10-15. SMOKE FLAT RIDE was in the plugin until 2026-11-23, when STINE FLAT RIDE took its place ("Stine Flat Ride" below); its bake is kept in `resources/presets/archive/`. The plugin is the reference (`CLAUDE.md`): these presets were ported with the Python engine as a guide and are checked by ear, with no render comparison. Both are baked with `nl_amount = 0`, as Nova is (Bettis's JSON sets 1.0). Nova Ride's bake is unchanged, and so is every code path it uses: each new mechanism is used only when a bake carries its data.
