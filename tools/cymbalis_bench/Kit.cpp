@@ -40,13 +40,19 @@
 // wake-ups found the worker asleep; the blocks the workers were woken for.
 //
 // It fails (exit status 1) if any run's mix differs from the one-thread mix of its case by a
-// single bit in any block (the lead included), or if a sample is not finite. Timing never
-// fails it. Nothing is written to disk.
+// single bit in any block (the lead included), if that one-thread mix differs from #74's
+// EnginePool's (EnginePool74.h, the same events at the case's most threads, blocks back to back),
+// or if a sample is not finite. Timing never fails it. Nothing is written to disk.
+//
+// Since step 2 the pool is scheduled by dhpool (shared/dhpool), and each shared block also gives
+// the caller's wait: from the hand-out counter running out to the last engine still in progress
+// on a worker finishing (median, p99, max).
 #include "Kit.h"
 
 #include "Bake.h"
 #include "Dense.h"
 #include "EnginePool.h"
+#include "EnginePool74.h"
 #include "FastEngine.h"
 
 #include <algorithm>
@@ -59,6 +65,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 #if defined(__APPLE__)
@@ -69,6 +76,7 @@ namespace
 {
 using Clock = std::chrono::steady_clock;
 using cymbalis::EnginePool;
+using cymbalis::EnginePool74;
 using cymbalis::FastEngine;
 
 struct KitCymbal
@@ -229,7 +237,7 @@ struct Run
     std::vector<double> blockUs;       // the timed blocks
     std::vector<uint64_t> hashes;      // every block's mix, the lead included
     double workerCpu = 0.0, workerRender = 0.0; // seconds, in the timed part
-    std::vector<float> wakeUs;
+    std::vector<float> wakeUs, callerWaitUs;
     uint64_t wakes = 0, wakesFromSleep = 0, blocks = 0, shared = 0;
     bool realtime = false, workersRealtime = true, finite = true, othersSilent = true;
     float peak = 0.0f;
@@ -249,6 +257,8 @@ uint64_t hashBlock(const float* l, const float* r, int n)
     return h;
 }
 
+// One run of a case through today's EnginePool (on dhpool), or through #74's (the reference).
+template <typename Pool>
 Run runOnce(const Case& c, const Kit& kit, const Options& o)
 {
     Run r;
@@ -260,14 +270,14 @@ Run runOnce(const Case& c, const Kit& kit, const Options& o)
         engines.back()->prepare(c.rate);
         pointers.push_back(engines.back().get());
     }
-    EnginePool pool;
-    EnginePool::Options po;
+    Pool pool;
+    typename Pool::Options po;
     po.threads = c.threads;
     po.spinMicros = o.spinUs;
     po.realtime = o.realtime;
     po.wakeSamples = 1 << 16;
     pool.prepare(pointers, c.rate, c.block, po);
-    r.realtime = o.realtime && EnginePool::makeRealtime(1000.0 * c.block / c.rate);
+    r.realtime = o.realtime && Pool::makeRealtime(1000.0 * c.block / c.rate);
 
     const double leadS = leadSeconds(c.pattern);
     const int lead = int(std::floor(leadS * c.rate / c.block));
@@ -328,6 +338,8 @@ Run runOnce(const Case& c, const Kit& kit, const Options& o)
         r.workersRealtime = r.workersRealtime && w.realtime;
     }
     r.wakeUs = pool.wakeDelaysMicros();
+    if constexpr (std::is_same<Pool, EnginePool>::value)
+        r.callerWaitUs = pool.callerWaitsMicros();
     if (c.pattern == Pattern::quiet)
         for (int i = 1; i < c.cymbals; ++i)
             r.othersSilent = r.othersSilent && engines[size_t(i)]->isSilent();
@@ -382,6 +394,7 @@ struct Summary
     double budget = 0.0;
     double cpuPct = 0.0, renderPct = 0.0; // the workers, % of one core
     double wakeMedian = 0.0, wakeP99 = 0.0, asleepPct = 0.0, sharedPct = 0.0;
+    double waitMedian = 0.0, waitP99 = 0.0, waitMax = 0.0; // the caller's wait, shared blocks
     bool workers = false;
 };
 
@@ -397,10 +410,11 @@ Summary summarise(const Case& c, const std::vector<Run>& runs, const Options& o)
         m.over70 += x > 0.7 * m.budget ? 1 : 0;
     }
     m.workers = c.threads > 1;
-    std::vector<float> wake;
+    std::vector<float> wake, wait;
     uint64_t wakes = 0, asleep = 0, blocks = 0, shared = 0;
     for (const auto& r : runs)
     {
+        wait.insert(wait.end(), r.callerWaitUs.begin(), r.callerWaitUs.end());
         m.cpuPct += 100.0 * r.workerCpu / o.seconds / double(runs.size());
         m.renderPct += 100.0 * r.workerRender / o.seconds / double(runs.size());
         wake.insert(wake.end(), r.wakeUs.begin(), r.wakeUs.end());
@@ -411,6 +425,9 @@ Summary summarise(const Case& c, const std::vector<Run>& runs, const Options& o)
     }
     m.wakeMedian = quantile(wake, 0.5);
     m.wakeP99 = quantile(wake, 0.99);
+    m.waitMedian = quantile(wait, 0.5);
+    m.waitP99 = quantile(wait, 0.99);
+    m.waitMax = wait.empty() ? 0.0 : double(*std::max_element(wait.begin(), wait.end()));
     m.asleepPct = wakes > 0 ? 100.0 * double(asleep) / double(wakes) : 0.0;
     m.sharedPct = blocks > 0 ? 100.0 * double(shared) / double(blocks) : 0.0;
     return m;
@@ -464,7 +481,8 @@ void report(const Options& o, const std::vector<Case>& cases, const std::vector<
                     o.runs);
         std::printf("| Rate / block | Cymbals | Threads | Mean | p99 | p99.9 | Worst | Over 100 %% | Over 70 %% | "
                     "Speed-up: mean / p99 | Workers' CPU: all / rendering | Wake-up: median / p99 (us) | Woken from "
-                    "sleep | Blocks shared |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n");
+                    "sleep | Blocks shared | Caller's wait: median / p99 / max (us) |\n"
+                    "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n");
         for (size_t i = 0; i < cases.size(); ++i)
         {
             const Case& c = cases[i];
@@ -472,7 +490,7 @@ void report(const Options& o, const std::vector<Case>& cases, const std::vector<
                 continue;
             const Summary& m = sums[i];
             const Summary* one = oneThread(i);
-            char speed[48] = "–", cpu[48] = "–", wake[48] = "–", asleep[16] = "–", shared[16] = "–";
+            char speed[48] = "–", cpu[48] = "–", wake[48] = "–", asleep[16] = "–", shared[16] = "–", wait[64] = "–";
             if (c.threads > 1)
             {
                 if (one != nullptr && m.s.mean > 0.0 && m.s.p99 > 0.0)
@@ -482,13 +500,14 @@ void report(const Options& o, const std::vector<Case>& cases, const std::vector<
                 {
                     std::snprintf(wake, sizeof(wake), "%.1f / %.1f", m.wakeMedian, m.wakeP99);
                     std::snprintf(asleep, sizeof(asleep), "%.0f %%", m.asleepPct);
+                    std::snprintf(wait, sizeof(wait), "%.1f / %.1f / %.0f", m.waitMedian, m.waitP99, m.waitMax);
                 }
                 std::snprintf(shared, sizeof(shared), "%.0f %%", m.sharedPct);
             }
-            std::printf("| %s | %d | %d | %s | %s | %s | %s (%.0f us) | %zu | %zu | %s | %s | %s | %s | %s |\n",
+            std::printf("| %s | %d | %d | %s | %s | %s | %s (%.0f us) | %zu | %zu | %s | %s | %s | %s | %s | %s |\n",
                         rateBlock(c).c_str(), c.cymbals, c.threads, pct(m.s.mean, m.budget).c_str(),
                         pct(m.s.p99, m.budget).c_str(), pct(m.s.p999, m.budget).c_str(), pct(m.s.worst, m.budget).c_str(),
-                        m.s.worst, m.over100, m.over70, speed, cpu, wake, asleep, shared);
+                        m.s.worst, m.over100, m.over70, speed, cpu, wake, asleep, shared, wait);
         }
     }
 
@@ -626,7 +645,7 @@ int runKit(int argc, char** argv)
 
     std::vector<std::vector<Run>> runs(cases.size());
     bool finite = true, realtime = true, workersRealtime = true;
-    size_t compared = 0;
+    size_t compared = 0, compared74 = 0;
     std::vector<std::string> mismatches;
     const auto started = Clock::now();
     for (size_t first = 0; first < cases.size();)
@@ -637,14 +656,35 @@ int runKit(int argc, char** argv)
         for (int r = 0; r < o.runs; ++r)
             for (size_t ci = first; ci < last; ++ci)
             {
-                runs[ci].push_back(runOnce(cases[ci], kit, o));
+                runs[ci].push_back(runOnce<EnginePool>(cases[ci], kit, o));
                 const Run& run = runs[ci].back();
                 finite = finite && run.finite;
                 realtime = realtime && run.realtime;
                 if (cases[ci].threads > 1)
                     workersRealtime = workersRealtime && run.workersRealtime;
                 if (ci == first && r == 0)
-                    continue; // the reference: one thread, run 1
+                {
+                    // The reference, one thread, run 1: against #74's EnginePool with the same
+                    // events, at the case's most threads, blocks back to back.
+                    Case c74 = cases[ci];
+                    c74.threads = cases[last - 1].threads;
+                    Options o74 = o;
+                    o74.paced = false;
+                    const Run ref74 = runOnce<EnginePool74>(c74, kit, o74);
+                    ++compared74;
+                    if (ref74.hashes != run.hashes)
+                    {
+                        size_t b = 0;
+                        while (b < ref74.hashes.size() && b < run.hashes.size() && ref74.hashes[b] == run.hashes[b])
+                            ++b;
+                        char buf[200];
+                        std::snprintf(buf, sizeof(buf), "%s, %d cymbals, %s: one thread differs from #74's pool at %d threads, block %zu",
+                                      patternName(cases[ci].pattern), cases[ci].cymbals, rateBlock(cases[ci]).c_str(),
+                                      c74.threads, b);
+                        mismatches.push_back(buf);
+                    }
+                    continue;
+                }
                 const Run& ref = runs[first][0];
                 ++compared;
                 const size_t n = std::min(ref.hashes.size(), run.hashes.size());
@@ -685,13 +725,14 @@ int runKit(int argc, char** argv)
                 "- stress: every cymbal every 200 ms, random rows and velocities (0.3-1.0); every 4th hit on one sample "
                 "for every cymbal, the others 20 ms apart. Lead: 0.8 s.\n");
     report(o, cases, runs);
-    std::printf("\nBit identity: %zu runs compared with their case's one-thread mix (every block, the lead included): %s.\n",
-                compared, mismatches.empty() ? "all bit-identical" : "SOME DIFFER");
+    std::printf("\nBit identity: %zu runs compared with their case's one-thread mix (every block, the lead included), and %zu "
+                "cases' one-thread mix with #74's EnginePool at the case's most threads (blocks back to back): %s.\n",
+                compared, compared74, mismatches.empty() ? "all bit-identical" : "SOME DIFFER");
     for (const auto& m : mismatches)
         std::printf("- %s\n", m.c_str());
     if (!finite)
         std::fprintf(stderr, "cymbalis_bench: the kit produced a sample that is not finite\n");
     if (!mismatches.empty())
-        std::fprintf(stderr, "cymbalis_bench: %zu runs' mixes differ from one thread's\n", mismatches.size());
+        std::fprintf(stderr, "cymbalis_bench: %zu mixes differ from their reference\n", mismatches.size());
     return finite && mismatches.empty() ? 0 : 1;
 }

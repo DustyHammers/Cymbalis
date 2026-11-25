@@ -21,6 +21,8 @@ option(CYMBALIS_WITH_TUNING "Build Cymbalis with the TUNING page" ON)
 # ---------------------------------------------------------------------------
 # DSP engine (C++ port of the Python V19 engine) and the A/B console renderer
 # ---------------------------------------------------------------------------
+# dhpool: the real-time job pool shared with Tympanis (shared/dhpool/README-pool.md)
+add_subdirectory(shared/dhpool)
 add_subdirectory(plugin/dsp)
 add_subdirectory(tools/cymbalis_render)
 add_subdirectory(tools/cymbalis_bench)

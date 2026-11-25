@@ -27,11 +27,21 @@ The job summary's **Kit benchmark (engine pool)** section (`cymbalis_bench --kit
 
 The tables:
 
-- **One per pattern.** Each row gives the block time's mean, p99, p99.9 and worst as a percentage of the block's duration, and the blocks over 100 % and over 70 %. Then the speed-up against one thread. Then the workers' CPU per second of audio (all the workers, spinning included) and the part of it spent rendering. Then the wake-up delay (dispatch to a worker starting, median and p99) and how often a worker had to be woken from sleep.
+- **One per pattern.** Each row gives the block time's mean, p99, p99.9 and worst as a percentage of the block's duration, and the blocks over 100 % and over 70 %. Then the speed-up against one thread. Then the workers' CPU per second of audio (all the workers, spinning included) and the part of it spent rendering. Then the wake-up delay (dispatch to a worker starting, median and p99) and how often a worker had to be woken from sleep. Last, since step 2, the caller's wait: in a shared block, the time from the hand-out running out to the last engine still on a worker finishing (median, p99, max).
 - **Quiet cymbals.** 10 cymbals with only the ride playing: what a silent cymbal costs per block.
 - **Workers spinning through.** The 10-cymbal cases again, at 44.1 kHz / 128 and 96 kHz / 64, with the workers spinning through each block instead of sleeping between blocks.
 
-Each run is 2 s of audio, not the bench's default 60 s, to keep the job within its hour; the step takes about 15 minutes. The step fails only if a threaded mix differs from the one-thread mix by a single bit, or a sample is not finite. It never fails on timing: the runner is a virtual machine.
+Each run is 2 s of audio, not the bench's default 60 s, to keep the job within its hour; the step takes about 15 minutes. The step fails only if a threaded mix differs from the one-thread mix by a single bit, if a one-thread mix differs from step 1's pool's (a copy of it is kept in the bench), or if a sample is not finite. It never fails on timing: the runner is a virtual machine.
+
+Before the benchmarks, the **job pool self-test** step runs `dhpool_selftest` (`shared/dhpool/README-pool.md`). It uses dummy jobs at 1 to 4 threads, and it fails the job unless:
+
+- every job runs exactly once per run;
+- the results are the same bits at every thread count, with flush to zero on and off;
+- several runs per block work;
+- a workgroup hook change reaches every worker;
+- prepare / release cycles leave no thread behind.
+
+It prints to the log only.
 
 If Configure or Build fails, its error lines also appear as the job's annotations (`.github/scripts/annotate_errors.sh`), and Configure prints the toolchain (CMake, Xcode, SDK, deployment target) as a notice, so a failure can be read without the job's log.
 
