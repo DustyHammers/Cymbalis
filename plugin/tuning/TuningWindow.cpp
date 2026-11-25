@@ -965,6 +965,14 @@ void TuningPanel::visibilityChanged()
     startTimerHz (30);
 }
 
+bool TuningPanel::MeterInputs::operator== (const MeterInputs& o) const noexcept
+{
+    return juce::exactlyEqual (heldPeak, o.heldPeak) && juce::exactlyEqual (outRms, o.outRms)
+           && juce::exactlyEqual (hitVelocity, o.hitVelocity) && juce::exactlyEqual (hitPeak, o.hitPeak)
+           && juce::exactlyEqual (hitRms, o.hitRms) && clip == o.clip && hitComplete == o.hitComplete && hitRow == o.hitRow
+           && hitEntry == o.hitEntry && preset == o.preset;
+}
+
 void TuningPanel::timerCallback()
 {
     if (processor.presetIndex() != preset)
@@ -976,14 +984,21 @@ void TuningPanel::timerCallback()
         heldPeak = meters.outPeak;
         heldAt = now;
     }
-    // Repaint only the meter lines whose text changed: the RMS settles to -inf in silence, and
-    // then nothing is repainted.
-    const auto text = meterText();
-    if (text.output != shownMeters.output || text.clip != shownMeters.clip)
-        repaint (outputLine);
-    if (text.hit != shownMeters.hit || text.hitLevels != shownMeters.hitLevels)
-        repaint (hitLines);
-    shownMeters = text;
+    // The meter text is made only when what it is made from has changed; then only the lines
+    // whose text changed are repainted. In silence (the RMS settles to -inf) nothing is made or
+    // repainted.
+    const MeterInputs in { heldPeak, meters.outRms, meters.hitVelocity, meters.hitPeak, meters.hitRms,
+                           meters.clip, meters.hitComplete, meters.hitRow, meters.hitEntry, preset };
+    if (! (in == shownInputs))
+    {
+        shownInputs = in;
+        const auto text = meterText();
+        if (text.output != shownMeters.output || text.clip != shownMeters.clip)
+            repaint (outputLine);
+        if (text.hit != shownMeters.hit || text.hitLevels != shownMeters.hitLevels)
+            repaint (hitLines);
+        shownMeters = text;
+    }
     // When each band of the selected articulation's last strike peaked.
     if (bandEq != nullptr && bake != nullptr)
     {

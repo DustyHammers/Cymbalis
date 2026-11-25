@@ -246,6 +246,16 @@ private:
 
     CymbalisProcessor::Meters meters;
     MeterText shownMeters;
+    // What the meter text is made from, as the timer last made it: the text is made, compared
+    // and repainted only when this has changed (in silence, or while the values hold, not at all).
+    struct MeterInputs
+    {
+        float heldPeak = 0.0f, outRms = 0.0f, hitVelocity = 0.0f, hitPeak = 0.0f, hitRms = 0.0f;
+        bool clip = false, hitComplete = false;
+        int hitRow = -1, hitEntry = -1, preset = -2;
+        bool operator== (const MeterInputs& o) const noexcept;
+    };
+    MeterInputs shownInputs;
     float heldPeak = 0.0f;
     double heldAt = 0.0;
     bool modified = false;

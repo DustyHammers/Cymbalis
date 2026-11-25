@@ -267,15 +267,17 @@ jobs:
 
       # The hit display (docs/UI_SPEC.md sections 10 and 11) with 16 hits moving the wireframe
       # cymbal at 1536 x 1024: processBlock at 44.1 kHz (256 and 128 samples, normal and
-      # real-time audio thread) with the editor closed, open and idle, and open with the hits,
-      # each three times, then once more with HAMMERED THIN RIDE selected, and once each with
+      # real-time audio thread) with the editor closed, open and idle, open with the hits, and on
+      # the TUNING page with the hits and idle (the cymbal hidden must draw nothing), each three
+      # times, with the message thread's CPU, then once more with HAMMERED THIN RIDE selected, and once each with
       # SWISH, RAVEN, EXTRA PAPER THIN 24", KONSTAN CRASH 18" and CRASH 16" (their dented meshes) and HI-HAT (two dented cymbals,
       # the clutch and rod, the pedal CC moving the hats and the pedal drawing);
       # the CPU used besides; the editor's paint calls and the cymbal's OpenGL frames; and
       # once, that nothing is drawn after every hit is older than 6 s.
-      # Printed to the log and the job summary only.
+      # Printed to the log and the job summary only. With the TUNING page's two cases (hits, and
+      # idle) it takes about 8.5 minutes (7 with the first alone), hence 12.
       - name: Hit display timing
-        timeout-minutes: 10
+        timeout-minutes: 12
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
           "$UITEST" hits | tee hits.txt
