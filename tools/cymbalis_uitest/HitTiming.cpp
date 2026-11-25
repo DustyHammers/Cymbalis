@@ -222,6 +222,7 @@ const char* caseName (HitTiming::Editor e)
         case HitTiming::Editor::idle: return "editor open, idle";
         case HitTiming::Editor::hits: return "editor open, hits";
         case HitTiming::Editor::tuning: return "hits, TUNING page";
+        case HitTiming::Editor::tuningIdle: return "TUNING page, idle";
     }
     return "";
 }
@@ -270,7 +271,7 @@ struct HitTiming::Run
         if (kind == Editor::none)
             return;
         CymbalisProcessor* shown = &processor;
-        if (kind == Editor::idle)
+        if (kind == Editor::idle || kind == Editor::tuningIdle)
         {
             other = std::make_unique<CymbalisProcessor>();
             other->prepareToPlay (kRate, block);
@@ -278,7 +279,7 @@ struct HitTiming::Run
                 other->setPreset (preset);
             shown = other.get();
         }
-        shown->setEditorPage (kind == Editor::tuning ? 1 : 0); // the editor opens on that page
+        shown->setEditorPage (kind == Editor::tuning || kind == Editor::tuningIdle ? 1 : 0); // the editor opens on that page
         editor.reset (shown->createEditorIfNeeded());
         editor->setSize (1536, 1024); // the maximum size
         clock.holder.setSize (editor->getWidth(), editor->getHeight());
@@ -401,7 +402,7 @@ HitTiming::HitTiming (std::function<void (int)> f) : finished (std::move (f))
         for (const int block : kBlocks)
         {
             for (int round = 0; round < kRounds; ++round)
-                for (const auto e : { Editor::none, Editor::idle, Editor::hits, Editor::tuning })
+                for (const auto e : { Editor::none, Editor::idle, Editor::hits, Editor::tuning, Editor::tuningIdle })
                     steps.push_back ({ e, block, realtime, e == Editor::hits && round == 0 && ! realtime && block == kBlocks[0] });
             steps.push_back ({ Editor::none, block, realtime, false });
         }
@@ -618,8 +619,8 @@ void HitTiming::report()
             double rest = 0.0, windowServer = 0.0, message = 0.0;
             int windowServerRuns = 0, messageRuns = 0;
         };
-        std::array<Case, 4> cases;
-        for (int e = 0; e < 4; ++e)
+        std::array<Case, 5> cases;
+        for (int e = 0; e < 5; ++e)
         {
             std::vector<double> wall, cpu;
             auto& k = cases[(size_t) e];
@@ -674,11 +675,11 @@ void HitTiming::report()
                      percent (open.wall.worst, closed.wall.worst), percent (open.runWorsts.median, closed.runWorsts.median));
         std::printf ("    (CPU: %% of one core; the rest of the process includes the editor's paints and the cymbal's OpenGL frames)\n");
         std::printf ("    message thread CPU (%% of one core, mean of the runs):");
-        for (int e = 0; e < 4; ++e)
+        for (int e = 0; e < 5; ++e)
             if (cases[(size_t) e].messageRuns > 0)
                 std::printf ("  %s %.1f %%", caseName ((Editor) e), cases[(size_t) e].message / cases[(size_t) e].messageRuns);
         std::printf ("\n");
-        for (const auto e : { Editor::idle, Editor::hits, Editor::tuning })
+        for (const auto e : { Editor::idle, Editor::hits, Editor::tuning, Editor::tuningIdle })
         {
             std::vector<double> paints;
             double areaShares = 0.0, glMs = 0.0, glWorst = 0.0, glWallMs = 0.0;
@@ -726,7 +727,7 @@ void HitTiming::report()
             if (e == Editor::hits)
                 std::printf ("; hits shown mean %.1f, fewest %d", hitSamples > 0 ? (double) hitsSum / (double) hitSamples : 0.0,
                              hitSamples > 0 ? hitsMin : 0);
-            if (e == Editor::tuning)
+            if (e == Editor::tuning || e == Editor::tuningIdle)
             {
                 // The TUNING page: the cymbal hidden, not one frame drawn nor one hit handed to it.
                 const bool still = hidden == runs && frames == 0 && updates == 0;

@@ -62,7 +62,12 @@ void HitTracker::setPaused (bool p)
             }
     }
     else
+    {
+        // What waited while paused is dropped too: nothing missed is replayed.
+        CymbalisProcessor::HitEvent e;
+        while (processor.popHit (e)) {}
         step (juce::Time::getMillisecondCounterHiRes()); // the cymbal at rest
+    }
 }
 
 void HitTracker::timerCallback()

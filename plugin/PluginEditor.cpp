@@ -861,15 +861,9 @@ Content::~Content()
 
 void Content::refresh()
 {
-    for (int s = 0; s < kNumSlots; ++s)
-    {
-        const int n = processor.slotNote (s);
-        if (n != shownNotes[(size_t) s])
-        {
-            shownNotes[(size_t) s] = n;
-            noteBoxes[(size_t) s]->setNote (n);
-        }
-    }
+    // Both pages: the preset (the CYMBAL box; on the TUNING page the panel follows it by itself),
+    // the hits (taken from the queue on both pages, so that it never fills; dropped while the
+    // TUNING page shows) and the MIDI channel.
     const int preset = processor.presetIndex();
     if (preset != shownPreset || processor.presetError() != shownError)
     {
@@ -882,9 +876,30 @@ void Content::refresh()
         shownOpening = -1.0f;
         repaint();
     }
+    hitTracker->poll();
+    const int ch = processor.midiChannel();
+    if (ch != shownChannel)
+    {
+        shownChannel = ch;
+        channelBox.setText (juce::String (ch));
+    }
+    // The rest is the CYMBAL page's: its notes, the hi-hat's opening and pedal CC, the sticks and
+    // the MIDI learn pulse. While the TUNING page shows none of them is read or drawn; showPage
+    // refreshes them when the CYMBAL page shows again.
+    if (! cymbalPage())
+        return;
+    for (int s = 0; s < kNumSlots; ++s)
+    {
+        const int n = processor.slotNote (s);
+        if (n != shownNotes[(size_t) s])
+        {
+            shownNotes[(size_t) s] = n;
+            noteBoxes[(size_t) s]->setNote (n);
+        }
+    }
     // The hi-hat's hats and pedal follow the pedal's smoothed opening, redrawn when it has moved
-    // by 0.002 or more (while the TUNING page shows they are hidden, and wait).
-    if (kPresets[(size_t) preset].pedal && cymbalPage())
+    // by 0.002 or more.
+    if (kPresets[(size_t) preset].pedal)
     {
         const float o = juce::jlimit (0.0f, 1.0f, processor.pedalOpenness());
         if (shownOpening < 0.0f || std::abs (o - shownOpening) >= 0.002f)
@@ -900,7 +915,6 @@ void Content::refresh()
         shownPedalCc = cc;
         pedalBox.setCc (cc);
     }
-    hitTracker->poll();
     for (int s = 0; s < kNumSlots; ++s)
     {
         const auto stick = processor.shownStick (s);
@@ -911,12 +925,6 @@ void Content::refresh()
             shownSticks[(size_t) s] = key;
             stickBoxes[(size_t) s]->setStick (stick, selectable);
         }
-    }
-    const int ch = processor.midiChannel();
-    if (ch != shownChannel)
-    {
-        shownChannel = ch;
-        channelBox.setText (juce::String (ch));
     }
     const int learn = processor.midiLearnSlot();
     if (learn != shownLearn)
@@ -985,6 +993,8 @@ void Content::showPage (int pg)
     if (cymbalPage())
         shownOpening = -1.0f; // the hats and the pedal at the pedal's opening now
     applyPage();
+    if (cymbalPage())
+        refresh(); // its notes, sticks, pedal and learn pulse as they are now (refresh skips them on TUNING)
     repaint();
 }
 
@@ -992,6 +1002,14 @@ void Content::showPage (int pg)
 // pixel, in the page area's rectangle on screen (whole pixels), not scaled with the editor.
 // Its transform takes it from there back into design units, so that this component's transform
 // leaves it unscaled; its layout follows the rectangle's width.
+//
+// JUCE combines the two transforms in float. With the inverse of the design's scale alone the
+// combination was not exactly a translation at 21 of 97 editor sizes from 960 to 1536 (a scale
+// one float step from 1, and fractional offsets), which JUCE's software renderer draws on its
+// transformed path. So the panel's scale is the float next to 1 / s whose product with s is
+// exactly 1, and its offsets the floats that land exactly on the whole pixels: the combination
+// is then exactly a translation by whole pixels. (On macOS, CoreGraphics combines them again
+// in double precision; JUCE's text there depends only on each glyph's own transform.)
 void Content::layoutTuningPanel()
 {
     if (tuningPanel == nullptr)
@@ -1001,7 +1019,27 @@ void Content::layoutTuningPanel()
     const auto tl = area.getTopLeft().transformedBy (t), br = area.getBottomRight().transformedBy (t);
     const int x = juce::roundToInt (tl.x), y = juce::roundToInt (tl.y);
     const int w = juce::roundToInt (br.x) - x, h = juce::roundToInt (br.y) - y;
-    tuningPanel->setTransform (juce::AffineTransform::translation ((float) x, (float) y).followedBy (t.inverted()));
+    const float s = t.mat00;
+    float p = 1.0f / s;
+    for (const float c : { p, std::nextafter (p, 0.0f), std::nextafter (p, 2.0f * p) })
+        if (juce::exactlyEqual (c * s, 1.0f))
+        {
+            p = c;
+            break;
+        }
+    juce::AffineTransform panelTransform (p, 0.0f, ((float) x - t.mat02) / s, 0.0f, p, ((float) y - t.mat12) / s);
+    for (int i = 0; i < 8; ++i)
+    {
+        const auto combined = panelTransform.followedBy (t);
+        const bool xExact = juce::exactlyEqual (combined.mat02, (float) x), yExact = juce::exactlyEqual (combined.mat12, (float) y);
+        if (xExact && yExact)
+            break;
+        if (! xExact)
+            panelTransform.mat02 = std::nextafter (panelTransform.mat02, combined.mat02 < (float) x ? HUGE_VALF : -HUGE_VALF);
+        if (! yExact)
+            panelTransform.mat12 = std::nextafter (panelTransform.mat12, combined.mat12 < (float) y ? HUGE_VALF : -HUGE_VALF);
+    }
+    tuningPanel->setTransform (panelTransform);
     tuningPanel->setBounds (0, 0, juce::jmax (1, w), juce::jmax (1, h));
     tuningPanelArea = getLocalArea (tuningPanel.get(), tuningPanel->getLocalBounds()).reduced (1);
 }
