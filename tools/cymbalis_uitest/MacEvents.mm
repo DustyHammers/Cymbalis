@@ -3,6 +3,7 @@
 #import <AppKit/AppKit.h>
 #import <objc/runtime.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -24,19 +25,41 @@ NSPoint windowPoint (juce::Component& target, juce::Point<float> p, NSWindow*& w
     return [view convertPoint: inView toView: nil];
 }
 
-NSWindow* tuningWindow (juce::Component& editor)
+// The editor's TUNING page: its window, and the page area (design units 460,100 to 1500,1000)
+// on screen. The plugin's editor fills the host's editor component, the design scaled to fit
+// and centred (as the test's at()).
+struct Page
 {
-    auto* peer = editor.getPeer();
-    NSWindow* host = peer != nullptr ? [(NSView*) peer->getNativeHandle() window] : nil;
-    NSWindow* tuning = nil;
-    for (NSWindow* w in [NSApp windows])
-        if (w != host && [[w title] rangeOfString: @"Tuning"].location != NSNotFound)
-            tuning = w;
-    return tuning;
+    NSWindow* window = nil;
+    NSRect screen = NSZeroRect;
+};
+
+Page tuningPage (juce::Component& editor)
+{
+    Page page;
+    const float w = (float) editor.getWidth(), h = (float) editor.getHeight();
+    const float s = std::min (w / 1536.0f, h / 1024.0f);
+    const float ox = (w - s * 1536.0f) * 0.5f, oy = (h - s * 1024.0f) * 0.5f;
+    if (editor.getPeer() == nullptr)
+        return page;
+    NSWindow* window = nil;
+    const NSPoint a = windowPoint (editor, { ox + 460.0f * s, oy + 100.0f * s }, window);   // top left (window y runs up)
+    const NSPoint b = windowPoint (editor, { ox + 1500.0f * s, oy + 1000.0f * s }, window); // bottom right
+    if (window == nil)
+        return page;
+    page.window = window;
+    page.screen = [window convertRectToScreen: NSMakeRect (a.x, b.y, b.x - a.x, a.y - b.y)];
+    return page;
+}
+
+// A point on screen -> the window's base coordinates.
+NSPoint inWindow (NSWindow* window, NSPoint screen)
+{
+    return [window convertRectFromScreen: NSMakeRect (screen.x, screen.y, 0.0, 0.0)].origin;
 }
 
 // Scroll-wheel events at `location` (window base coordinates) of `window`, sent to the view
-// under it, which must be a JUCE view (the plugin's editor or Tuning window). There is no
+// under it, which must be a JUCE view (the plugin's editor). There is no
 // NSEvent constructor for scroll events, so they come from CGEvents. Such an event has no
 // window and gives its location in screen coordinates (origin at the bottom left of the
 // main screen); it is placed so that the view reads it as `location`, as JUCE does
@@ -68,12 +91,10 @@ juce::String wheelAt (NSWindow* window, NSPoint location, std::initializer_list<
 }
 
 // JUCE ignores a click on its window at a point where another window is in front
-// (NSViewComponentPeer::contains), as a user's click would land on that window. The Tuning
-// window is placed below the editor's top right (TuningWindow::placeClearOf); on a narrow
-// screen it reaches over the CYMBAL box and the TUNING button. A window of this process in
-// front of `window` at `location` (window base coordinates) is therefore moved aside first,
-// as a user would move it: to the right of the point. putBack() returns it to where it was.
-// Prints what it did; another application's window is only reported.
+// (NSViewComponentPeer::contains), as a user's click would land on that window. A window of
+// this process in front of `window` at `location` (window base coordinates) is therefore moved
+// aside first, as a user would move it: to the right of the point. putBack() returns it to
+// where it was. Prints what it did; another application's window is only reported.
 NSWindow* movedWindow = nil;
 NSPoint movedFrom = NSZeroPoint;
 
@@ -128,7 +149,7 @@ void post (NSWindow* window, NSEventType type, NSPoint location, int clickCount 
     [NSApp postEvent: e atStart: NO];
 }
 
-// ---- The Tuning window's controls, by their text (accessibility elements).
+// ---- The TUNING page's controls, by their text (accessibility elements).
 
 void collectElements (id element, NSMutableArray* out, int depth)
 {
@@ -153,16 +174,6 @@ bool showsText (id element, NSString* text, bool prefix)
            || ([element respondsToSelector: @selector (accessibilityLabel)] && matches ([element accessibilityLabel]));
 }
 
-id findShowing (NSWindow* window, NSString* text, bool prefix)
-{
-    NSMutableArray* all = [NSMutableArray array];
-    collectElements ([window contentView], all, 0);
-    for (id e in all)
-        if (showsText (e, text, prefix))
-            return e;
-    return nil;
-}
-
 // The accessibility elements of `view` and of every view inside it: a plugin's editor is a
 // view of its own (the plugin's JUCE) inside the host's window.
 void collectFromViews (NSView* view, NSMutableArray* out)
@@ -174,51 +185,59 @@ void collectFromViews (NSView* view, NSMutableArray* out)
         collectFromViews (sub, out);
 }
 
-// The slider whose frame holds the middle of `row` vertically, right of it.
+id findShowing (NSWindow* window, NSString* text, bool prefix)
+{
+    NSMutableArray* all = [NSMutableArray array];
+    collectFromViews ([window contentView], all);
+    for (id e in all)
+        if (showsText (e, text, prefix))
+            return e;
+    return nil;
+}
+
+// The slider whose frame holds the middle of `row` vertically, right of it. JUCE gives each
+// frame as the smallest whole-pixel rectangle that holds it; the panel, unscaled under the
+// editor's scaled design, has fractional edges, so a frame can reach a pixel past its edge on
+// each side and a row's label and its slider overlap by up to 2.
 id sliderBeside (NSWindow* window, NSRect row)
 {
     NSMutableArray* all = [NSMutableArray array];
-    collectElements ([window contentView], all, 0);
+    collectFromViews ([window contentView], all);
     for (id e in all)
         if ([e respondsToSelector: @selector (accessibilityRole)] && [[e accessibilityRole] isEqualToString: NSAccessibilitySliderRole])
         {
             const NSRect f = [e accessibilityFrame];
-            if (NSMidY (row) >= NSMinY (f) && NSMidY (row) <= NSMaxY (f) && NSMinX (f) >= NSMaxX (row) - 1.0)
+            if (NSMidY (row) >= NSMinY (f) && NSMidY (row) <= NSMaxY (f) && NSMinX (f) >= NSMaxX (row) - 4.0)
                 return e;
         }
     return nil;
 }
 
-// The window's content in screen coordinates.
-NSRect contentOnScreen (NSWindow* window)
+// Scrolls the panel's list by `lines` (negative: down) with the wheel over the page area's
+// middle.
+juce::String scrollList (const Page& page, int lines)
 {
-    return [window convertRectToScreen: [[window contentView] frame]];
-}
-
-// Scrolls the window's list by `lines` (negative: down) with the wheel over its middle.
-juce::String scrollList (NSWindow* window, int lines)
-{
-    const NSRect r = [[window contentView] frame];
-    return wheelAt (window, NSMakePoint (NSMinX (r) + 0.5 * NSWidth (r), NSMaxY (r) - 0.6 * NSHeight (r)), { lines });
+    const NSRect r = page.screen;
+    return wheelAt (page.window, inWindow (page.window, NSMakePoint (NSMidX (r), NSMaxY (r) - 0.6 * NSHeight (r))), { lines });
 }
 
 // The list scrolled to its top, then down until an element showing `text` is between 25 % and
-// 75 % of the window's height from the top: that element, or nil and what failed.
-id scrollToShow (NSWindow* window, NSString* text, bool prefix, juce::String& error)
+// 75 % of the page area's height from its top: that element, or nil and what failed.
+id scrollToShow (const Page& page, NSString* text, bool prefix, juce::String& error)
 {
     for (int i = 0; i < 80; ++i)
-        if ((error = scrollList (window, 10)).isNotEmpty())
+        if ((error = scrollList (page, 10)).isNotEmpty())
             return nil;
-    const NSRect content = contentOnScreen (window);
+    const NSRect content = page.screen;
     for (int i = 0; i < 500; ++i)
     {
-        if (id e = findShowing (window, text, prefix))
+        if (id e = findShowing (page.window, text, prefix))
         {
             const double fromTop = (NSMaxY (content) - NSMidY ([e accessibilityFrame])) / NSHeight (content);
             if (fromTop >= 0.25 && fromTop <= 0.75)
                 return e;
         }
-        if ((error = scrollList (window, -2)).isNotEmpty())
+        if ((error = scrollList (page, -2)).isNotEmpty())
             return nil;
     }
     error = juce::String ("nothing shows \"") + [text UTF8String] + "\" in the list";
@@ -236,12 +255,23 @@ void clickAtScreenPoint (NSWindow* window, NSPoint p)
     post (window, NSEventTypeLeftMouseUp, loc);
 }
 
-NSWindow* visibleTuningWindow (juce::Component& editor, juce::String& error)
+// The TUNING page, when it shows (its SAVE... button in the page area); otherwise none and what
+// failed.
+Page visibleTuningPage (juce::Component& editor, juce::String& error)
 {
-    NSWindow* tuning = tuningWindow (editor);
-    if (tuning == nil || ! [tuning isVisible])
-        error = "no Tuning window";
-    return error.isEmpty() ? tuning : nil;
+    const Page page = tuningPage (editor);
+    if (page.window == nil)
+    {
+        error = "no window";
+        return {};
+    }
+    id save = findShowing (page.window, @"SAVE...", false);
+    if (save == nil || ! NSPointInRect (NSMakePoint (NSMidX ([save accessibilityFrame]), NSMidY ([save accessibilityFrame])), page.screen))
+    {
+        error = "no TUNING page";
+        return {};
+    }
+    return page;
 }
 
 // ---- File panels that answer at once.
@@ -370,47 +400,63 @@ juce::String wheel (juce::Component& target, juce::Point<float> p)
     return wheelAt (window, loc);
 }
 
-juce::String wheelTuning (juce::Component& editor, float fx, float fy)
+juce::String clickTitled (juce::Component& target, const juce::String& title)
 {
-    NSWindow* tuning = tuningWindow (editor);
-    if (tuning == nil || ! [tuning isVisible])
-        return "no Tuning window";
-    const NSRect r = [[tuning contentView] frame];
-    return wheelAt (tuning, NSMakePoint (NSMinX (r) + fx * NSWidth (r), NSMaxY (r) - fy * NSHeight (r)));
+    auto* peer = target.getPeer();
+    NSWindow* window = peer != nullptr ? [(NSView*) peer->getNativeHandle() window] : nil;
+    if (window == nil)
+        return "no window";
+    NSString* wanted = [NSString stringWithUTF8String: title.toRawUTF8()];
+    NSMutableArray* all = [NSMutableArray array];
+    collectFromViews ([window contentView], all);
+    for (id e in all)
+    {
+        if (! [e respondsToSelector: @selector (accessibilityTitle)] || ! [e respondsToSelector: @selector (accessibilityFrame)])
+            continue;
+        id t = [e accessibilityTitle];
+        if (! [t isKindOfClass: [NSString class]] || ! [(NSString*) t isEqualToString: wanted])
+            continue;
+        const NSRect f = [e accessibilityFrame];
+        clickAtScreenPoint (window, NSMakePoint (NSMidX (f), NSMidY (f)));
+        return {};
+    }
+    return "no element titled " + title;
 }
 
-juce::String tuningWindowState (juce::Component& editor)
+juce::String wheelTuning (juce::Component& editor, float fx, float fy)
 {
-    auto* peer = editor.getPeer();
-    NSWindow* host = peer != nullptr ? [(NSView*) peer->getNativeHandle() window] : nil;
-    NSWindow* tuning = tuningWindow (editor);
-    if (tuning == nil)
-        return "none";
-    if (! [tuning isVisible])
-        return "hidden";
-    // Window server order of the windows on screen, front to back.
-    long tuningAt = -1, hostAt = -1;
-    CFArrayRef list = CGWindowListCopyWindowInfo (kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
-                                                  kCGNullWindowID);
-    if (list != nullptr)
-    {
-        for (CFIndex i = 0; i < CFArrayGetCount (list); ++i)
-        {
-            NSDictionary* d = (__bridge NSDictionary*) CFArrayGetValueAtIndex (list, i);
-            const long number = [d[(__bridge NSString*) kCGWindowNumber] longValue];
-            if (number == (long) [tuning windowNumber]) tuningAt = (long) i;
-            if (number == (long) [host windowNumber]) hostAt = (long) i;
-        }
-        CFRelease (list);
-    }
-    const bool onScreen = tuningAt >= 0;
-    const bool front = onScreen && hostAt >= 0 && tuningAt < hostAt;
-    const bool attached = [tuning parentWindow] == host;
-    const bool space = [tuning isOnActiveSpace];
-    if (onScreen && front && attached && space)
-        return "visible-front";
-    return juce::String ("on screen ") + (onScreen ? "yes" : "no") + ", in front of the editor " + (front ? "yes" : "no")
-           + ", attached " + (attached ? "yes" : "no") + ", active Space " + (space ? "yes" : "no");
+    juce::String error;
+    const Page page = visibleTuningPage (editor, error);
+    if (page.window == nil)
+        return error;
+    const NSRect r = page.screen;
+    return wheelAt (page.window, inWindow (page.window, NSMakePoint (NSMinX (r) + fx * NSWidth (r), NSMaxY (r) - fy * NSHeight (r))));
+}
+
+juce::String tuningPageState (juce::Component& editor)
+{
+    const Page page = tuningPage (editor);
+    if (page.window == nil)
+        return "no window";
+    juce::String error;
+    if (visibleTuningPage (editor, error).window != nil)
+        return "shown";
+    return findShowing (page.window, @"SAVE...", false) == nil ? juce::String ("hidden") : "SAVE... outside the page area";
+}
+
+juce::String tuningLayout (juce::Component& editor)
+{
+    juce::String error;
+    const Page page = visibleTuningPage (editor, error);
+    if (page.window == nil)
+        return error;
+    id save = findShowing (page.window, @"SAVE...", false);
+    id reset = findShowing (page.window, @"RESET ALL", false);
+    if (save == nil || reset == nil)
+        return "no SAVE... or RESET ALL button";
+    const NSRect sv = [save accessibilityFrame], rs = [reset accessibilityFrame];
+    return juce::String::formatted ("page %.0fx%.0f, SAVE... %.0fx%.0f, RESET ALL %.0f from the page's right", NSWidth (page.screen),
+                                    NSHeight (page.screen), NSWidth (sv), NSHeight (sv), NSMaxX (page.screen) - NSMaxX (rs));
 }
 
 void drag (juce::Component& target, juce::Point<float> from, juce::Point<float> to)
@@ -469,10 +515,11 @@ void release (juce::Component&, juce::Point<float> at)
 juce::String clickTuningSlider (juce::Component& editor, const juce::String& rowName, float fraction)
 {
     juce::String error;
-    NSWindow* tuning = visibleTuningWindow (editor, error);
-    if (tuning == nil)
+    const Page page = visibleTuningPage (editor, error);
+    if (page.window == nil)
         return error;
-    id row = scrollToShow (tuning, [NSString stringWithUTF8String: rowName.toRawUTF8()], true, error);
+    NSWindow* tuning = page.window;
+    id row = scrollToShow (page, [NSString stringWithUTF8String: rowName.toRawUTF8()], true, error);
     if (row == nil)
         return error;
     id slider = sliderBeside (tuning, [row accessibilityFrame]);
@@ -486,15 +533,16 @@ juce::String clickTuningSlider (juce::Component& editor, const juce::String& row
 juce::String clickTuningButtonBeside (juce::Component& editor, const juce::String& rowName, const juce::String& text)
 {
     juce::String error;
-    NSWindow* tuning = visibleTuningWindow (editor, error);
-    if (tuning == nil)
+    const Page page = visibleTuningPage (editor, error);
+    if (page.window == nil)
         return error;
-    id row = scrollToShow (tuning, [NSString stringWithUTF8String: rowName.toRawUTF8()], true, error);
+    NSWindow* tuning = page.window;
+    id row = scrollToShow (page, [NSString stringWithUTF8String: rowName.toRawUTF8()], true, error);
     if (row == nil)
         return error;
     const NSRect r = [row accessibilityFrame];
     NSMutableArray* all = [NSMutableArray array];
-    collectElements ([tuning contentView], all, 0);
+    collectFromViews ([tuning contentView], all);
     for (id e in all)
         if (showsText (e, [NSString stringWithUTF8String: text.toRawUTF8()], false))
         {
@@ -511,11 +559,12 @@ juce::String clickTuningButtonBeside (juce::Component& editor, const juce::Strin
 juce::String clickTuningButton (juce::Component& editor, const juce::String& text, bool inList)
 {
     juce::String error;
-    NSWindow* tuning = visibleTuningWindow (editor, error);
-    if (tuning == nil)
+    const Page page = visibleTuningPage (editor, error);
+    if (page.window == nil)
         return error;
+    NSWindow* tuning = page.window;
     NSString* t = [NSString stringWithUTF8String: text.toRawUTF8()];
-    id button = inList ? scrollToShow (tuning, t, false, error) : findShowing (tuning, t, false);
+    id button = inList ? scrollToShow (page, t, false, error) : findShowing (tuning, t, false);
     if (button == nil)
         return error.isNotEmpty() ? error : "no button \"" + text + "\"";
     const NSRect f = [button accessibilityFrame];
@@ -526,10 +575,10 @@ juce::String clickTuningButton (juce::Component& editor, const juce::String& tex
 juce::String tuningShows (juce::Component& editor, const juce::String& text)
 {
     juce::String error;
-    NSWindow* tuning = visibleTuningWindow (editor, error);
-    if (tuning == nil)
+    const Page page = visibleTuningPage (editor, error);
+    if (page.window == nil)
         return error;
-    if (scrollToShow (tuning, [NSString stringWithUTF8String: text.toRawUTF8()], false, error) != nil)
+    if (scrollToShow (page, [NSString stringWithUTF8String: text.toRawUTF8()], false, error) != nil)
         return "shown";
     return error.startsWith ("nothing shows") ? juce::String ("none") : error;
 }

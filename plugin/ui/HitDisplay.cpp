@@ -28,6 +28,11 @@ void HitTracker::poll()
         return;
     const double now = juce::Time::getMillisecondCounterHiRes();
     CymbalisProcessor::HitEvent e;
+    if (paused)
+    {
+        while (processor.popHit (e)) {} // dropped: the cymbal is hidden
+        return;
+    }
     bool any = false;
     while (processor.popHit (e))
     {
@@ -36,6 +41,28 @@ void HitTracker::poll()
     }
     if (any)
         step (now);
+}
+
+void HitTracker::setPaused (bool p)
+{
+    if (p == paused)
+        return;
+    paused = p;
+    numHits = 0;
+    litUntilMs.fill (0.0);
+    if (paused)
+    {
+        stopTimer();
+        for (int s = 0; s < kNumSlots; ++s)
+            if (lit[(size_t) s])
+            {
+                lit[(size_t) s] = false;
+                if (onRowLitChanged)
+                    onRowLitChanged (s);
+            }
+    }
+    else
+        step (juce::Time::getMillisecondCounterHiRes()); // the cymbal at rest
 }
 
 void HitTracker::timerCallback()

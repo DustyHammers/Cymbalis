@@ -28,6 +28,11 @@ public:
     // Called by the editor's timer: takes the new hits from the processor's FIFO.
     void poll();
 
+    // Paused while the cymbal is hidden (the editor's TUNING page): the hits are still taken
+    // from the FIFO, so that it never fills, but dropped: none is kept, drawn or lit, and the
+    // timer stops. Resumed, nothing is replayed: the cymbal shows at rest.
+    void setPaused (bool paused);
+
     // While a row's latest hit's flash lasts (T = 0.25 + 0.25 v seconds).
     bool rowLit (int slot) const noexcept { return lit[(size_t) slot]; }
     std::function<void (int slot)> onRowLitChanged;
@@ -48,6 +53,7 @@ private:
     int numHits = 0;
     std::array<double, kNumSlots> litUntilMs {};
     std::array<bool, kNumSlots> lit {};
+    bool paused = false;
 };
 
 } // namespace cymbalis::ui

@@ -12,11 +12,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # (used by the A/B render job).
 option(CYMBALIS_BUILD_PLUGIN "Build the JUCE plugin (VST3/AU)" ON)
 
-# ON (the default): Cymbalis has the Tuning window, live tuning, tuning files and tuning in
+# ON (the default): Cymbalis has the TUNING page, live tuning, tuning files and tuning in
 # the session (docs/TUNING.md). OFF builds a lean Cymbalis without any of the tuning code,
 # under the same identity. The code tests the macro CYMBALIS_TUNING, which the engine
 # library (plugin/dsp) passes on to everything that links it.
-option(CYMBALIS_WITH_TUNING "Build Cymbalis with the Tuning window" ON)
+option(CYMBALIS_WITH_TUNING "Build Cymbalis with the TUNING page" ON)
 
 # ---------------------------------------------------------------------------
 # DSP engine (C++ port of the Python V19 engine) and the A/B console renderer
@@ -144,9 +144,6 @@ if(CYMBALIS_WITH_TUNING)
         plugin/tuning/TuningProcessor.cpp
         plugin/tuning/TuningWindow.cpp
     )
-    if(APPLE)
-        list(APPEND CYMBALIS_PLUGIN_SOURCES plugin/tuning/TuningWindowMac.mm)
-    endif()
     list(APPEND CYMBALIS_INCLUDE_DIRS plugin/tuning)
 endif()
 target_sources(Cymbalis PRIVATE ${CYMBALIS_PLUGIN_SOURCES})

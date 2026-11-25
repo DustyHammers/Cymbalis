@@ -1,36 +1,34 @@
-# Tuning by ear: the Tuning window
+# Tuning by ear: the TUNING page
 
-Kris tunes each cymbal by ear in Cymbalis's Tuning window, saves the settings as a tuning file (JSON), and brings the file to the project session. There, `tools/apply_tuning.py` writes it into the preset's bake in `resources/presets/`, and the plugin plays the tuned values from the bake. This document is the approved spec, 2026-10-16. The tuning adds no host parameters; the plugin parameters (`docs/UI_SPEC.md` section 9) stay as they are.
+Kris tunes each cymbal by ear on Cymbalis's TUNING page, saves the settings as a tuning file (JSON), and brings the file to the project session. There, `tools/apply_tuning.py` writes it into the preset's bake in `resources/presets/`, and the plugin plays the tuned values from the bake. This document is the approved spec, 2026-10-16. The tuning adds no host parameters; the plugin parameters (`docs/UI_SPEC.md` section 9) stay as they are.
 
 ## One plugin, with the tuning code
 
-Cymbalis (plugin code `Cymb`, bundle ID `com.dhammers.cymbalis`) has the Tuning window (opened by a click on the CYMBALIS title), live tuning values, tuning files and tuning in its session state. The CMake option `CYMBALIS_WITH_TUNING` (ON by default) builds this tuning code in; the code tests the macro `CYMBALIS_TUNING`. `-DCYMBALIS_WITH_TUNING=OFF` builds a lean Cymbalis under the same identity, with no window (the title does nothing), no live values, no tuning files and no tuning in its session state. Both read a bake's `tuning` block when they load the bake (below), so both play what was tuned. CI builds only the full plugin (`docs/BUILDS.md`).
+Cymbalis (plugin code `Cymb`, bundle ID `com.dhammers.cymbalis`) has the TUNING page (its tab in the editor's left column), live tuning values, tuning files and tuning in its session state. The CMake option `CYMBALIS_WITH_TUNING` (ON by default) builds this tuning code in; the code tests the macro `CYMBALIS_TUNING`. `-DCYMBALIS_WITH_TUNING=OFF` builds a lean Cymbalis under the same identity, with no TUNING page (no tabs: its editor shows the CYMBAL page), no live values, no tuning files and no tuning in its session state. Both read a bake's `tuning` block when they load the bake (below), so both play what was tuned. CI builds only the full plugin (`docs/BUILDS.md`).
 
 Cymbalis Tuning (plugin code `CymT`), the separate tuning build of earlier versions, is no longer built. Its tuning files load in Cymbalis (**LOAD...**).
 
-## Opening the window
+## The TUNING page
 
-In Cymbalis, click the **CYMBALIS** title, at the editor's top left (within 6 units of its letters; the pointer becomes a pointing hand over it; `docs/UI_SPEC.md` sections 3 and 6). It opens the Tuning window; a second click closes it. This works on every preset. Nothing is drawn for it: the title is part of the background. Until 2026-11-20 the **TUNING** box under the CYMBAL box did this (and Cmd-click on the logo opened the window too); it is gone. The rest of the editor is unchanged; a lean build (above) has no window, and its title does nothing.
+The editor has two pages, **CYMBAL** and **TUNING**, chosen by the two tabs in its left column, under the subtitle (`docs/UI_SPEC.md` sections 3 and 6); the pointer is a pointing hand over them. Click **TUNING** to show the tuning panel in the editor, and **CYMBAL** to go back to the cymbal. Both pages keep the background with its title and subtitle, the tabs, the CYMBAL label and box, the MIDI CHANNEL label and box and the DHammers logo; the CYMBAL page has everything else (the cymbal, the rows, the knobs and, on HI-HAT, the pedal), and the TUNING page hides those and shows the panel instead. The preset can be changed on the TUNING page too, with the CYMBAL box: the panel then shows the new preset's values. A lean build (above) has no tabs and shows only the CYMBAL page.
 
-The Tuning window is attached to the editor's window. On macOS it is a child window of it:
+- **Where:** the panel fills the page area, from x 460 to 1500 and y 100 to 1000 in the editor's design units (1040 × 900), clear of the subtitle.
+- **Text size:** the panel keeps the size it had in the window: it is not scaled with the editor, but laid out and drawn at one pixel per pixel in the page area's rectangle on screen (Kris chose this from the project session's mockups, 2026-11-24). At 1536 × 1024 that rectangle is 1040 × 900 pixels, at the opening size 1104 × 736 about 748 × 647, at the smallest size, 960 × 640, about 650 × 563. The list scrolls, and its layout follows the rectangle's width, as the window's did when it was resized. On a Retina display JUCE draws it at the display's scale, so it is sharp.
+- **The open page** is kept while the plugin instance lives (a new editor opens on it) and saved in the session as `editorPage` (0 CYMBAL, 1 TUNING). A session without it opens on CYMBAL; a lean build ignores it.
+- **The hidden page rests:** while the TUNING page shows, the wireframe cymbal is not drawn and its OpenGL context does not render; hits keep being taken from the processor, so its queue never fills, but they are not drawn, and back on the CYMBAL page the cymbal shows as it is then (the hits it missed are not replayed); the rows' lights follow the same rule. While the CYMBAL page shows, the panel's timer (its meters and refresh) stops; back on the TUNING page it shows the current preset (rebuilt if it changed), its values and its meters at once.
+- **The panel** is made the first time the TUNING page opens and kept until the editor closes. Every value, the hand-over to the engine, tuning files and the session's tuning work as they did in the window.
 
-- it is always in front of the editor and of the host's windows, never behind them;
-- it opens on the editor's Space and moves with the editor;
-- it hides while the host is in the background, so it does not cover other applications.
+Until 2026-11-24 (approved by Kris that day, from the project session's mockups) the panel was a separate **Tuning window**: a click on the CYMBALIS title, at the editor's top left (within 6 units of its letters), opened it and a second click closed it. It was attached to the editor's window (on macOS a child window of it, in front of the editor and the host's windows, on the editor's Space, hidden while the host was in the background; elsewhere kept on top), opened 860 pixels wide below the MIDI CHANNEL box, right-aligned with it, and its close button hid it. Until 2026-11-20 the **TUNING** box under the CYMBAL box opened it (and Cmd-click on the logo opened it too).
 
-On other systems it is kept on top.
-
-It opens at the editor's top right, where it opened before layout v3: below the MIDI CHANNEL box (1404,30, 110×36, the TUNING button's place in layout v2), right-aligned with it, so that box stays clickable; where the screen has no room below, it opens to the left of it. If you move it, it stays where you put it, unless that would cover that box when it next opens. The window is 860 pixels wide when it opens, so on a narrow editor it reaches over the cymbal and the left column. Its close button hides it, like the second click on the title. It closes when the editor closes.
-
-The window has two parts, one below the other, each under a filled title band with a bronze rule:
+The panel has two parts, one below the other, each under a filled title band with a bronze rule:
 
 - **ARTICULATIONS** ("affects only this articulation"): each articulation's level and velocity curve, and the band rows (excitation gain, onset delay and speed) of the articulation chosen in its **Articulation** box. A value here changes only the strikes of that articulation.
 - **WHOLE CYMBAL** ("affects every articulation"): the values of the preset as a whole, by group. Some of them act only on strikes of some articulations, such as the edge wander (edge strikes) or the build-up weights (strikes at one place). Their labels name those articulations, for example "Bow brightness vs velocity (tau_ref): BOW, CENTER" on STINE FLAT RIDE.
 
-The window uses plain JUCE controls in the editor's palette and font:
+The panel uses plain JUCE controls in the editor's palette and font:
 
 - Each value is a slider with a numeric box. Type a number into the box to enter it exactly.
-- The mouse wheel and trackpad scrolling change no value. Over a slider or a numeric box, the band sliders included, they scroll the window's list instead. A value changes only by a click and drag, a typed number or a button (reset, FLAT, RESET ALL, LOAD...).
+- The mouse wheel and trackpad scrolling change no value. Over a slider or a numeric box, the band sliders included, they scroll the panel's list instead. A value changes only by a click and drag, a typed number or a button (reset, FLAT, RESET ALL, LOAD...).
 - The arrow button at the right of a row resets that value to the baked one.
 - A changed value has a bronze bar at the left of its row.
 - **MODIFIED** next to the preset name means some value differs from the bake.
@@ -193,7 +191,7 @@ They act on top of the onset the strike already has, as above. A band envelope k
 - **Defaults.** Both layers start equal, at the articulation's values: no delay, ×1, and the attack gains of the bake (Nova's from its onset gains, 0 dB elsewhere). With equal layers a band has the same value at every velocity, and every preset plays exactly as before.
 - **Cost.** With equal layers the strike uses the articulation's values directly. With different layers it computes 22 values per strike from them (and 22 attack gains); nothing allocates.
 
-In the window, a bar above the attack gain row chooses the layer that the **ATTACK GAIN**, **ONSET DELAY** and **ONSET SPEED** rows show and edit:
+In the panel, a bar above the attack gain row chooses the layer that the **ATTACK GAIN**, **ONSET DELAY** and **ONSET SPEED** rows show and edit:
 
 - **SOFT (0.3)** / **HARD (1.0)**: the layer shown. It starts on HARD.
 - **LINK** (on by default): an edit, a band's reset or FLAT sets both layers to the value. Off: only the layer shown changes.
@@ -209,7 +207,7 @@ Each articulation has a gain per band at the strike, **ATTACK GAIN** (dB), that 
 - **Where.** As in Python, the attack gains do not apply to a bow or bell strike blended all the way to the edge (edge fraction 0.9 or more, Blend 2 above 90 %). An edge articulation's apply at the edge.
 - **Gains within 0.01 dB of 0** (|g − 1| below 0.001) count as 0 dB, as Python's do.
 
-In the window, the **BANDS** section below the articulations works like a graphic EQ:
+In the panel, the **BANDS** section below the articulations works like a graphic EQ:
 
 - The **Articulation** box picks the articulation whose bands are shown.
 - It has four rows of sliders: **GAIN** (dB), **ATTACK GAIN** (dB, with the **ATTACK TIME** under it), **ONSET DELAY** (ms) and **ONSET SPEED** (×, on a logarithmic scale with ×1 in the middle). The velocity layer bar sits above the attack gain row, and the **PEAK** readout under the onset speed row ("Velocity layers" above).
@@ -321,7 +319,7 @@ On every other strike, and on NOVA RIDE's edge, the ring length acts through the
 
 Each of the 22 one-third-octave bands of the band gains has a ring-length multiplier, ×0.25 to ×4 (default ×1). It multiplies the T60 of every mode in the band, on top of **Ring length**: T60 = baked T60 × ring length × the band's multiplier. Modes belong to bands by their frequency, as for the band gains. It acts on every articulation: the T60 belongs to the mode, not to the strike. On an edge strike with a band envelope it also scales the envelope's time after the kept onset, with the factor ring length × the band's multiplier ("Ring length" above).
 
-In the window it is the **RING LENGTH PER BAND** row in the CYMBAL group: 22 vertical sliders on a logarithmic scale with ×1 in the middle, numeric entry, a per-band reset and FLAT (every band to ×1).
+In the panel it is the **RING LENGTH PER BAND** row in the CYMBAL group: 22 vertical sliders on a logarithmic scale with ×1 in the middle, numeric entry, a per-band reset and FLAT (every band to ×1).
 
 A change applies live, at the next control point (about 2.8 ms). The new decay coefficients are computed off the audio thread and handed over; there the ringing state is re-anchored, as a strike does without its contact, and every ringing strike decays at the new rates from that sample. Nothing steps. A band envelope keeps the factors of its strike; the change reaches the envelopes of the strikes after it. With every band at ×1 nothing changes and nothing is computed.
 
@@ -357,11 +355,11 @@ How stereo works: every mode has a fixed left and right gain from the bake (the 
 - **Width 0 %** puts every mode of the band at the pan point; **100 %** at centre pan gives the baked gains exactly (the engine uses them as they are); **200 %** doubles the spread.
 - The width scales each mode's whole baked position, the band's own mean offset with it (a band's mean baked position is near centre but not at it: mostly within L5 to R5, up to 9, and L24 for a band of Hammered Thin Ride that has one mode). So at centre and 100 % nothing changes, at 0 % every mode is at the pan point, and the spread around the band's mean doubles at 200 %.
 
-**Live.** When a value changes, the Tuning window computes every mode's gains (off the audio thread) and sends them with the other values. The engine takes them at the next control point of the free phase and moves every ringing mode's gains to them linearly over that control block (about 3 ms), so nothing steps. A change that arrives while a strike's contact is running (a few ms) waits for its end. If a strike lands inside such a ramp, the gains stay where the ramp got to and the rest of the move follows the contact. While nothing rings, new gains apply at once. Outside a ramp block the engine renders exactly as before: no per-sample cost.
+**Live.** When a value changes, the TUNING page computes every mode's gains (off the audio thread) and sends them with the other values. The engine takes them at the next control point of the free phase and moves every ringing mode's gains to them linearly over that control block (about 3 ms), so nothing steps. A change that arrives while a strike's contact is running (a few ms) waits for its end. If a strike lands inside such a ramp, the gains stay where the ramp got to and the rest of the move follows the contact. While nothing rings, new gains apply at once. Outside a ramp block the engine renders exactly as before: no per-sample cost.
 
 **The right-channel high-pass** can be switched off and moved from 20 to 300 Hz. A change moves the filter's coefficients linearly over 20 ms (a straight line between two stable 2nd-order high-passes stays stable, with its zeros at DC). Switching it on or off crossfades between the filtered and the unfiltered right channel over the same 20 ms. On at 120 Hz, the default, it is the filter as before.
 
-In the window it is the **STEREO** group of WHOLE CYMBAL:
+In the panel it is the **STEREO** group of WHOLE CYMBAL:
 - a **PAN** row of 22 vertical sliders, L100 to R100. A value is typed as L30, R30, C or a signed number (− is left). It has a per-band reset and **CENTRE** (every band to the centre);
 - a **WIDTH** row of 22 sliders, 0 to 200 %, with a per-band reset and **FLAT** (every band to 100 %);
 - the **Overall width**;
@@ -377,7 +375,7 @@ On the presets with NPZ edge data, an edge strike's per-mode levels are the NPZ 
 
 1. **Weights per mode**, once when the preset loads (`edgeVoiceAlpha`, `plugin/dsp/Tuning.cpp`). For each envelope band, over its modes with `exc_norm` > 0 (at least 2): med = the median of their baked `t60_s` (of an even count, the mean of the middle two), and α = clamp((log2(T60 / med) + 1) / 2, 0, 1). A mode ringing half as long as the median or less has α = 0, twice as long or more α = 1. Modes with `exc_norm` 0, and bands with fewer than 2 such modes, have α = 0. The baked T60 is used, so the weights don't move with the ring length.
 2. **Per NPZ velocity row and band** (`edgeVoiceVelw`): with ne = the norm of the row's velw over the band's modes and ns = that of their `exc_norm` (a band where either is 0 is left alone), each mode's new value is (1 − a·α) · velw / ne + a·α · exc_norm / ns, and the band is scaled back to ne.
-3. **The engine** uses that table for the edge coupling from the next strike on; strikes already ringing keep their coupling. It is computed off the audio thread (when the preset loads, and by the Tuning window when the value changes) and handed over with the other values.
+3. **The engine** uses that table for the edge coupling from the next strike on; strikes already ringing keep their coupling. It is computed off the audio thread (when the preset loads, and by the TUNING page when the value changes) and handed over with the other values.
 
 It acts wherever the NPZ coupling does: every strike with an edge fraction above 0.1, so also a bow or bell row blended towards the edge. At 0 % the table is the bake's, and every preset plays bit for bit as without the value. KONSTAN CRASH 18" starts at 100 % (its tuning block), with EDGE re-trimmed to its SPEAR target at 100 %; STINE FLAT RIDE, SWISH, HAMMERED THIN RIDE, RAVEN, EXTRA PAPER THIN 24" and CRASH 16" start at 0 %. SMOKE FLAT RIDE (in the plugin until STINE FLAT RIDE took its place, 2026-11-23) was tried at 100 % and set back to 0 % by Kris by ear (2026-10-31): he prefers its edge as it was.
 
@@ -409,7 +407,7 @@ Energy is conserved: what leaves a band arrives above it. The moved part is exac
 
 Nothing clicks: the source modes are scaled down and the target modes raised across each control block, with no step. A strike that lands inside a block takes the part of that block's change already played.
 
-With amount 0 the cascade is skipped entirely: nothing is measured or computed, and every preset plays exactly as before. In the window it is the **ENERGY CASCADE** group of the whole-cymbal part.
+With amount 0 the cascade is skipped entirely: nothing is measured or computed, and every preset plays exactly as before. In the panel it is the **ENERGY CASCADE** group of the whole-cymbal part.
 
 Limits:
 - Energy goes only to modes that are ringing. Silent modes (below the skip threshold of 1e-9 × level) receive none, and a band with no ringing mode takes no energy.
@@ -426,7 +424,7 @@ At every control point the band energies are measured as for the energy cascade 
 - **Tilt** weights the bands: 1 − tilt for the lowest band, 1 + tilt for the highest, linear in between. At −1 the low bands get up to twice the effect and the highest none; at +1 the reverse.
 - **The decay rate** of the band's modes becomes rate × (1 + amount × tilt weight × how far above). The rate is the mode's own, from its T60. At amount 4, a band 20 dB or more above its threshold (tilt 0) decays five times as fast.
 
-The extra decay acts on every strike ringing in the band alike. It is applied smoothly across each control block, with no step. With amount 0 it is skipped entirely. In the window it is the **LOUD-BAND DAMPING** group of the whole-cymbal part.
+The extra decay acts on every strike ringing in the band alike. It is applied smoothly across each control block, with no step. With amount 0 it is skipped entirely. In the panel it is the **LOUD-BAND DAMPING** group of the whole-cymbal part.
 
 When the energy cascade is also on, the damping acts first in each control block, and the cascade moves part of what is left.
 
@@ -440,7 +438,7 @@ A new strike first damps what is already ringing, then adds its own energy. It i
 - **Weights:** each articulation of the preset has its own weight (0–2, default 1). A weight of 0 means that articulation's strikes do not damp; 2 doubles the effect.
 - **Strikes in quick succession:** a strike that lands while an earlier damping is still running carries what is left of it into its own: the earlier damping completes within the new strike's Time.
 
-With amount 0 nothing is computed and every preset plays exactly as before (a damping already running when the amount is set to 0 completes). In the window it is the **RE-HIT DAMPING** group of the whole-cymbal part, with one weight row per articulation.
+With amount 0 nothing is computed and every preset plays exactly as before (a damping already running when the amount is set to 0 completes). In the panel it is the **RE-HIT DAMPING** group of the whole-cymbal part, with one weight row per articulation.
 
 ### Meters
 
@@ -481,16 +479,16 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
 ```
 
 - `cymbal` and `articulations` hold only the values that differ from the bake; loading a file applies these on top of the bake. A per-band cymbal value (`ring_length_bands`) is written as all 22 bands, lowest first, when any differs. `rehit_damp_weights` is written with every articulation's weight, by articulation id, when any differs. An articulation's `band_gains_db`, `attack_band_gains_db`, `onset_delay_ms` and `onset_speed` are each written as all 22 bands, lowest first, when any of them differs. The last three are the HARD layers; their SOFT layers, `attack_band_gains_db_soft`, `onset_delay_ms_soft` and `onset_speed_soft`, are written with them when either layer differs. A file without the `_soft` keys (from before the layers) gives both layers its values.
-- `edge_voice_from_bow` is always written for the presets with NPZ edge data, even when it is the bake's. So a file without it is from before EDGE VOICE FROM BOW and was tuned without it: it loads as 0 %, in the window, from a session and in `tools/apply_tuning.py`.
-- `hit_variation` (true or false), `hit_position_spread` and `hit_velocity_spread_pct` are written when they differ from the bake. A file without them, such as one from before HIT VARIATION, keeps the bake's values, in the window, from a session and in `tools/apply_tuning.py`.
-- `hh_tip_open_level`, `hh_tip_open_tick_db`, `hh_ring_floor`, `hh_free_ring` (true or false), `hh_tip_modes_db` and `hh_max_open` (HI-HAT only) are written when they differ from the bake. A file without them, such as one from before them, keeps the bake's values (60 %, +4 dB, 100 %, off, 0 dB, 100 %), in the window, from a session and in `tools/apply_tuning.py`, which refuses them for any other preset.
+- `edge_voice_from_bow` is always written for the presets with NPZ edge data, even when it is the bake's. So a file without it is from before EDGE VOICE FROM BOW and was tuned without it: it loads as 0 %, on the TUNING page, from a session and in `tools/apply_tuning.py`.
+- `hit_variation` (true or false), `hit_position_spread` and `hit_velocity_spread_pct` are written when they differ from the bake. A file without them, such as one from before HIT VARIATION, keeps the bake's values, on the TUNING page, from a session and in `tools/apply_tuning.py`.
+- `hh_tip_open_level`, `hh_tip_open_tick_db`, `hh_ring_floor`, `hh_free_ring` (true or false), `hh_tip_modes_db` and `hh_max_open` (HI-HAT only) are written when they differ from the bake. A file without them, such as one from before them, keeps the bake's values (60 %, +4 dB, 100 %, off, 0 dB, 100 %), on the TUNING page, from a session and in `tools/apply_tuning.py`, which refuses them for any other preset.
 - `effective` is a full copy of every value for reference; nothing reads it.
 - `entry` names the bake entry (slot) of an articulation.
 - `preset` is the preset id (`nova_ride`, `stine_flat_ride`, `hammered_thin_ride`, `swish`, `raven`, `konstan`); `bake_format_version` is the bake's `format_version`.
 
 ## The round trip
 
-1. Tune in the Tuning window, **SAVE...** the file, and bring it to the project session.
+1. Tune on the TUNING page, **SAVE...** the file, and bring it to the project session.
 2. When Kris asks (running it is a separate task), apply it:
 
    ```
@@ -519,6 +517,6 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
 
    The loader also reads each slot's band gains and turns them into one gain per mode for that articulation (`excitationModeGains`). The engine multiplies each strike's coupling by it (`docs/PORT_MAP.md`, live-engine decision 7). It reads each slot's onset shift, and the engine applies it to that articulation's band envelopes and onset peak times at each strike (decision 8). It reads each slot's attack band gains (from its attack data, else from its onset gains), which the engine applies at each strike (decision 15), and the brightness from the tuning block.
 
-   The Tuning window applies the values live with the same functions, so the tuned bake plays what was heard while tuning.
+   The TUNING page applies the values live with the same functions, so the tuned bake plays what was heard while tuning.
 
 Re-baking a preset (`tools/bake_preset.py`) drops its trims, its band gains, its onset shifts, its attack data and its tuning block. `Engine`, the retired Python-matching path, refuses a bake with a tuning block, band gains, onset shifts or attack data.

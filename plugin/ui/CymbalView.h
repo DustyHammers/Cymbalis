@@ -85,6 +85,9 @@ private:
     void renderOpenGL() override;
     void openGLContextClosing() override;
     void timerCallback() override;
+    // Hidden (the editor's TUNING page), JUCE closes the OpenGL context and nothing renders;
+    // the watch on the context's start stops, and starts again when the view shows.
+    void visibilityChanged() override;
 
     void attachOpenGL();
     void detachOpenGL();

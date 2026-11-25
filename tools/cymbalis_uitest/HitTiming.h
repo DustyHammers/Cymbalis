@@ -5,11 +5,15 @@
 // time them. An audio thread plays note-ons in real time, a strike every 24 ms so that 16 hits
 // move the cymbal, and processBlock is timed at 44.1 kHz with 256- and 128-sample blocks, with
 // the audio thread at normal priority and as a real-time thread (as a host's audio thread is),
-// in three cases:
+// in four cases:
 //
 //   editor closed           no editor
 //   editor open, idle       the editor of a second processor, given no hits: open, nothing moves
 //   editor open, hits       the editor at 1536 x 1024 in a window, the wireframe cymbal moving
+//   hits, TUNING page       as "editor open, hits", on the editor's TUNING page: the cymbal is
+//                           hidden, and it must draw no OpenGL frame and take no hit update
+//                           (on main, before the TUNING page, this case had the Tuning window
+//                           open over the cymbal instead)
 //
 // Each case runs three times, the cases in turn, and the editor closed once more at the end.
 // Then the three cases run once more with HAMMERED THIN RIDE selected, and once each with SWISH,
@@ -19,7 +23,8 @@
 // the hats and the pedal drawing move as well.
 // For each case: processBlock's median and 99th percentile over all its runs, each run's
 // worst block (and the worst against the block's time budget), the audio thread's CPU time
-// per block, the CPU time of the rest of the process, and WindowServer's (macOS); then the
+// per block, the CPU time of the rest of the process, the message thread's CPU time, and
+// WindowServer's (macOS); then the
 // editor open with hits against the editor closed. With an editor open: whether OpenGL draws
 // the cymbal, the editor's paint calls (on the message thread) and the cymbal's OpenGL frames
 // (their number, rate and render-thread time). Once, after the last hit, the run waits until
@@ -44,7 +49,8 @@ public:
     {
         none, // no editor
         idle, // the editor of a second processor, given no hits
-        hits  // the editor of the processor that plays
+        hits, // the editor of the processor that plays
+        tuning // as hits, on the editor's TUNING page
     };
     struct Result;
 

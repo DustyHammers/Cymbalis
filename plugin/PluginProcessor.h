@@ -102,6 +102,14 @@ public:
     juce::Point<int> editorSize() const noexcept { return { editorWidth.load(), editorHeight.load() }; }
     void setEditorSize (int w, int h) noexcept;
 
+#if CYMBALIS_TUNING
+    // The editor's open page, 0 CYMBAL or 1 TUNING (docs/UI_SPEC.md section 6): kept while the
+    // plugin instance lives, so a new editor opens on it, and saved with the session
+    // (editorPage). A lean build has no pages.
+    int editorPage() const noexcept { return openPage.load(); }
+    void setEditorPage (int page) noexcept { openPage.store (juce::jlimit (0, 1, page)); }
+#endif
+
     // Hit display (docs/UI_SPEC.md section 10): one event per strike a note-on plays. The
     // audio thread only writes it into a preallocated single-producer, single-consumer FIFO
     // (pushHit); when the FIFO is full, as when no editor reads it, the event is dropped.
@@ -217,6 +225,9 @@ private:
     std::array<std::array<std::atomic<int>, cymbalis::kNumSlots>, cymbalis::kNumPresets> sticks; // cymbalis::Stick
     std::atomic<int> learnSlot { -1 };
     std::atomic<int> editorWidth { 0 }, editorHeight { 0 };
+#if CYMBALIS_TUNING
+    std::atomic<int> openPage { 0 }; // the editor's page (editorPage)
+#endif
 
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> gain { 1.0f };
     juce::SmoothedValue<float> panPosition { 0.0f }; // linear: it runs through 0 to negative values

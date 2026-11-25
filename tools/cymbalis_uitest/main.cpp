@@ -51,24 +51,41 @@
 //   blendshown  (on another preset) both Blend Position knobs give their values -> shown
 //   wheel     the scroll wheel over the five knobs, a note box, a stick box, the CYMBAL and
 //             MIDI CHANNEL boxes                                     -> state and parameters unchanged
-//   arcs      (Tuning window closed) for each of the five knobs: drag it 40 design units, double-
+//   arcs      (on the CYMBAL page) for each of the five knobs: drag it 40 design units, double-
 //             click it, automate its parameter through the host, and back to its default
 //                                                                    -> each moves the parameter and
 //             the value the knob shows (its accessibility value), which its arc is drawn from
 //
-// The Tuning window (docs/TUNING.md); these read the windows, not the saved state:
+// The TUNING page (docs/UI_SPEC.md section 6, docs/TUNING.md); these read the editor's window
+// (its accessibility elements) and the page the session saves (editorPage):
 //
-//   tuning       click the CYMBALIS title (top left)  -> the Tuning window is visible and in
-//                                                        front of the editor
-//   tuningclose  click it again                       -> the Tuning window is hidden
+//   tuning       click the TUNING tab                 -> the TUNING page: the panel in the page
+//                                                        area, editorPage 1
+//   tuningclose  click the CYMBAL tab                 -> the CYMBAL page: no panel, the knobs
+//                                                        shown, editorPage 0
+//   tuningpreset (on the TUNING page) click the CYMBAL box, then STINE FLAT RIDE
+//                                                     -> still the TUNING page, the panel showing
+//                STINE FLAT RIDE's values (a row that names its CENTER articulation)
+//   savedpage    (on the TUNING page, after dragsize: a drag on a reopened editor does nothing)
+//                the state saved; the CYMBAL tab clicked, the editor closed, the state restored
+//                and the editor opened again (checked in the VST3 host only, as savedsize)
+//                                                     -> the TUNING page
+//   tuningresize (on the TUNING page, after dragsize: in CI the drags did nothing after it;
+//                checked in the VST3 host only: in the AU host a resize made from the host's side
+//                does not reach the plugin's editor, though its own resizer does) the host's
+//                editor resized to 1200 x 800 and back to the size and the place it had
+//                                                     -> the panel's SAVE... button the same size
+//                (within 2 points: scaled with the editor it would grow by a quarter), RESET ALL
+//                as far from the page area's right edge: the text keeps its size and the panel
+//                fits the page area
 //
-// and, with the Tuning window open, this one reads the saved state again:
+// and, on the TUNING page, this one reads the saved state again:
 //
-//   wheeltuning  the scroll wheel over the Tuning window's sliders and numeric boxes, down
-//                its list (the wheel scrolls the list)               -> state and parameters unchanged
+//   wheeltuning  the scroll wheel over the panel's sliders and numeric boxes, down its list (the
+//                wheel scrolls the list)                             -> state and parameters unchanged
 //
-// and these, with the Tuning window open, read the tuning the saved state holds for the
-// current preset (its tuning file, docs/TUNING.md):
+// and these, on the TUNING page, read the tuning the saved state holds for the current preset
+// (its tuning file, docs/TUNING.md):
 //
 //   voice        click EDGE VOICE FROM BOW's slider a quarter of the way along
 //                                                                    -> edge_voice_from_bow moved
@@ -113,7 +130,7 @@
 //             (cymbalis::ui::editorOpeningWidth: 1104 x 736, smaller on a small display, never
 //             below 960 x 640; UI_SPEC section 2), and the rule itself on six display sizes
 //                                                                    -> as the rule
-//   dragsize  (Tuning window closed) the editor's bottom-right resizer pressed, dragged out (read
+//   dragsize  (on the CYMBAL page) the editor's bottom-right resizer pressed, dragged out (read
 //             with the button down), on past the minimum and released; pressed again, dragged far
 //             out and released. Every press is on the corner of the editor at its opening size, as
 //             the test opened it, which a small screen still shows (the runner's 1024 x 768 at
@@ -710,6 +727,22 @@ private:
         }
     }
 
+    // The editor's page, as the window shows it and the session saves it: "TUNING page" (the
+    // panel in the page area, editorPage 1), "CYMBAL page" (no panel, the Volume knob shown,
+    // editorPage 0), or what it is instead. (The knobs lie inside the page area, where the
+    // panel's own sliders are, so only the CYMBAL page reads one.)
+    juce::String pageNow()
+    {
+        const auto panel = cymbalis::uitest::tuningPageState (*editor);
+        const auto saved = attribute (sessionNow(), "editorPage");
+        if (panel == "shown")
+            return saved == "1" ? juce::String ("TUNING page") : "panel shown, editorPage " + saved;
+        const auto knob = cymbalis::uitest::sliderText (*editor, at (787.0f, 881.0f)); // Volume
+        if (panel == "hidden" && ! knob.startsWith ("no ") && saved == "0")
+            return "CYMBAL page";
+        return "panel " + panel + ", Volume knob " + knob + ", editorPage " + saved;
+    }
+
     // The saved session settings, through the host API.
     juce::String sessionNow()
     {
@@ -820,12 +853,111 @@ private:
         }
         else if (name == "tuning" || name == "tuningclose")
         {
-            // The CYMBALIS title in the background (PluginEditor.cpp kTitleInk: 66, 97, 339 x 36),
-            // at its middle.
-            s.actions = { click (235.5f, 115.0f), wait, wait };
-            s.key = "Tuning window";
-            s.expected = name == "tuning" ? "visible-front" : "hidden";
-            s.probe = [this] { return cymbalis::uitest::tuningWindowState (*editor); };
+            // The TUNING or the CYMBAL tab (left column), clicked at its middle.
+            const juce::String tab = name == "tuning" ? "TUNING" : "CYMBAL";
+            s.actions = { [this, tab] { actionError = cymbalis::uitest::clickTitled (*editor, tab); }, wait, wait };
+            s.key = "page";
+            s.expected = name == "tuning" ? "TUNING page" : "CYMBAL page";
+            s.probe = [this] { return actionError.isNotEmpty() ? actionError : pageNow(); };
+        }
+        else if (name == "tuningpreset")
+        {
+            // The CYMBAL box's list (as the "preset" step); STINE FLAT RIDE is its second row. The
+            // panel follows: a row only STINE FLAT RIDE's panel shows, naming its CENTER entries.
+            s.actions = { click (199.0f, 402.0f), wait, click (199.0f, 433.0f + 4.0f + 8.0f + 1.0f * 40.0f + 20.0f), wait, wait };
+            s.key = "on the TUNING page";
+            s.expected = "stine_flat_ride, TUNING page, its values";
+            s.probe = [this] {
+                const auto preset = attribute (sessionNow(), "preset");
+                const auto page = pageNow();
+                const auto row = cymbalis::uitest::tuningShows (*editor, "Bow brightness vs velocity (tau_ref): BOW, CENTER, BOW_SHOULDER, CENTER_SHOULDER");
+                std::printf ("      preset %s, %s, its CENTER row: %s\n", preset.toRawUTF8(), page.toRawUTF8(), row.toRawUTF8());
+                return preset == "stine_flat_ride" && page == "TUNING page" && row == "shown"
+                           ? juce::String ("stine_flat_ride, TUNING page, its values")
+                           : preset + ", " + page + ", CENTER row " + row;
+            };
+        }
+        else if (name == "savedpage")
+        {
+            // A session saved on the TUNING page reopens on it: the state saved, the CYMBAL tab
+            // clicked, the editor closed, the state restored and the editor opened again.
+            auto saved = std::make_shared<juce::MemoryBlock>();
+            s.actions = { [this, saved] { plugin->getStateInformation (*saved); },
+                          [this] { actionError = cymbalis::uitest::clickTitled (*editor, "CYMBAL"); },
+                          wait,
+                          [this] { closeEditor(); },
+                          [] {},
+                          [this, saved] { plugin->setStateInformation (saved->getData(), (int) saved->getSize()); },
+                          [] {},
+                          [this] { openEditor(); },
+                          wait,
+                          wait };
+            s.key = "reopened from a session saved on the TUNING page";
+            s.expected = "TUNING page";
+            s.probe = [this] {
+                const auto page = actionError.isNotEmpty() ? actionError : pageNow();
+                // VST3 only, as savedsize: JUCE's AU wrapper reopens the old editor (on the page it
+                // was left on) while its view is still alive.
+                if (hostIsAU)
+                {
+                    std::printf ("      not checked in the AU host (its reopened editor is the old one: %s)\n", page.toRawUTF8());
+                    return juce::String ("TUNING page");
+                }
+                return page;
+            };
+        }
+        else if (name == "tuningresize")
+        {
+            // The host's editor resized (the plugin's follows, at 3:2) and back: the panel's
+            // buttons keep their size in screen points, and RESET ALL stays as far from the page
+            // area's right edge, which moves with the editor.
+            auto layouts = std::make_shared<juce::StringArray>();
+            auto size = std::make_shared<juce::Point<int>>();
+            const auto read = [this, layouts] { layouts->add (cymbalis::uitest::tuningLayout (*editor)); };
+            s.actions = { [this, size] { *size = { editor->getWidth(), editor->getHeight() }; },
+                          read,
+                          [this] { editor->setSize (1200, 800); },
+                          wait,
+                          read,
+                          [this, size] {
+                              editor->setSize (size->x, size->y);
+                              window->setTopLeftPosition (80, 80); // where the test opened it
+                          },
+                          wait,
+                          read };
+            s.key = "the panel while resizing";
+            s.expected = "same text size, fits the page area";
+            s.probe = [this, layouts] {
+                std::printf ("      %s; at 1200 x 800: %s; back: %s (the host's editor now %s)\n", (*layouts)[0].toRawUTF8(),
+                             layouts->size() > 1 ? (*layouts)[1].toRawUTF8() : "?", layouts->size() > 2 ? (*layouts)[2].toRawUTF8() : "?",
+                             sizeText().toRawUTF8());
+                // VST3 only: in the AU host (CI, run 45528157852) the plugin's editor did not
+                // follow a resize made from the host's side (no panel where the page area would be
+                // at 1200 x 800), while its own resizer works there (dragsize).
+                if (hostIsAU)
+                {
+                    std::printf ("      not checked in the AU host (a resize from the host's side does not reach the plugin's editor)\n");
+                    return juce::String ("same text size, fits the page area");
+                }
+                if (layouts->size() != 3)
+                    return layouts->joinIntoString ("; ");
+                // "page WxH, SAVE... WxH, RESET ALL N from the page's right"
+                const auto pageOf = [] (const juce::String& l) { return l.fromFirstOccurrenceOf ("page ", false, false).upToFirstOccurrenceOf (",", false, false); };
+                const auto saveOf = [] (const juce::String& l) {
+                    const auto wh = l.fromFirstOccurrenceOf ("SAVE... ", false, false).upToFirstOccurrenceOf (",", false, false);
+                    return juce::Point<int> (wh.upToFirstOccurrenceOf ("x", false, false).getIntValue(),
+                                             wh.fromFirstOccurrenceOf ("x", false, false).getIntValue());
+                };
+                const auto sameSize = [] (juce::Point<int> p, juce::Point<int> q) {
+                    return p.x > 0 && p.y > 0 && std::abs (p.x - q.x) <= 2 && std::abs (p.y - q.y) <= 2;
+                };
+                const auto insetOf = [] (const juce::String& l) { return l.fromFirstOccurrenceOf ("RESET ALL ", false, false).getIntValue(); };
+                const auto& a = (*layouts)[0];
+                const auto& b = (*layouts)[1];
+                const bool ok = a.startsWith ("page ") && b.startsWith ("page ") && pageOf (a) != pageOf (b) && sameSize (saveOf (a), saveOf (b))
+                                && std::abs (insetOf (a) - insetOf (b)) <= 1 && insetOf (a) >= 4 && insetOf (a) <= 12 && (*layouts)[2] == a;
+                return ok ? juce::String ("same text size, fits the page area") : layouts->joinIntoString ("; ");
+            };
         }
         else if (name == "wheel")
         {
@@ -850,8 +982,8 @@ private:
             // Each knob's arc is drawn from the knob's position (PluginEditor.cpp Knob::paint):
             // dragging it, double-clicking it (back to its default) and automating its parameter
             // through the host must each move both the parameter and the value the knob shows,
-            // read through its accessibility element. The Tuning window must be closed (it can
-            // cover the knobs). Each action is read back at the next tick.
+            // read through its accessibility element, on the CYMBAL page. Each action is read
+            // back at the next tick.
             auto checks = std::make_shared<std::vector<ArcCheck>> (std::size (kArcKnobs));
             for (size_t k = 0; k < std::size (kArcKnobs); ++k)
             {
@@ -940,9 +1072,9 @@ private:
         }
         else if (name == "wheeltuning")
         {
-            // Down the window in steps, over the value rows' names (30 % of the width), sliders
-            // (55 %) and numeric boxes (91 %); the band rows' sliders span the width. Each turn
-            // scrolls the list on, so the rows under the pointer change.
+            // Down the TUNING page in steps, over the value rows' names (30 % of the width),
+            // sliders (55 %) and numeric boxes (91 %); the band rows' sliders span the width. Each
+            // turn scrolls the list on, so the rows under the pointer change.
             s.actions.push_back ([this] {
                 before = snapshot();
                 wheelError = {};
@@ -1709,7 +1841,7 @@ private:
             return;
         }
         // A window that click() moved aside for the previous tick's click goes back to where
-        // it was (on a small screen, the Tuning window: MacEvents.h).
+        // it was (MacEvents.h).
         cymbalis::uitest::putBack();
         auto& step = steps[(size_t) stepIndex];
         if (actionIndex == 0)

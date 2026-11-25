@@ -711,6 +711,17 @@ void CymbalView::timerCallback()
     }
 }
 
+void CymbalView::visibilityChanged()
+{
+    if (! isVisible())
+        stopTimer();
+    else if (attached && ! glActive.load() && ! glFailed.load())
+    {
+        attachedMs = juce::Time::getMillisecondCounterHiRes();
+        startTimer (250);
+    }
+}
+
 void CymbalView::setPreset (int preset, const juce::String& loadError)
 {
     if (preset != shownPreset)
