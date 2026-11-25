@@ -221,6 +221,7 @@ const char* caseName (HitTiming::Editor e)
         case HitTiming::Editor::none: return "editor closed";
         case HitTiming::Editor::idle: return "editor open, idle";
         case HitTiming::Editor::hits: return "editor open, hits";
+        case HitTiming::Editor::tuning: return "hits, Tuning window";
     }
     return "";
 }
@@ -233,6 +234,7 @@ struct HitTiming::Result
     bool realtime = false, wasRealtime = false;
     std::vector<double> blockMs, blockCpuMs;      // the timed blocks
     double restOfProcess = 0.0, windowServer = -1.0; // % of one core
+    double messageThread = -1.0;                  // the message thread's CPU, % of one core
     std::vector<double> paintMs;                  // the editor's paint calls
     double areaShareSum = 0.0;                    // the paints' areas, as shares of the editor
     bool openGL = false;                          // OpenGL drew the cymbal
@@ -287,6 +289,29 @@ struct HitTiming::Run
                             | (editor->wantsLayerBackedView() ? 0 : juce::ComponentPeer::windowRequiresSynchronousCoreGraphicsRendering));
         clock.setTopLeftPosition (40, 40);
         clock.setVisible (true);
+        if (kind == Editor::tuning)
+            openTuning();
+    }
+
+    // The Tuning window: a click on the CYMBALIS title (its click area's mouse-up).
+    void openTuning()
+    {
+        juce::Component* title = nullptr;
+        std::function<void (juce::Component&)> find = [&] (juce::Component& c) {
+            for (auto* child : c.getChildren())
+            {
+                if (child->getTitle() == "CYMBALIS")
+                    title = child;
+                find (*child);
+            }
+        };
+        find (*editor);
+        if (title == nullptr)
+            return;
+        const auto centre = title->getLocalBounds().getCentre().toFloat();
+        const auto now = juce::Time::getCurrentTime();
+        title->mouseUp (juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), centre, {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                          title, title, now, centre, now, 1, false));
     }
 
     ~Run()
@@ -377,6 +402,10 @@ struct HitTiming::Run
     std::vector<double> blockMs, blockCpuMs;
     double restOfProcess = 0.0;
 
+    // The message thread's CPU time over the timed part (read on it, every 50 ms).
+    bool messageCounting = false;
+    double messageStartCpuMs = 0.0, messageStartMs = 0.0, messageThread = -1.0;
+
     // The cymbal over the timed part, read on the message thread (every 50 ms).
     bool glCounting = false;
     double glStartMs = 0.0;
@@ -393,7 +422,7 @@ HitTiming::HitTiming (std::function<void (int)> f) : finished (std::move (f))
         for (const int block : kBlocks)
         {
             for (int round = 0; round < kRounds; ++round)
-                for (const auto e : { Editor::none, Editor::idle, Editor::hits })
+                for (const auto e : { Editor::none, Editor::idle, Editor::hits, Editor::tuning })
                     steps.push_back ({ e, block, realtime, e == Editor::hits && round == 0 && ! realtime && block == kBlocks[0] });
             steps.push_back ({ Editor::none, block, realtime, false });
         }
@@ -443,6 +472,14 @@ void HitTiming::timerCallback()
             return;
         case 2:
         {
+            if (run->clock.recording && ! run->messageCounting && ! run->done)
+            {
+                run->messageCounting = true;
+                run->messageStartCpuMs = threadCpuMs();
+                run->messageStartMs = now;
+            }
+            else if (run->done && run->messageCounting && run->messageThread < 0.0)
+                run->messageThread = 100.0 * (threadCpuMs() - run->messageStartCpuMs) / juce::jmax (1.0, now - run->messageStartMs);
             if (auto* view = run->clock.view; view != nullptr && ! run->done)
             {
                 if (run->clock.recording && ! run->glCounting)
@@ -473,6 +510,7 @@ void HitTiming::timerCallback()
             r.blockMs = run->blockMs;
             r.blockCpuMs = run->blockCpuMs;
             r.restOfProcess = run->restOfProcess;
+            r.messageThread = run->messageThread;
             if (windowServerStartMs >= 0.0 && windowServerMs >= 0.0)
                 r.windowServer = 100.0 * (windowServerMs - windowServerStartMs) / (now - phaseStartMs);
             const auto& c = run->clock;
@@ -597,11 +635,11 @@ void HitTiming::report()
         {
             Stats wall, cpu, runWorsts;
             std::vector<double> worsts;
-            double rest = 0.0, windowServer = 0.0;
-            int windowServerRuns = 0;
+            double rest = 0.0, windowServer = 0.0, message = 0.0;
+            int windowServerRuns = 0, messageRuns = 0;
         };
-        std::array<Case, 3> cases;
-        for (int e = 0; e < 3; ++e)
+        std::array<Case, 4> cases;
+        for (int e = 0; e < 4; ++e)
         {
             std::vector<double> wall, cpu;
             auto& k = cases[(size_t) e];
@@ -621,8 +659,15 @@ void HitTiming::report()
                     k.windowServer += r.windowServer;
                     ++k.windowServerRuns;
                 }
+                if (r.messageThread >= 0.0)
+                {
+                    k.message += r.messageThread;
+                    ++k.messageRuns;
+                }
                 ++runs;
             }
+            if (runs == 0)
+                continue; // a case these runs do not have
             k.wall = statsOf (wall);
             k.cpu = statsOf (cpu);
             k.runWorsts = statsOf (k.worsts);
@@ -648,7 +693,12 @@ void HitTiming::report()
                      percent (open.wall.median, closed.wall.median), percent (open.wall.p99, closed.wall.p99),
                      percent (open.wall.worst, closed.wall.worst), percent (open.runWorsts.median, closed.runWorsts.median));
         std::printf ("    (CPU: %% of one core; the rest of the process includes the editor's paints and the cymbal's OpenGL frames)\n");
-        for (const auto e : { Editor::idle, Editor::hits })
+        std::printf ("    message thread CPU (%% of one core, mean of the runs):");
+        for (int e = 0; e < 4; ++e)
+            if (cases[(size_t) e].messageRuns > 0)
+                std::printf ("  %s %.1f %%", caseName ((Editor) e), cases[(size_t) e].message / cases[(size_t) e].messageRuns);
+        std::printf ("\n");
+        for (const auto e : { Editor::idle, Editor::hits, Editor::tuning })
         {
             std::vector<double> paints;
             double areaShares = 0.0, glMs = 0.0, glWorst = 0.0, glWallMs = 0.0;
@@ -679,6 +729,8 @@ void HitTiming::report()
                 if (r.framesAfter >= 0)
                     checked = &r;
             }
+            if (runs == 0)
+                continue; // a case these runs do not have
             const auto p = statsOf (paints);
             const auto drawn = openGL == runs   ? "OpenGL (" + renderer + ")"
                                : openGL == 0 ? juce::String ("still drawing (no OpenGL)")
