@@ -17,6 +17,29 @@
 // expCore and sinCosCore are the vector algorithms, anyOutside picks the lanes for libm, and
 // load2, store2, splat2, roundNearest and selectBits are their helpers. Nothing else in
 // FastEngine (the control points, the kernel) uses this header.
+//
+// The algorithms and their constants are fdlibm's, from FreeBSD's msun (lib/msun/src). Those
+// files' notices, kept here as their terms require (LICENSE):
+//
+// e_exp.c:
+// ====================================================
+// Copyright (C) 2004 by Sun Microsystems, Inc. All rights reserved.
+//
+// Permission to use, copy, modify, and distribute this
+// software is freely granted, provided that this notice
+// is preserved.
+// ====================================================
+//
+// k_sin.c, k_cos.c and e_rem_pio2.c:
+// ====================================================
+// Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+//
+// Developed at SunSoft, a Sun Microsystems, Inc. business.
+// Permission to use, copy, modify, and distribute this
+// software is freely granted, provided that this notice
+// is preserved.
+// ====================================================
+// (e_rem_pio2.c: Optimized by Bruce D. Evans.)
 #pragma once
 
 #include <cmath>
