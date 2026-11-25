@@ -10,8 +10,10 @@
 //   editor closed           no editor
 //   editor open, idle       the editor of a second processor, given no hits: open, nothing moves
 //   editor open, hits       the editor at 1536 x 1024 in a window, the wireframe cymbal moving
-//   hits, Tuning window     as "editor open, hits", with the Tuning window open as well (a click
-//                           on the CYMBALIS title)
+//   hits, TUNING page       as "editor open, hits", on the editor's TUNING page: the cymbal is
+//                           hidden, and it must draw no OpenGL frame and take no hit update
+//                           (on main, before the TUNING page, this case had the Tuning window
+//                           open over the cymbal instead)
 //
 // Each case runs three times, the cases in turn, and the editor closed once more at the end.
 // Then the three cases run once more with HAMMERED THIN RIDE selected, and once each with SWISH,
@@ -48,7 +50,7 @@ public:
         none, // no editor
         idle, // the editor of a second processor, given no hits
         hits, // the editor of the processor that plays
-        tuning // as hits, with the Tuning window open
+        tuning // as hits, on the editor's TUNING page
     };
     struct Result;
 

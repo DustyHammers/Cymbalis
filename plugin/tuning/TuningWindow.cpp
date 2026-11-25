@@ -952,6 +952,19 @@ void TuningPanel::mouseDown (const juce::MouseEvent& e)
     }
 }
 
+void TuningPanel::visibilityChanged()
+{
+    if (! isVisible())
+    {
+        stopTimer();
+        return;
+    }
+    timerCallback(); // the current preset (rebuilt if it changed) and the meters
+    showValues();
+    repaint();
+    startTimerHz (30);
+}
+
 void TuningPanel::timerCallback()
 {
     if (processor.presetIndex() != preset)
@@ -1024,97 +1037,5 @@ void TuningPanel::load()
                               showValues();
                           });
 }
-
-// =====================================================================================
-TuningWindow::TuningWindow (CymbalisProcessor& p, const ui::Assets& assets, juce::Component& ownerComponent)
-    : juce::DocumentWindow (juce::String (JucePlugin_Name) + " - Tuning", ui::palette::background,
-                            juce::DocumentWindow::closeButton),
-      owner (ownerComponent)
-{
-    setUsingNativeTitleBar (true);
-    setContentOwned (new TuningPanel (p, assets), false);
-    setResizable (true, false);
-    setResizeLimits (780, 360, 1600, 2000);
-    centreWithSize (860, 860);
-}
-
-TuningWindow::~TuningWindow()
-{
-    detach (*this);
-}
-
-namespace
-{
-// The native frame around a window's content (title bar included); before the system
-// reports it (Linux, briefly after creation), a title bar of 32.
-juce::BorderSize<int> frameOf (const juce::Component& window)
-{
-    if (auto* peer = window.getPeer())
-        if (const auto frame = peer->getFrameSizeIfPresent())
-            return *frame;
-    return { 32, 0, 0, 0 };
-}
-} // namespace
-
-void TuningWindow::show (juce::Rectangle<int> keepClear)
-{
-    // Placed when it first opens, and again only if it would cover `keepClear`; a window
-    // moved elsewhere stays there.
-    const auto frame = frameOf (*this);
-    if (! placed || frame.addedTo (getScreenBounds()).intersects (keepClear))
-    {
-        placeClearOf (keepClear);
-        placed = true;
-    }
-    setVisible (true);
-    attachAbove (*this, owner);
-    toFront (true);
-}
-
-void TuningWindow::placeClearOf (juce::Rectangle<int> button)
-{
-    // Below `button` (the area to keep clear) and right-aligned with it; where the screen
-    // has no room below, to its left.
-    const auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect (button);
-    const auto area = display != nullptr ? display->userArea : button.expanded (2000);
-    const auto frame = frameOf (*this);
-    const auto inside = frame.subtractedFrom (area); // where the content may go
-    constexpr int gap = 8, minSize = 360;
-    const int top = button.getBottom() + gap + frame.getTop();
-    int w = juce::jmin (getWidth(), inside.getWidth());
-    int h = getHeight();
-    int x = 0, y = 0;
-    if (inside.getBottom() - top >= minSize)
-    {
-        h = juce::jmin (h, inside.getBottom() - top);
-        x = juce::jlimit (inside.getX(), juce::jmax (inside.getX(), inside.getRight() - w), button.getRight() - w);
-        y = top;
-    }
-    else
-    {
-        const int right = button.getX() - gap - frame.getRight();
-        w = juce::jmax (minSize, juce::jmin (w, right - inside.getX()));
-        h = juce::jmin (h, inside.getHeight());
-        x = juce::jmax (inside.getX(), right - w);
-        y = inside.getY();
-    }
-    setBounds (x, y, w, h);
-}
-
-void TuningWindow::hide()
-{
-    detach (*this);
-    setVisible (false);
-}
-
-#if ! JUCE_MAC
-// Without a native child window: kept on top.
-void attachAbove (juce::Component& window, juce::Component&)
-{
-    window.setAlwaysOnTop (true);
-}
-
-void detach (juce::Component&) {}
-#endif
 
 } // namespace cymbalis::tuning

@@ -71,7 +71,7 @@ jobs:
         with:
           key: ${{ runner.os }}-${{ env.BUILD_TYPE }}
 
-      # Cymbalis with the Tuning window (CYMBALIS_WITH_TUNING, ON by default, docs/TUNING.md).
+      # Cymbalis with the TUNING page (CYMBALIS_WITH_TUNING, ON by default, docs/TUNING.md).
       # The toolchain goes into a notice, and on failure the error lines into annotations
       # (.github/scripts/annotate_errors.sh), which can be read without the job's log.
       - name: Configure (universal arm64 + x86_64)
@@ -232,8 +232,8 @@ jobs:
       # again, its Blend Position knobs shown; the scroll wheel over the knobs and boxes
       # must change nothing; dragging, double-clicking and automating each of the five knobs
       # must move its parameter and the value the knob shows, which its position arc is drawn
-      # from (docs/UI_SPEC.md section 6). Then click the CYMBALIS title: the Tuning window must be
-      # visible, in front of the editor and attached to it;
+      # from (docs/UI_SPEC.md section 6). Then click the TUNING tab: the TUNING page must show its
+      # panel in the page area, with the knobs hidden, and the session save the page;
       # the wheel over its sliders and numeric boxes must change nothing; EDGE VOICE FROM BOW
       # must move on KONSTAN, RAVEN, SWISH, EXTRA PAPER THIN, CRASH 16", HAMMERED and STINE (STINE FLAT RIDE: every row played
       # with both sticks, its tuning saved and loaded back, and a SMOKE FLAT RIDE session reopening on it with its sticks and
@@ -242,18 +242,22 @@ jobs:
       # bow profiles (each preset's tuning then saved and loaded back), and NOVA RIDE must have no such button; NOVA's first articulation's
       # three STICK CLICK weights must move; HIT VARIATION's switch must flip and its two spreads
       # move (NOVA); a tuning file saved and loaded back (through
-      # stand-ins for the file panels) must hold and restore the tuning; on HI-HAT the window
-      # shows the values that act on it and hides the others; a second click on
-      # the title hides the window, and on HI-HAT it opens and closes it again; last, the editor's resizer dragged
+      # stand-ins for the file panels) must hold and restore the tuning; on HI-HAT the panel
+      # shows the values that act on it and hides the others; on the TUNING page, STINE FLAT RIDE
+      # chosen in the CYMBAL box must show in the panel, a session saved on the page must reopen on
+      # it (VST3), and the editor resized must keep the panel's text size and fit it to the page
+      # area; the CYMBAL tab shows the CYMBAL page again, and the TUNING tab the panel; last, on the
+      # CYMBAL page, the editor's resizer dragged
       # to its limits (960 x 640, 1536 x 1024, 3:2 in between), and a session saved at another size reopening at it (VST3)
       # (tools/cymbalis_uitest).
       # 65 steps in each host took about 2.6 minutes per host on the runner (59 took 4.8 minutes in
-      # all with EXTRA PAPER THIN 24"); 68 with the editor's sizes took under 8 minutes; 72 with STINE FLAT RIDE's, hence 10.
+      # all with EXTRA PAPER THIN 24"); 68 with the editor's sizes took under 8 minutes; 72 with STINE FLAT RIDE's took
+      # 6 minutes in all; 76 with the TUNING page's, within 10.
       - name: Editor mouse test (AU and VST3)
         timeout-minutes: 10
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
-          STEPS="opensize edge sticks channel drag reset none edgereset list stick preset shoulder swish raven paperthin konstan azcrash hihat blendhidden hihatplay hihatpedal hihatswing pedalchannel pedalcc konstan blendshown wheel arcs tuning wheeltuning voice raven voice swish voice profile paperthin voice ptprofile savetuning loadtuning azcrash voice azprofile savetuning loadtuning preset voice stine stinerows smokesession voice savetuning loadtuning nova noprofile nohihatvalues clickweights hitvariation savetuning loadtuning hihat hihattuning hihatvalues hihatopen savetuning loadtuning tuningclose tuning tuningclose dragsize savedsize"
+          STEPS="opensize edge sticks channel drag reset none edgereset list stick preset shoulder swish raven paperthin konstan azcrash hihat blendhidden hihatplay hihatpedal hihatswing pedalchannel pedalcc konstan blendshown wheel arcs tuning wheeltuning voice raven voice swish voice profile paperthin voice ptprofile savetuning loadtuning azcrash voice azprofile savetuning loadtuning preset voice stine stinerows smokesession voice savetuning loadtuning nova noprofile nohihatvalues clickweights hitvariation savetuning loadtuning hihat hihattuning hihatvalues hihatopen savetuning loadtuning tuningpreset savedpage tuning tuningresize tuningclose tuning tuningclose dragsize savedsize"
           echo "--- VST3 ---"
           "$UITEST" "$PWD/$VST3" $STEPS
           echo "--- AU ---"

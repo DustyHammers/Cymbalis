@@ -221,7 +221,7 @@ const char* caseName (HitTiming::Editor e)
         case HitTiming::Editor::none: return "editor closed";
         case HitTiming::Editor::idle: return "editor open, idle";
         case HitTiming::Editor::hits: return "editor open, hits";
-        case HitTiming::Editor::tuning: return "hits, Tuning window";
+        case HitTiming::Editor::tuning: return "hits, TUNING page";
     }
     return "";
 }
@@ -238,6 +238,7 @@ struct HitTiming::Result
     std::vector<double> paintMs;                  // the editor's paint calls
     double areaShareSum = 0.0;                    // the paints' areas, as shares of the editor
     bool openGL = false;                          // OpenGL drew the cymbal
+    bool cymbalShown = true;                      // the cymbal was shown (not on the TUNING page)
     juce::String renderer;                        // its renderer
     int meshSegments = 0, segmentsBefore = 0, surfaceSegments = 0, dents = 0; // its geometry
     double buildMs = 0.0;                         // and how long that took to build
@@ -277,6 +278,7 @@ struct HitTiming::Run
                 other->setPreset (preset);
             shown = other.get();
         }
+        shown->setEditorPage (kind == Editor::tuning ? 1 : 0); // the editor opens on that page
         editor.reset (shown->createEditorIfNeeded());
         editor->setSize (1536, 1024); // the maximum size
         clock.holder.setSize (editor->getWidth(), editor->getHeight());
@@ -289,29 +291,6 @@ struct HitTiming::Run
                             | (editor->wantsLayerBackedView() ? 0 : juce::ComponentPeer::windowRequiresSynchronousCoreGraphicsRendering));
         clock.setTopLeftPosition (40, 40);
         clock.setVisible (true);
-        if (kind == Editor::tuning)
-            openTuning();
-    }
-
-    // The Tuning window: a click on the CYMBALIS title (its click area's mouse-up).
-    void openTuning()
-    {
-        juce::Component* title = nullptr;
-        std::function<void (juce::Component&)> find = [&] (juce::Component& c) {
-            for (auto* child : c.getChildren())
-            {
-                if (child->getTitle() == "CYMBALIS")
-                    title = child;
-                find (*child);
-            }
-        };
-        find (*editor);
-        if (title == nullptr)
-            return;
-        const auto centre = title->getLocalBounds().getCentre().toFloat();
-        const auto now = juce::Time::getCurrentTime();
-        title->mouseUp (juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), centre, {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                                          title, title, now, centre, now, 1, false));
     }
 
     ~Run()
@@ -520,6 +499,7 @@ void HitTiming::timerCallback()
             if (c.view != nullptr && run->glCounting)
             {
                 r.openGL = c.view->usesOpenGL();
+                r.cymbalShown = c.view->isVisible();
                 r.renderer = c.view->renderer();
                 if (const auto geo = c.view->geometry())
                 {
@@ -703,7 +683,7 @@ void HitTiming::report()
             std::vector<double> paints;
             double areaShares = 0.0, glMs = 0.0, glWorst = 0.0, glWallMs = 0.0;
             long frames = 0, hitsSum = 0, hitSamples = 0;
-            int hitsMin = 1 << 30, runs = 0, openGL = 0;
+            int hitsMin = 1 << 30, runs = 0, openGL = 0, hidden = 0, updates = 0;
             juce::String renderer;
             const Result* checked = nullptr;
             for (size_t j = i; j < end; ++j)
@@ -715,6 +695,8 @@ void HitTiming::report()
                 paints.insert (paints.end(), r.paintMs.begin(), r.paintMs.end());
                 areaShares += r.areaShareSum;
                 openGL += r.openGL ? 1 : 0;
+                hidden += r.cymbalShown ? 0 : 1;
+                updates += r.gl.updates;
                 if (r.renderer.isNotEmpty())
                     renderer = r.renderer;
                 frames += r.gl.frames;
@@ -732,9 +714,10 @@ void HitTiming::report()
             if (runs == 0)
                 continue; // a case these runs do not have
             const auto p = statsOf (paints);
-            const auto drawn = openGL == runs   ? "OpenGL (" + renderer + ")"
-                               : openGL == 0 ? juce::String ("still drawing (no OpenGL)")
-                                             : "OpenGL in some runs only (" + renderer + ")";
+            const auto drawn = hidden == runs   ? juce::String ("hidden (the TUNING page)")
+                               : openGL == runs ? "OpenGL (" + renderer + ")"
+                               : openGL == 0    ? juce::String ("still drawing (no OpenGL)")
+                                                : "OpenGL in some runs only (" + renderer + ")";
             std::printf ("    %-22s cymbal: %s; editor paints %3zu (average %.3f ms, worst %.3f ms, %3.0f %% of the editor per paint); "
                          "OpenGL frames %4ld (%.1f per second), render average %.3f ms, worst %.3f ms",
                          caseName (e), drawn.toRawUTF8(),
@@ -743,6 +726,13 @@ void HitTiming::report()
             if (e == Editor::hits)
                 std::printf ("; hits shown mean %.1f, fewest %d", hitSamples > 0 ? (double) hitsSum / (double) hitSamples : 0.0,
                              hitSamples > 0 ? hitsMin : 0);
+            if (e == Editor::tuning)
+            {
+                // The TUNING page: the cymbal hidden, not one frame drawn nor one hit handed to it.
+                const bool still = hidden == runs && frames == 0 && updates == 0;
+                ran = ran && still;
+                std::printf ("; hit updates %d -> %s", updates, still ? "the cymbal at rest" : "THE HIDDEN CYMBAL DREW");
+            }
             std::printf ("\n");
             if (checked != nullptr)
             {

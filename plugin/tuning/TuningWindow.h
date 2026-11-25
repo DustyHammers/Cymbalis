@@ -1,7 +1,7 @@
 #pragma once
 
-// Tuning code only (CYMBALIS_WITH_TUNING, docs/TUNING.md): the Tuning window, opened by the
-// TUNING button or Cmd-click on the CYMBALIS logo. Plain JUCE controls in the editor's
+// Tuning code only (CYMBALIS_WITH_TUNING, docs/TUNING.md): the TUNING page's panel, shown in
+// the editor by its TUNING tab (docs/UI_SPEC.md section 6). Plain JUCE controls in the editor's
 // palette and font; every value acts on the current preset, live.
 
 #include "PluginProcessor.h"
@@ -205,6 +205,9 @@ public:
     void paint (juce::Graphics& g) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent& e) override;
+    // Hidden (the editor's CYMBAL page), its timer stops; shown again, it shows the current
+    // preset (rebuilt if it changed), its values and the meters at once.
+    void visibilityChanged() override;
 
 private:
     void timerCallback() override;
@@ -248,34 +251,5 @@ private:
     bool modified = false;
     juce::Rectangle<int> meterFrame, outputLine, clipBox, hitLines; // set in resized()
 };
-
-// The Tuning window. It is attached to the window that holds `owner` (the editor): on
-// macOS a child window of it, so it stays in front of the editor and the host, on the same
-// Space, and moves with it; elsewhere it is kept on top. It goes when the editor goes.
-class TuningWindow final : public juce::DocumentWindow
-{
-public:
-    TuningWindow (CymbalisProcessor& p, const ui::Assets& assets, juce::Component& owner);
-    ~TuningWindow() override;
-
-    // Visible, in front, attached to the editor's window, and clear of `keepClear` (in screen
-    // coordinates: the editor's top right, where the TUNING button was before layout v3 and
-    // the MIDI CHANNEL box is now) so that the box there stays clickable.
-    void show (juce::Rectangle<int> keepClear);
-    void hide();
-    bool isShowing() const { return isVisible(); }
-    void closeButtonPressed() override { hide(); }
-
-private:
-    void placeClearOf (juce::Rectangle<int> keepClear);
-
-    juce::Component& owner;
-    bool placed = false;
-};
-
-// Platform part (TuningWindowMac.mm on macOS): attach `window` above the native window
-// that holds `owner`, or detach it.
-void attachAbove (juce::Component& window, juce::Component& owner);
-void detach (juce::Component& window);
 
 } // namespace cymbalis::tuning

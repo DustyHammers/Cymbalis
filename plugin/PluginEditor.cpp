@@ -44,13 +44,13 @@ constexpr float kKnobLabelTop = 784.0f;       // Velocity Sensitivity, Volume an
 constexpr float kLogoSize = 48.0f;
 const juce::Point<float> kLogoCentre (199.5f, 950.0f);
 #if CYMBALIS_TUNING
-// The CYMBALIS title in the background image: its ink box, measured from
-// CYMBALIS_Background_logo.png. A click within 6 units of it opens and closes the Tuning window.
-const juce::Rectangle<int> kTitleInk (66, 97, 339, 36);
-constexpr int kTitleMargin = 6;
-// The Tuning window opens below this area, right-aligned with it, and keeps it clear: the
-// TUNING button's place before layout v3, where the MIDI CHANNEL box is now.
-const juce::Rectangle<int> kTuningWindowAnchor (1404, 30, 110, 36);
+// The tabs (UI_SPEC sections 3 and 6), as Tympanis's: the ink's top at y 258, from x 66, 42
+// units apart, in the header font with 3.3 letter spacing; in the left column between the
+// subtitle (ink to about y 205) and the CYMBAL label (y 348).
+constexpr float kTabTop = 258.0f, kTabLeft = 66.0f, kTabGap = 42.0f, kTabSpacing = 3.3f;
+// The TUNING page's area, clear of the subtitle (to about x 450): the panel is drawn in its
+// rectangle on screen.
+const juce::Rectangle<int> kTuningPageArea (460, 100, 1040, 900);
 #endif
 
 const juce::String emDash = juce::String::fromUTF8 ("\xe2\x80\x94");
@@ -94,23 +94,51 @@ void drawBoxOutline (juce::Graphics& g, juce::Rectangle<int> r, juce::Colour c)
 
 #if CYMBALIS_TUNING
 // =====================================================================================
-// Tuning code (CYMBALIS_WITH_TUNING): the CYMBALIS title's click area. It draws nothing (the
-// title is the background's); over it the pointer is a pointing hand.
-class Content::TitleButton final : public juce::Component
+// Tuning code (CYMBALIS_WITH_TUNING): a page tab, CYMBAL or TUNING, as Tympanis's TabButton:
+// the active one in the label colour with a bronze line under it, the other in the row-label
+// colour (brighter under the pointer, a pointing hand). A click shows its page.
+class Content::TabButton final : public juce::Component
 {
 public:
-    TitleButton()
+    TabButton (const Assets& a, const char* t) : assets (a), text (t)
     {
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
-        setTitle ("CYMBALIS");
-        setDescription ("opens and closes the Tuning window");
+        setTitle (t);
     }
     std::function<void()> onClick;
+    void setActive (bool a)
+    {
+        if (a == active)
+            return;
+        active = a;
+        repaint();
+    }
+    // the ink's width
+    float inkWidth() const { return inkBounds (assets.font (kHeaderSize, kTabSpacing), text).getWidth(); }
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto f = assets.font (kHeaderSize, kTabSpacing);
+        const auto c = active ? palette::label : (isMouseOver() ? palette::openOutline.withMultipliedBrightness (0.8f) : palette::secondary);
+        drawInkText (g, f, text, { 0.0f, 6.0f }, c);
+        if (active)
+        {
+            g.setColour (palette::bronze);
+            g.fillRect (juce::Rectangle<float> (0.0f, 6.0f + 25.0f, inkWidth(), 2.0f));
+        }
+    }
+    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { repaint(); }
     void mouseUp (const juce::MouseEvent& e) override
     {
-        if (onClick && e.mouseWasClicked() && getLocalBounds().contains (e.getPosition()))
+        if (e.mouseWasClicked() && onClick)
             onClick();
     }
+
+private:
+    const Assets& assets;
+    juce::String text;
+    bool active = false;
 };
 #endif
 
@@ -768,10 +796,18 @@ Content::Content (CymbalisProcessor& p)
     addAndMakeVisible (channelBox);
 
 #if CYMBALIS_TUNING
-    titleButton = std::make_unique<TitleButton>();
-    titleButton->setBounds (kTitleInk.expanded (kTitleMargin));
-    titleButton->onClick = [this] { toggleTuningWindow (tuningWindow == nullptr || ! tuningWindow->isShowing()); };
-    addAndMakeVisible (*titleButton);
+    // The tabs, 42 units apart; the open page is the processor's (CYMBAL in a new instance).
+    const char* tabNames[] = { "CYMBAL", "TUNING" };
+    float tabX = kTabLeft;
+    for (size_t i = 0; i < tabs.size(); ++i)
+    {
+        tabs[i] = std::make_unique<TabButton> (assets, tabNames[i]);
+        const float w = tabs[i]->inkWidth();
+        tabs[i]->setBounds (juce::roundToInt (tabX), juce::roundToInt (kTabTop) - 6, juce::roundToInt (w) + 2, 36);
+        tabs[i]->onClick = [this, i] { showPage ((int) i); };
+        addAndMakeVisible (*tabs[i]);
+        tabX += w + kTabGap;
+    }
 #endif
 
     // The hi-hat's pedal and PEDAL row: shown on a preset with a pedal (refresh).
@@ -807,13 +843,16 @@ Content::Content (CymbalisProcessor& p)
 
     addMouseListener (this, true); // a click anywhere cancels MIDI learn
     refresh();
+#if CYMBALIS_TUNING
+    showPage (processor.editorPage());
+#endif
 }
 
 Content::~Content()
 {
     hitTracker.reset(); // before the cymbal it feeds
 #if CYMBALIS_TUNING
-    tuningWindow.reset(); // the Tuning window goes with the editor
+    tuningPanel.reset(); // the TUNING page's panel goes with the editor
 #endif
     removeMouseListener (this);
     for (auto& k : knobs)
@@ -839,25 +878,13 @@ void Content::refresh()
         presetBox.setText (processor.presetName());
         cymbalView->setPreset (preset, shownError);
         hitTracker->setGeometry (cymbalView->geometry());
-        // Only the rows the preset has (the hi-hat has two): the others' boxes are hidden.
-        for (int s = 0; s < kNumSlots; ++s)
-        {
-            noteBoxes[(size_t) s]->setVisible (rowPlays (preset, s));
-            stickBoxes[(size_t) s]->setVisible (rowPlays (preset, s));
-        }
-        // The Blend Position knobs only where they move the rows (not on the hi-hat): hidden,
-        // their parameters keep their values. The pedal and its row where the preset has one.
-        const auto& info = kPresets[(size_t) preset];
-        for (size_t k : { size_t (2), size_t (3) })
-            knobs[k]->setVisible (info.blendKnobs);
-        pedal.setVisible (info.pedal);
-        pedalBox.setVisible (info.pedal);
+        applyPage(); // the preset's rows, knobs and pedal
         shownOpening = -1.0f;
         repaint();
     }
     // The hi-hat's hats and pedal follow the pedal's smoothed opening, redrawn when it has moved
-    // by 0.002 or more.
-    if (kPresets[(size_t) preset].pedal)
+    // by 0.002 or more (while the TUNING page shows they are hidden, and wait).
+    if (kPresets[(size_t) preset].pedal && cymbalPage())
     {
         const float o = juce::jlimit (0.0f, 1.0f, processor.pedalOpenness());
         if (shownOpening < 0.0f || std::abs (o - shownOpening) >= 0.002f)
@@ -903,17 +930,80 @@ void Content::refresh()
         noteBoxes[(size_t) s]->setLearning (s == learn, pulse);
 }
 
-#if CYMBALIS_TUNING
-void Content::toggleTuningWindow (bool open)
+// The open page's components, and the preset's: the CYMBAL page shows the cymbal, the rows the
+// preset has (the hi-hat has two; the others' boxes are hidden), the knobs (the Blend Position
+// knobs only where they move the rows: not on the hi-hat, where they are hidden and their
+// parameters keep their values) and the pedal and its row where the preset has one. The
+// TUNING page hides them all and shows the panel.
+void Content::applyPage()
 {
-    if (open)
+    const int preset = processor.presetIndex();
+    const auto& info = kPresets[(size_t) preset];
+    const bool cymbal = cymbalPage();
+    cymbalView->setVisible (cymbal);
+    for (int s = 0; s < kNumSlots; ++s)
     {
-        if (tuningWindow == nullptr)
-            tuningWindow = std::make_unique<tuning::TuningWindow> (processor, assets, *this);
-        tuningWindow->show (localAreaToGlobal (kTuningWindowAnchor));
+        noteBoxes[(size_t) s]->setVisible (cymbal && rowPlays (preset, s));
+        stickBoxes[(size_t) s]->setVisible (cymbal && rowPlays (preset, s));
     }
-    else if (tuningWindow != nullptr)
-        tuningWindow->hide();
+    for (size_t k = 0; k < knobs.size(); ++k)
+        knobs[k]->setVisible (cymbal && ((k != 2 && k != 3) || info.blendKnobs));
+    pedal.setVisible (cymbal && info.pedal);
+    pedalBox.setVisible (cymbal && info.pedal);
+#if CYMBALIS_TUNING
+    if (tuningPanel != nullptr)
+        tuningPanel->setVisible (! cymbal);
+    for (size_t i = 0; i < tabs.size(); ++i)
+        tabs[i]->setActive ((int) i == page);
+#endif
+}
+
+void Content::editorResized()
+{
+#if CYMBALIS_TUNING
+    layoutTuningPanel();
+#endif
+}
+
+#if CYMBALIS_TUNING
+// The TUNING or the CYMBAL page (UI_SPEC section 6). While the TUNING page shows, the cymbal
+// and its OpenGL drawing stop, and the hits are taken from the processor and dropped; back on
+// the CYMBAL page, the cymbal shows its state now (no hit replayed). While the CYMBAL page
+// shows, the panel's timer stops (TuningPanel::visibilityChanged).
+void Content::showPage (int pg)
+{
+    closePopup();
+    page = juce::jlimit (0, 1, pg);
+    processor.setEditorPage (page);
+    if (! cymbalPage() && tuningPanel == nullptr)
+    {
+        tuningPanel = std::make_unique<tuning::TuningPanel> (processor, assets);
+        addChildComponent (*tuningPanel);
+        layoutTuningPanel();
+    }
+    hitTracker->setPaused (! cymbalPage()); // before the cymbal shows again: at rest
+    if (cymbalPage())
+        shownOpening = -1.0f; // the hats and the pedal at the pedal's opening now
+    applyPage();
+    repaint();
+}
+
+// The panel keeps the size it had in the window: it is laid out and drawn at one pixel per
+// pixel, in the page area's rectangle on screen (whole pixels), not scaled with the editor.
+// Its transform takes it from there back into design units, so that this component's transform
+// leaves it unscaled; its layout follows the rectangle's width.
+void Content::layoutTuningPanel()
+{
+    if (tuningPanel == nullptr)
+        return;
+    const auto t = getTransform(); // design units -> the editor's pixels
+    const auto area = kTuningPageArea.toFloat();
+    const auto tl = area.getTopLeft().transformedBy (t), br = area.getBottomRight().transformedBy (t);
+    const int x = juce::roundToInt (tl.x), y = juce::roundToInt (tl.y);
+    const int w = juce::roundToInt (br.x) - x, h = juce::roundToInt (br.y) - y;
+    tuningPanel->setTransform (juce::AffineTransform::translation ((float) x, (float) y).followedBy (t.inverted()));
+    tuningPanel->setBounds (0, 0, juce::jmax (1, w), juce::jmax (1, h));
+    tuningPanelArea = getLocalArea (tuningPanel.get(), tuningPanel->getLocalBounds()).reduced (1);
 }
 #endif
 
@@ -1097,14 +1187,22 @@ void Content::openPedalMenu()
 
 void Content::paint (juce::Graphics& g)
 {
+#if CYMBALIS_TUNING
+    // On the TUNING page, a repaint within the panel (its meters, its list) is the panel's alone:
+    // it is opaque and drawn over this.
+    if (! cymbalPage() && tuningPanel != nullptr && tuningPanelArea.contains (g.getClipBounds()))
+        return;
+#endif
     // The cymbal area is its own (opaque) component, CymbalView.
     g.fillAll (palette::background);
     g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
     if (assets.background.isValid())
         g.drawImage (assets.background, getLocalBounds().toFloat());
-    paintLines (g);
+    if (cymbalPage())
+        paintLines (g);
     paintLabels (g);
-    paintRows (g);
+    if (cymbalPage())
+        paintRows (g);
 }
 
 void Content::paintLines (juce::Graphics& g)
@@ -1142,11 +1240,14 @@ void Content::paintLabels (juce::Graphics& g)
     const auto channelInk = inkBounds (assets.font (kHeaderSize, 3.11f), "MIDI CHANNEL");
     header ("MIDI CHANNEL", kChannelLabelRight - channelInk.getWidth(), kChannelBox.toFloat().getCentreY() - channelInk.getHeight() * 0.5f,
             3.11f, palette::label);
-    header ("STICK ARTICULATION", 1201.0f, 98.0f, 3.29f, palette::label);
-    header ("MIDI NOTE", 1424.0f, 98.0f, 3.00f, palette::label);
+    if (cymbalPage())
+    {
+        header ("STICK ARTICULATION", 1201.0f, 98.0f, 3.29f, palette::label);
+        header ("MIDI NOTE", 1424.0f, 98.0f, 3.00f, palette::label);
+    }
 
     // Knob headers; while a knob is dragged its readout replaces its header. The Blend Position
-    // knobs' with them (hidden on the hi-hat).
+    // knobs' with them (hidden on the hi-hat), and all of them with the CYMBAL page.
     const auto& preset = kPresets[(size_t) processor.presetIndex()];
     for (size_t i = 0; i < knobSpecs.size(); ++i)
     {
@@ -1168,7 +1269,7 @@ void Content::paintLabels (juce::Graphics& g)
     }
 
     // BLEND POSITION 1 runs from the preset's bell rows (BELL; CENTER on STINE FLAT RIDE) to BOW.
-    if (preset.blendKnobs)
+    if (preset.blendKnobs && cymbalPage())
     {
         small (preset.blend1Left, 1249.0f, 720.0f, 3.33f);
         small ("BOW", 1409.0f, 720.0f, 2.88f);
@@ -1179,8 +1280,9 @@ void Content::paintLabels (juce::Graphics& g)
     // L and R under Pan, each centred 73 units either side of its knob.
     const auto rowFont = assets.font (kRowSize);
     const float panX = knobSpecs[4].centre.x;
-    for (auto [text, x] : { std::pair<const char*, float> { "L", panX - 73.0f }, { "R", panX + 73.0f } })
-        drawInkText (g, rowFont, text, { x - inkBounds (rowFont, text).getWidth() * 0.5f, 958.0f }, palette::secondary);
+    if (cymbalPage())
+        for (auto [text, x] : { std::pair<const char*, float> { "L", panX - 73.0f }, { "R", panX + 73.0f } })
+            drawInkText (g, rowFont, text, { x - inkBounds (rowFont, text).getWidth() * 0.5f, 958.0f }, palette::secondary);
 
     // The DHammers logo: a vertical gradient over its ink, top to bottom.
     if (! logoPath.isEmpty())
@@ -1270,6 +1372,7 @@ void CymbalisEditor::resized()
     content->setTransform (juce::AffineTransform::scale (scale).translated (
         ((float) getWidth() - scale * (float) kDesignWidth) * 0.5f, ((float) getHeight() - scale * (float) kDesignHeight) * 0.5f));
     content->setBounds (0, 0, kDesignWidth, kDesignHeight);
+    content->editorResized();
     if (sizeIsSet)
         processorRef.setEditorSize (getWidth(), getHeight());
 }

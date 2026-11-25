@@ -12,7 +12,7 @@
 #if CYMBALIS_TUNING
 namespace cymbalis::tuning
 {
-class TuningWindow;
+class TuningPanel;
 }
 #endif
 
@@ -224,6 +224,10 @@ public:
     // Called by the editor's timer: picks up notes learnt on the audio thread and pulses LEARN.
     void refresh();
 
+    // Called by the editor when its size, and so this component's transform, changes: the
+    // TUNING page's panel follows the page area on screen (UI_SPEC section 6).
+    void editorResized();
+
 private:
     struct KnobSpec
     {
@@ -253,6 +257,13 @@ private:
     void paintLines (juce::Graphics& g);
     juce::Rectangle<int> rowLabelArea (int slot) const;
 
+    // The pages (UI_SPEC section 6): with the tuning code, CYMBAL (0) and TUNING (1), chosen by
+    // the tabs; without it, only the CYMBAL page. applyPage() shows the open page's components
+    // (those of the preset) and hides the other's.
+    bool cymbalPage() const noexcept { return page == 0; }
+    void applyPage();
+    int page = 0;
+
     CymbalisProcessor& processor;
     Assets assets;
 
@@ -268,11 +279,15 @@ private:
 
     DropdownBox presetBox, channelBox;
 #if CYMBALIS_TUNING
-    // A click on the CYMBALIS title (the background's logo, top left) opens and closes the
-    // Tuning window.
-    class TitleButton;
-    std::unique_ptr<TitleButton> titleButton;
-    void toggleTuningWindow (bool open);
+    // The CYMBAL and TUNING tabs (left column), and the TUNING page's panel: made when the page
+    // first opens, kept until the editor closes, and drawn at one pixel per pixel in the page
+    // area's rectangle on screen (layoutTuningPanel), not scaled with the editor.
+    class TabButton;
+    std::array<std::unique_ptr<TabButton>, 2> tabs;
+    std::unique_ptr<tuning::TuningPanel> tuningPanel;
+    juce::Rectangle<int> tuningPanelArea; // the panel's area in design units, rounded inwards
+    void showPage (int page);
+    void layoutTuningPanel();
 #endif
     std::array<std::unique_ptr<NoteBox>, kNumSlots> noteBoxes;
     std::array<std::unique_ptr<StickBox>, kNumSlots> stickBoxes;
@@ -294,9 +309,6 @@ private:
     juce::String shownError;
     int shownLearn = -1;
     double learnStartMs = 0.0;
-#if CYMBALIS_TUNING
-    std::unique_ptr<tuning::TuningWindow> tuningWindow; // a click on the CYMBALIS title
-#endif
 };
 
 } // namespace cymbalis::ui

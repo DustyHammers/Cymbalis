@@ -681,8 +681,8 @@ static juce::String noteKey (int preset, int slot)
 }
 
 // The parameters, plus the session settings that are not automatable: MIDI channel, pedal CC,
-// note per slot (the cymbals' and the hi-hat's), stick per slot and preset, preset and editor
-// size (UI_SPEC section 9).
+// note per slot (the cymbals' and the hi-hat's), stick per slot and preset, preset, editor
+// size and the editor's page (UI_SPEC section 9).
 void CymbalisProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
@@ -707,6 +707,7 @@ void CymbalisProcessor::getStateInformation (juce::MemoryBlock& destData)
     session->setAttribute ("editorWidth", editorWidth.load());
     session->setAttribute ("editorHeight", editorHeight.load());
 #if CYMBALIS_TUNING
+    session->setAttribute ("editorPage", openPage.load());
     writeTuningState (*session);
 #endif
     copyXmlToBinary (*xml, destData);
@@ -738,6 +739,9 @@ void CymbalisProcessor::setStateInformation (const void* data, int sizeInBytes)
                     setSlotStick (k, i, stick == "TIP" ? cymbalis::Stick::tip : cymbalis::Stick::shoulder);
                 }
         setEditorSize (session->getIntAttribute ("editorWidth", 0), session->getIntAttribute ("editorHeight", 0));
+#if CYMBALIS_TUNING
+        setEditorPage (session->getIntAttribute ("editorPage", 0)); // none: the CYMBAL page
+#endif
         auto id = session->getStringAttribute ("preset", cymbalis::kPresets[0].id);
         for (const auto& f : kFormerPresets)
             if (id == f.id)
