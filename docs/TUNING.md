@@ -410,7 +410,7 @@ Nothing clicks: the source modes are scaled down and the target modes raised acr
 With amount 0 the cascade is skipped entirely: nothing is measured or computed, and every preset plays exactly as before. In the panel it is the **ENERGY CASCADE** group of the whole-cymbal part.
 
 Limits:
-- Energy goes only to modes that are ringing. Silent modes (below the skip threshold of 1e-9 × level) receive none, and a band with no ringing mode takes no energy.
+- Energy goes only to modes that are ringing. Silent modes (below the skip threshold, 140 dB under a full hit since 2026-11-25; `docs/PORT_MAP.md`, "One silence rule") receive none, and a band with no ringing mode takes no energy.
 - The moved energy is held by one strike component of the engine's pool of 24. When the pool holds 24 strikes and none of them has settled (dense playing, every strike still in its onset), nothing moves for that control point.
 - During a strike's contact (NOVA RIDE only, about 0.3 ms) nothing moves.
 
