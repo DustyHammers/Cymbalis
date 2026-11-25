@@ -246,7 +246,8 @@ jobs:
       # shows the values that act on it and hides the others; on the TUNING page, STINE FLAT RIDE
       # chosen in the CYMBAL box must show in the panel, a session saved on the page must reopen on
       # it (VST3), and the editor resized by the host must keep the panel's text size and fit it to
-      # the page area (both after the drags below, which did nothing after either); the CYMBAL tab
+      # the page area (VST3: the AU host's resize does not reach the plugin's editor; both after the
+      # drags below, which did nothing after either); the CYMBAL tab
       # shows the CYMBAL page again, and the TUNING tab the panel; on the CYMBAL page, the editor's
       # resizer dragged
       # to its limits (960 x 640, 1536 x 1024, 3:2 in between), and a session saved at another size reopening at it (VST3)
