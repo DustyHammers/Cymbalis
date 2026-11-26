@@ -386,6 +386,9 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
 #endif
     auto* engine = current != nullptr ? current->engine.get() : nullptr;
     const bool playing = engine != nullptr && engine->isPrepared();
+    // The sizzle chain: the current preset's switch, every block (a new cymbal takes it at once).
+    if (engine != nullptr && engine->hasChain())
+        engine->setChain (chainSwitch[(size_t) current->preset].load());
 
     const int ch = channel.load();
     const double sens = velocitySensitivity->load();
@@ -440,9 +443,13 @@ void CymbalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             engine->process (left + pos, right + pos, n - pos);
         if (engine->isHiHat())
             pedalShown.store ((float) engine->pedalOpenness()); // for the editor's hats and pedal
+        chainShown.store (engine->hasChain() && engine->chainOn() ? engine->chainEnvelope() : 0.0f); // the chain's drawing
     }
     else
+    {
         buffer.clear (0, n);
+        chainShown.store (0.0f);
+    }
 
     if (fading != nullptr)
     {
@@ -680,6 +687,12 @@ static juce::String noteKey (int preset, int slot)
            + cymbalis::kSlots[(size_t) slot].label;
 }
 
+bool CymbalisProcessor::presetHasChain (int preset) const noexcept
+{
+    const auto& b = presets[(size_t) preset].bake;
+    return b != nullptr && b->chain.present;
+}
+
 // The parameters, plus the session settings that are not automatable: MIDI channel, pedal CC,
 // note per slot (the cymbals' and the hi-hat's), stick per slot and preset, preset, editor
 // size and the editor's page (UI_SPEC section 9).
@@ -704,6 +717,9 @@ void CymbalisProcessor::getStateInformation (juce::MemoryBlock& destData)
         for (int i = 0; i < cymbalis::kNumSlots; ++i)
             if (cymbalis::hasStickChoice (k, i))
                 session->setAttribute (stickKey (k, i), cymbalis::stickName (slotStick (k, i)));
+    for (int k = 0; k < cymbalis::kNumPresets; ++k) // the sizzle chain's switch, per preset that has one
+        if (presetHasChain (k))
+            session->setAttribute (juce::String ("chain_") + cymbalis::kPresets[(size_t) k].id, chainOn (k) ? 1 : 0);
     session->setAttribute ("editorWidth", editorWidth.load());
     session->setAttribute ("editorHeight", editorHeight.load());
 #if CYMBALIS_TUNING
@@ -738,6 +754,9 @@ void CymbalisProcessor::setStateInformation (const void* data, int sizeInBytes)
                                                      cymbalis::stickName (cymbalis::kPresets[(size_t) k].slots[(size_t) i].defaultStick));
                     setSlotStick (k, i, stick == "TIP" ? cymbalis::Stick::tip : cymbalis::Stick::shoulder);
                 }
+        for (int k = 0; k < cymbalis::kNumPresets; ++k) // none in the session: off
+            if (presetHasChain (k))
+                setChainOn (k, session->getIntAttribute (juce::String ("chain_") + cymbalis::kPresets[(size_t) k].id, 0) != 0);
         setEditorSize (session->getIntAttribute ("editorWidth", 0), session->getIntAttribute ("editorHeight", 0));
 #if CYMBALIS_TUNING
         setEditorPage (session->getIntAttribute ("editorPage", 0)); // none: the CYMBAL page

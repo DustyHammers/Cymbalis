@@ -222,7 +222,9 @@ juce::String scrollList (const Page& page, int lines)
 }
 
 // The list scrolled to its top, then down until an element showing `text` is between 25 % and
-// 75 % of the page area's height from its top: that element, or nil and what failed.
+// 75 % of the page area's height from its top (or, with the list at its top, above that: a row
+// at the top of the list, such as the SIZZLE CHAIN header's boxes, comes no lower): that element,
+// or nil and what failed.
 id scrollToShow (const Page& page, NSString* text, bool prefix, juce::String& error)
 {
     for (int i = 0; i < 80; ++i)
@@ -234,7 +236,7 @@ id scrollToShow (const Page& page, NSString* text, bool prefix, juce::String& er
         if (id e = findShowing (page.window, text, prefix))
         {
             const double fromTop = (NSMaxY (content) - NSMidY ([e accessibilityFrame])) / NSHeight (content);
-            if (fromTop >= 0.25 && fromTop <= 0.75)
+            if ((fromTop >= 0.25 && fromTop <= 0.75) || (i == 0 && fromTop >= 0.0 && fromTop < 0.25))
                 return e;
         }
         if ((error = scrollList (page, -2)).isNotEmpty())

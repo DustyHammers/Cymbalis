@@ -1,6 +1,8 @@
 #include "TuningFields.h"
 
 #include <cmath>
+#include <iterator>
+#include <type_traits>
 
 
 namespace cymbalis::tuning
@@ -20,6 +22,7 @@ const char* groupName (Group g)
         case Group::cascade: return "ENERGY CASCADE";
         case Group::loudDamping: return "LOUD-BAND DAMPING";
         case Group::rehitDamping: return "RE-HIT DAMPING";
+        case Group::chain: return "SIZZLE CHAIN";
     }
     return "";
 }
@@ -34,6 +37,7 @@ bool applies (Needs needs, const BakeData& b)
         case Needs::bandEnvelope: return b.edgeNpz.present || b.hihat.present;
         case Needs::positions: return ! b.hihat.present;
         case Needs::hihat: return b.hihat.present;
+        case Needs::chain: return b.chain.present;
         case Needs::noVelocityTables:
             if (b.hihat.present)
                 return false; // the hi-hat's strikes do not take the hertz velocity law
@@ -63,10 +67,43 @@ juce::String scopeNames (Scope scope, const BakeData& b)
     return names.joinIntoString (", ");
 }
 
+namespace
+{
+// The sizzle chain's rows after the others: ChainSettings.h's keys, members and ranges, in its
+// order, with what the page shows for each.
+std::vector<Field> withChainFields (std::vector<Field> fields)
+{
+    struct Shown
+    {
+        const char* label;
+        const char* unit;
+        int decimals;
+    };
+    static constexpr Shown shown[] {
+        { "SIZZLE LEVEL", "dB", 1 },
+        { "EDGE DRIVE", "dB", 1 },
+        { "BOW DRIVE", "dB", 1 },
+        { "BELL DRIVE", "dB", 1 },
+        { "VELOCITY EFFECT (0 = none)", "", 2 },
+        { "STOPS AT (below a full hit)", "dB", 1 },
+        { "SWING (with the cymbal's motion)", "", 2 },
+        { "DAMPING (mostly high frequencies)", "", 2 },
+    };
+    static_assert (std::size (shown) == std::tuple_size_v<std::decay_t<decltype (chainKeys())>>);
+    for (size_t i = 0; i < chainKeys().size(); ++i)
+    {
+        const auto& k = chainKeys()[i];
+        fields.push_back ({ k.key, shown[i].label, shown[i].unit, Group::chain, Needs::chain, k.lo, k.hi, shown[i].decimals,
+                            static_cast<double CymbalTuning::*> (k.member), false });
+    }
+    return fields;
+}
+} // namespace
+
 const std::vector<Field>& cymbalFields()
 {
     using C = CymbalTuning;
-    static const std::vector<Field> fields {
+    static const std::vector<Field> fields = withChainFields ({
         { "output_gain_db", "Output gain", "dB", Group::cymbal, Needs::always, -24.0, 12.0, 1, &C::outputGainDb, false },
         { "edge_velocity_remap_exponent", "Edge capture curve", "", Group::cymbal, Needs::npzEdge, 0.25, 2.0, 2, &C::edgeRemapExponent, false, Scope::edge },
         { "tau_ref_ms", "Bow brightness vs velocity (tau_ref)", "ms", Group::cymbal, Needs::noVelocityTables, 0.05, 8.0, 2, &C::tauRefMs, false, Scope::hertz },
@@ -128,7 +165,7 @@ const std::vector<Field>& cymbalFields()
 
         { "rehit_damp_amount", "Amount (0 = off)", "", Group::rehitDamping, Needs::always, 0.0, 1.0, 2, &C::rehitDampAmount, false },
         { "rehit_damp_time_ms", "Time", "ms", Group::rehitDamping, Needs::always, 1.0, 50.0, 1, &C::rehitDampTimeMs, false },
-    };
+    });
     return fields;
 }
 
@@ -417,6 +454,8 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
             for (const auto& f : cymbalFields())
                 if (key == f.key)
                 {
+                    if (f.needs == Needs::chain && ! applies (f.needs, b))
+                        return key + ": this preset has no sizzle chain.";
                     t.cymbal.*(f.member) = (double) p.value;
                     known = true;
                 }
@@ -496,6 +535,9 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
     if (! (t.cymbal.hhSplashWindowMs >= kHhSplashWindowMin && t.cymbal.hhSplashWindowMs <= kHhSplashWindowMax)
         || ! (t.cymbal.hhSplashReopen >= kHhSplashReopenMin && t.cymbal.hhSplashReopen <= kHhSplashReopenMax))
         return "The tuning file's hh_splash_window_ms must lie in 50 to 400 ms and hh_splash_reopen in 5 to 80 %.";
+    for (const auto& k : chainKeys())
+        if (! (t.cymbal.*(k.member) >= k.lo && t.cymbal.*(k.member) <= k.hi))
+            return "The tuning file's " + juce::String (k.key) + " must lie in " + juce::String (k.lo) + " to " + juce::String (k.hi) + ".";
     for (size_t s = 0; s < b.slots.size(); ++s)
         for (double w : { t.articulations[s].stickBowWeight, t.articulations[s].stickBellWeight, t.articulations[s].stickEdgeWeight })
             if (! (w >= 0.0 && w <= kStickWeightMax))

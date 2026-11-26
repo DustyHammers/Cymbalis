@@ -75,6 +75,28 @@ private:
     bool updating = false;
 };
 
+// The SIZZLE CHAIN group's header (docs/UI_SPEC.md section 6, "Pages"): drawn like a part
+// header (its band, bronze rule and name, the subtitle in the subtitle colour), with CHAIN and an
+// OFF | ON pair of boxes at its right, drawn like the stick boxes. The boxes show and set the
+// preset's chain switch (session state, not a tuning value).
+class ChainHeader final : public juce::Component
+{
+public:
+    explicit ChainHeader (const TuningLookAndFeel& laf);
+
+    void setOn (bool on);
+    bool isOn() const { return onBox->getToggleState(); }
+    std::function<void (bool)> onSwitch;
+
+    void paint (juce::Graphics& g) override;
+    void resized() override;
+    static constexpr int height = 56;
+
+private:
+    const TuningLookAndFeel& laf;
+    std::unique_ptr<juce::Button> offBox, onBox;
+};
+
 // A labelled action: a note on the left, a button on the right.
 class ButtonRow final : public juce::Component
 {
@@ -231,6 +253,7 @@ private:
     std::vector<std::unique_ptr<ButtonRow>> buttonRows;
     std::vector<std::function<void()>> refreshers; // one per row: shows its current value
     std::unique_ptr<ToggleRow> restartRow, envelopeRow, highPassRow, hitVariationRow, freeRingRow;
+    std::unique_ptr<ChainHeader> chainHeader; // the presets with a sizzle chain only
     std::unique_ptr<BandEq> bandEq;
     TuningLookAndFeel bandLook; // the whole-cymbal band rows' numbers and labels
     std::vector<std::unique_ptr<BandRow>> cymbalBandRows;

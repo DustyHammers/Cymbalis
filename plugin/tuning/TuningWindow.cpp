@@ -147,7 +147,81 @@ public:
         g.fillPath (head);
     }
 };
+// One of the SIZZLE CHAIN header's OFF | ON boxes, drawn like a stick box: a 2 px border
+// #463C30 (bronze under the pointer) and dim text; the active one with border #A5A299 and bright
+// text. Its accessible title is "CHAIN OFF" or "CHAIN ON".
+class ChainBox final : public juce::Button
+{
+public:
+    ChainBox (const juce::String& t, const TuningLookAndFeel& l) : juce::Button (t), laf (l) { setTitle ("CHAIN " + t); }
+    void paintButton (juce::Graphics& g, bool over, bool) override
+    {
+        using namespace ui::palette;
+        const bool active = getToggleState();
+        g.setColour (active ? openOutline : (over ? bronze : rowOutline));
+        g.drawRect (getLocalBounds(), 2);
+        g.setColour (active ? label : secondary);
+        g.setFont (laf.font (kTextSize));
+        g.drawText (getButtonText(), getLocalBounds(), juce::Justification::centred);
+    }
+
+private:
+    const TuningLookAndFeel& laf;
+};
 } // namespace
+
+ChainHeader::ChainHeader (const TuningLookAndFeel& l) : laf (l)
+{
+    offBox = std::make_unique<ChainBox> ("OFF", laf);
+    onBox = std::make_unique<ChainBox> ("ON", laf);
+    offBox->setToggleState (true, juce::dontSendNotification);
+    for (auto* box : { offBox.get(), onBox.get() })
+    {
+        box->onClick = [this, box] {
+            if (onSwitch)
+                onSwitch (box == onBox.get());
+        };
+        addAndMakeVisible (*box);
+    }
+}
+
+void ChainHeader::setOn (bool on)
+{
+    onBox->setToggleState (on, juce::dontSendNotification);
+    offBox->setToggleState (! on, juce::dontSendNotification);
+}
+
+void ChainHeader::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().withTrimmedTop (14);
+    g.setColour (ui::palette::popup);
+    g.fillRect (r);
+    g.setColour (ui::palette::bronze);
+    g.fillRect (r.removeFromTop (2));
+    r.reduce (10, 0);
+    const juce::String name ("SIZZLE CHAIN");
+    g.setColour (ui::palette::label);
+    g.setFont (laf.font (19.0f));
+    const int w = (int) laf.font (19.0f).getStringWidthFloat (name) + 16;
+    g.drawText (name, r.removeFromLeft (w), juce::Justification::centredLeft);
+    r.setRight (offBox->getX() - 10);
+    const juce::String chain ("CHAIN");
+    g.setFont (laf.font (kTextSize));
+    const int cw = (int) laf.font (kTextSize).getStringWidthFloat (chain) + 12;
+    g.drawText (chain, r.removeFromRight (cw), juce::Justification::centredRight);
+    g.setColour (ui::palette::bronze);
+    g.drawText ("STINE, HAMMERED THIN, SWISH, RAVEN and EXTRA PAPER THIN only", r, juce::Justification::centredLeft, true);
+}
+
+void ChainHeader::resized()
+{
+    // In line with the rows' reset buttons at the right.
+    auto r = getLocalBounds().withTrimmedTop (16).reduced (4, 0); // the band under the bronze rule
+    r = r.withSizeKeepingCentre (r.getWidth(), 26);
+    onBox->setBounds (r.removeFromRight (56));
+    r.removeFromRight (4);
+    offBox->setBounds (r.removeFromRight (56));
+}
 
 ValueRow::ValueRow (const juce::String& n, const juce::String& u, double lo, double hi, int decimals, bool onRelease,
                     double st, bool band)
@@ -604,6 +678,7 @@ void TuningPanel::rebuild()
     highPassRow.reset();
     hitVariationRow.reset();
     freeRingRow.reset();
+    chainHeader.reset();
     bandEq.reset();
     cymbalBandRows.clear();
     list.removeAllChildren();
@@ -627,8 +702,35 @@ void TuningPanel::rebuild()
         list.addAndMakeVisible (*h);
         headers.push_back (std::move (h));
     };
+    // A cymbal value row: its slider, numeric entry and reset.
+    auto addCymbalRow = [&] (const Field& f, const juce::String& name) {
+        auto row = std::make_unique<ValueRow> (name, f.unit, f.lo, f.hi, f.decimals, f.rebuild, f.step, f.band);
+        auto* r = row.get();
+        const auto member = f.member;
+        row->onChange = [this, member] (double v) { change ([&] (Tuning& t) { t.cymbal.*member = v; }); };
+        refreshers.push_back ([this, r, member] { r->setValues (processor.tuning (preset).cymbal.*member, bake->tuning.cymbal.*member); });
+        place (*row);
+        rows.push_back (std::move (row));
+    };
     if (bake != nullptr)
     {
+        // The sizzle chain, at the top (its presets only): the switch in the group's header, then
+        // its eight values.
+        if (applies (Needs::chain, *bake))
+        {
+            chainHeader = std::make_unique<ChainHeader> (lookAndFeel);
+            chainHeader->onSwitch = [this] (bool on) {
+                processor.setChainOn (preset, on);
+                chainHeader->setOn (on);
+            };
+            chainHeader->setBounds (0, y, 10, ChainHeader::height);
+            y += ChainHeader::height;
+            list.addAndMakeVisible (*chainHeader);
+            for (const auto& f : cymbalFields())
+                if (f.group == Group::chain)
+                    addCymbalRow (f, f.label);
+            y += 4;
+        }
         // Articulations: one bake entry each.
         addPart ("ARTICULATIONS", "affects only this articulation");
         for (size_t s = 0; s < bake->slots.size(); ++s)
@@ -807,16 +909,7 @@ void TuningPanel::rebuild()
                     place (*highPassRow);
                 }
                 const auto acts = scopeNames (f.scope, *bake);
-                auto row = std::make_unique<ValueRow> (juce::String (f.label) + (acts.isEmpty() ? "" : ": " + acts), f.unit,
-                                                       f.lo, f.hi, f.decimals, f.rebuild, f.step, f.band);
-                auto* r = row.get();
-                const auto member = f.member;
-                row->onChange = [this, member] (double v) { change ([&] (Tuning& t) { t.cymbal.*member = v; }); };
-                refreshers.push_back ([this, r, member] {
-                    r->setValues (processor.tuning (preset).cymbal.*member, bake->tuning.cymbal.*member);
-                });
-                place (*row);
-                rows.push_back (std::move (row));
+                addCymbalRow (f, juce::String (f.label) + (acts.isEmpty() ? "" : ": " + acts));
             }
             if (group != Group::stereo)
                 addBandRows();
@@ -862,6 +955,8 @@ void TuningPanel::showValues()
         hitVariationRow->setValues (processor.tuning (preset).cymbal.hitVariation, bake->tuning.cymbal.hitVariation);
     if (freeRingRow != nullptr && bake != nullptr)
         freeRingRow->setValues (processor.tuning (preset).cymbal.hhFreeRing, bake->tuning.cymbal.hhFreeRing);
+    if (chainHeader != nullptr)
+        chainHeader->setOn (processor.chainOn (preset));
     modified = bake != nullptr && isModified (*bake, processor.tuning (preset));
     repaint (0, 0, getWidth(), kTopHeight);
 }
@@ -977,6 +1072,8 @@ void TuningPanel::timerCallback()
 {
     if (processor.presetIndex() != preset)
         rebuild();
+    if (chainHeader != nullptr && chainHeader->isOn() != processor.chainOn (preset)) // a session restored
+        chainHeader->setOn (processor.chainOn (preset));
     meters = processor.readMeters();
     const double now = juce::Time::getMillisecondCounterHiRes();
     if (meters.outPeak >= heldPeak || now - heldAt > 1500.0)

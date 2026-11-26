@@ -7,6 +7,8 @@
 // not implement yet (anything after stage 2). Every problem throws BakeError.
 #pragma once
 
+#include <cstdint>
+
 #include "Json.h"
 #include "Pcg64.h"
 #include "Tuning.h"
@@ -238,6 +240,18 @@ struct BakeData
 
     EdgeNpz edgeNpz;
     HiHatData hihat;
+    // The sizzle chain (docs/PORT_MAP.md, "Sizzle chain"; SizzleChain.h): the presets whose bake has
+    // a chain block (STINE FLAT RIDE, HAMMERED THIN RIDE, SWISH, RAVEN, EXTRA PAPER THIN 24") have a
+    // chain. refMs: the mean square of the output's 40-1000 Hz band 0.3-1.0 s after a lone BOW
+    // strike at velocity 0.9, the chain's damping on, before the output gain (tools/cymbalis_trims
+    // --chain-ref, stored by tools/set_chain_ref.py; 0: not measured, no sizzle); seed: its random
+    // generator's, per preset.
+    struct ChainData
+    {
+        bool present = false;
+        double refMs = 0.0;
+        std::uint64_t seed = 0;
+    } chain;
 
     EngineParams params;
 

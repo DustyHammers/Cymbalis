@@ -7,6 +7,7 @@
 // functions, so what it plays is what the plugin plays from the tuned bake.
 #pragma once
 
+#include "ChainSettings.h"
 #include "Json.h"
 
 #include <array>
@@ -92,8 +93,9 @@ struct ArticulationTuning
 
 constexpr int kMaxArticulations = 8;
 
-// Per cymbal. The defaults are the values of a bake without a tuning block.
-struct CymbalTuning
+// Per cymbal. The defaults are the values of a bake without a tuning block. The sizzle chain's
+// eight values are its own small struct (ChainSettings.h), kept as they are inside it.
+struct CymbalTuning : ChainSettings
 {
     double outputGainDb = 0.0;       // whole preset
     double edgeRemapExponent = 0.5;  // NPZ velocity remap of edge strikes (0.5: sqrt)

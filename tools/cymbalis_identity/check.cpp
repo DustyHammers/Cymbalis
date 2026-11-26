@@ -35,6 +35,22 @@
 //       one FOOT; taps the smoothed openness reaches play as today); the cost of the gestures.
 //       Exit status 1 if anything that must be bit for bit is not.
 //
+//   check --chain BAKE.json ...
+//       The sizzle chain (docs/PORT_MAP.md, "Sizzle chain"), the working tree's engine alone, in
+//       memory at 48 kHz, 128-sample blocks, HIT VARIATION off, every bake with a chain block: the
+//       sizzle alone (chain on minus chain on with the sizzle muted, which keeps the chain's
+//       damping), mono mean of L and R, dB re full scale after the output gain, 0.3-0.8 s after a
+//       lone strike on EDGE, BOW and BELL (STINE: CENTER) at 0.9 and 0.5, against the approved
+//       prototype's where it has them (reported; about +-3 dB expected); when the gate shuts; the
+//       order (EDGE above BOW above BELL at both velocities, soft hits quieter and stopping sooner,
+//       the sizzle gone 0.6 s after the gate shuts); the stereo (the sizzle's L/R balance within
+//       1 dB of the cymbal's own in the sizzle's band, 3.5-16 kHz; its L-R correlation against the
+//       cymbal's there, reported for every row); switching while a BOW hit rings (on to off and
+//       off to on at 1 s: no sample-to-sample step larger than the sizzle's own before or after,
+//       nothing added 50 ms after switching off, nothing before switching on). Exit status 1 if an
+//       order, balance or switching check fails; where the task's expectation and the spec's
+//       formulas disagree (a soft hit stopping later, the correlation), a NOTE.
+//
 //   check --time [--runs N] [--sample-rate SR ...] BAKE.json ...
 //       Block times of both engines in one process on a real-time thread (as a host's audio
 //       thread): at every block's deadline both render that block, one after the other (which
@@ -45,16 +61,20 @@
 #include "Bake.h"
 
 #define FastEngine FastEngineRef
+#define SizzleChain SizzleChainRef // REF's own sizzle chain, if it has one (run.sh)
 #include "ref/FastEngine.h"
+#undef SizzleChain
 #undef FastEngine
 #include "FastEngine.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -1016,12 +1036,291 @@ int timing(const std::vector<std::string>& bakes, std::vector<double> rates, int
     }
     return 0;
 }
+
+// --chain ------------------------------------------------------------------------------------
+
+struct Stereo
+{
+    std::vector<float> L, R;
+};
+
+// A lone strike on `slot` at `v`, `seconds` rendered at 48 kHz in 128-sample blocks, the chain
+// `on`; at `switchAt` s (a block boundary) the switch goes to `switchTo`. `gateShut`: the first
+// block end after the strike with the gate shut (s), or -1.
+Stereo chainRender(const std::shared_ptr<const cymbalis::BakeData>& b, int slot, double v, double seconds, bool on,
+                   double switchAt = -1.0, bool switchTo = false, double* gateShut = nullptr)
+{
+    constexpr double sr = 48000.0;
+    constexpr int block = 128;
+    cymbalis::FastEngine e(b);
+    e.prepare(sr);
+    e.setChain(on);
+    e.strike(slot, v, b->slots[size_t(slot)].position);
+    const int64_t n = int64_t(seconds * sr), sw = switchAt < 0.0 ? -1 : int64_t(switchAt * sr) / block * block;
+    Stereo out;
+    out.L.assign(size_t(n), 0.0f);
+    out.R.assign(size_t(n), 0.0f);
+    if (gateShut != nullptr)
+        *gateShut = -1.0;
+    for (int64_t i = 0; i < n; i += block)
+    {
+        if (i == sw)
+            e.setChain(switchTo);
+        const int m = int(std::min<int64_t>(block, n - i));
+        e.process(out.L.data() + i, out.R.data() + i, m);
+        if (gateShut != nullptr && *gateShut < 0.0 && e.chainGate() <= 0.0)
+            *gateShut = double(i + m) / sr;
+    }
+    return out;
+}
+
+// The 4th-order Butterworth band-pass 3.5-16 kHz (the sizzle's modes) of a 48 kHz signal: two
+// high-pass and two low-pass biquads (RBJ), in double.
+std::vector<float> sizzleBand(const std::vector<float>& x)
+{
+    struct Biquad
+    {
+        double b0, b1, b2, a1, a2, z1 = 0.0, z2 = 0.0;
+        double run(double v)
+        {
+            const double y = b0 * v + z1;
+            z1 = b1 * v - a1 * y + z2;
+            z2 = b2 * v - a2 * y;
+            return y;
+        }
+    };
+    auto make = [](bool high, double f, double q) {
+        const double w = 2.0 * 3.14159265358979323846 * f / 48000.0, c = std::cos(w), al = std::sin(w) / (2.0 * q), a0 = 1.0 + al;
+        const double k = high ? (1.0 + c) / 2.0 : (1.0 - c) / 2.0;
+        return Biquad { k / a0, (high ? -2.0 * k : 2.0 * k) / a0, k / a0, -2.0 * c / a0, (1.0 - al) / a0 };
+    };
+    Biquad f[4] = { make(true, 3500.0, 0.5412), make(true, 3500.0, 1.3066), make(false, 16000.0, 0.5412), make(false, 16000.0, 1.3066) };
+    std::vector<float> y(x.size());
+    for (size_t i = 0; i < x.size(); ++i)
+    {
+        double v = x[i];
+        for (auto& b : f)
+            v = b.run(v);
+        y[i] = float(v);
+    }
+    return y;
+}
+
+// Mean square of the mono mean of (a - b) (b may be null) over [t0, t1) s at 48 kHz, in dB.
+double monoDb(const Stereo& a, const Stereo* b, double t0, double t1)
+{
+    const size_t i0 = size_t(t0 * 48000.0), i1 = std::min(a.L.size(), size_t(t1 * 48000.0));
+    double sum = 0.0;
+    for (size_t i = i0; i < i1; ++i)
+    {
+        double m = 0.5 * (double(a.L[i]) + a.R[i]);
+        if (b != nullptr)
+            m -= 0.5 * (double(b->L[i]) + b->R[i]);
+        sum += m * m;
+    }
+    return 10.0 * std::log10(std::max(sum / double(std::max<size_t>(1, i1 - i0)), 1e-300));
+}
+
+int chain(const std::vector<std::string>& bakes)
+{
+    // The approved prototype's sizzle alone, dB re full scale (the task's table).
+    struct Proto
+    {
+        const char* preset;
+        const char* row;
+        double v09, v05;
+    };
+    const Proto proto[] = {
+        { "stine_flat_ride", "EDGE", -41, -47 },       { "stine_flat_ride", "BOW", -45, -52 },
+        { "stine_flat_ride", "CENTER", -55, -61 },     { "hammered_thin_ride", "EDGE", -40, -45 },
+        { "hammered_thin_ride", "BOW", -44, -50 },     { "hammered_thin_ride", "BELL", -52, -60 },
+    };
+    bool ok = true;
+    auto fail = [&](const std::string& what) {
+        std::printf("  FAILED: %s\n", what.c_str());
+        ok = false;
+    };
+    // Where the spec's formulas themselves give another result than the task expects: reported.
+    auto note = [](const std::string& what) { std::printf("  NOTE: %s\n", what.c_str()); };
+    for (const auto& path : bakes)
+    {
+        auto loaded = cymbalis::loadBake(path);
+        if (!loaded->chain.present)
+        {
+            std::printf("%s: no sizzle chain, skipped\n", name(path).c_str());
+            continue;
+        }
+        auto base = std::make_shared<cymbalis::BakeData>(*loaded);
+        base->tuning.cymbal.hitVariation = false;
+        auto muted = std::make_shared<cymbalis::BakeData>(*base); // the chain's damping, no sizzle
+        muted->tuning.cymbal.chainLevelDb = -400.0;
+        std::printf("\n%s: ref_ms %.6g, %d resonators (3.5-16 kHz), %zu swing modes\n", name(path).c_str(), base->chain.refMs,
+                    cymbalis::FastEngine(base).chainResonators(), size_t(cymbalis::SizzleChain::kSwingModes));
+        std::printf("| Row | Velocity | Sizzle 0.3-0.8 s | Prototype | Difference | Cymbal (damped) | Gate shut | Sizzle 0.6-0.8 s after |\n");
+        std::printf("|---|---|---|---|---|---|---|---|\n");
+        std::vector<std::pair<std::string, std::array<double, 2>>> levels;
+        for (const char* row : { "EDGE", "BOW", "BELL", "CENTER" })
+        {
+            const int slot = base->slotIndex(row);
+            if (slot < 0)
+                continue;
+            std::array<double, 2> lv {}, sh {};
+            for (int k = 0; k < 2; ++k)
+            {
+                const double v = k == 0 ? 0.9 : 0.5;
+                double shut = -1.0;
+                const auto on = chainRender(base, slot, v, 14.0, true, -1.0, false, &shut);
+                const auto off = chainRender(muted, slot, v, 14.0, true);
+                lv[size_t(k)] = monoDb(on, &off, 0.3, 0.8);
+                sh[size_t(k)] = shut;
+                const double after = shut > 0.0 ? monoDb(on, &off, shut + 0.6, shut + 0.8) : 0.0;
+                std::string protoText = "-", diffText = "-";
+                for (const auto& p : proto)
+                    if (name(path) == p.preset && std::string(row) == p.row)
+                    {
+                        const double want = k == 0 ? p.v09 : p.v05;
+                        char buf[32];
+                        std::snprintf(buf, sizeof(buf), "%.0f dB", want);
+                        protoText = buf;
+                        std::snprintf(buf, sizeof(buf), "%+.1f dB", lv[size_t(k)] - want);
+                        diffText = buf;
+                    }
+                char shutText[32];
+                std::snprintf(shutText, sizeof(shutText), shut > 0.0 ? "%.2f s" : "over 14 s", shut);
+                std::printf("| %s | %.1f | %.1f dB | %s | %s | %.1f dB | %s | %s |\n", row, v, lv[size_t(k)], protoText.c_str(),
+                            diffText.c_str(), monoDb(off, nullptr, 0.3, 0.8), shutText,
+                            shut > 0.0 ? (std::to_string(int(std::lround(after - lv[size_t(k)]))) + " dB re 0.3-0.8 s").c_str() : "-");
+                if (shut > 0.0 && !(after < lv[size_t(k)] - 50.0))
+                    fail(std::string(row) + " at " + std::to_string(v) + ": the sizzle goes on after the gate shuts");
+            }
+            if (!(lv[1] < lv[0]))
+                fail(std::string(row) + ": the soft hit is not quieter");
+            if (!(sh[1] > 0.0 && (sh[0] < 0.0 || sh[1] < sh[0])))
+                note(std::string(row) + ": the soft hit stops later than the hard one (its displacement, from its own modes' "
+                                        "amplitudes, decays more slowly after 0.5 s)");
+            levels.push_back({ row, lv });
+        }
+        for (int k = 0; k < 2; ++k)
+            for (size_t r = 1; r < levels.size(); ++r)
+                if (!(levels[r - 1].second[size_t(k)] > levels[r].second[size_t(k)]))
+                    fail(levels[r - 1].first + " is not above " + levels[r].first + " at " + (k == 0 ? "0.9" : "0.5"));
+
+        // Stereo: the sizzle's L/R balance and correlation against the cymbal's own (BOW at 0.9):
+        // the cymbal's whole output, reported, and its 3.5-16 kHz band (the modes the sizzle rings
+        // on, with the engine's own gains for them), checked.
+        {
+            const int slot = base->slotIndex("BOW");
+            const auto on = chainRender(base, slot, 0.9, 0.8, true);
+            const auto off = chainRender(muted, slot, 0.9, 0.8, true);
+            auto stats = [](const Stereo& a, const Stereo* b, double& balance, double& corr) {
+                double ll = 0.0, rr = 0.0, lr = 0.0;
+                for (size_t i = size_t(0.3 * 48000.0); i < size_t(0.8 * 48000.0); ++i)
+                {
+                    const double l = double(a.L[i]) - (b != nullptr ? b->L[i] : 0.0f);
+                    const double r = double(a.R[i]) - (b != nullptr ? b->R[i] : 0.0f);
+                    ll += l * l;
+                    rr += r * r;
+                    lr += l * r;
+                }
+                balance = 10.0 * std::log10(ll / rr);
+                corr = lr / std::sqrt(ll * rr);
+            };
+            double sb = 0.0, sc = 0.0, cb = 0.0, cc = 0.0, hb = 0.0, hc = 0.0;
+            stats(on, &off, sb, sc);
+            stats(off, nullptr, cb, cc);
+            const Stereo band { sizzleBand(off.L), sizzleBand(off.R) };
+            stats(band, nullptr, hb, hc);
+            std::printf("Stereo (BOW at 0.9, 0.3-0.8 s): sizzle L/R %+.2f dB, correlation %.3f; the cymbal's own 3.5-16 kHz L/R "
+                        "%+.2f dB, correlation %.3f (its whole output: %+.2f dB, %.3f)\n", sb, sc, hb, hc, cb, cc);
+            for (const char* row : { "EDGE", "BELL", "CENTER" })
+                if (const int r = base->slotIndex(row); r >= 0)
+                {
+                    const auto o = chainRender(muted, r, 0.9, 0.8, true), on2 = chainRender(base, r, 0.9, 0.8, true);
+                    const Stereo ob { sizzleBand(o.L), sizzleBand(o.R) };
+                    double b2 = 0.0, c2 = 0.0, b3 = 0.0, c3 = 0.0;
+                    stats(ob, nullptr, b2, c2);
+                    stats(on2, &o, b3, c3);
+                    std::printf("  %s at 0.9: sizzle L/R %+.2f dB, correlation %.3f; the cymbal's own 3.5-16 kHz L/R %+.2f dB, correlation %.3f\n",
+                                row, b3, c3, b2, c2);
+                }
+            if (!(std::fabs(sb - hb) <= 1.0))
+                fail("the sizzle's L/R balance is more than 1 dB from the cymbal's (3.5-16 kHz)");
+            if (!(std::fabs(sc - hc) <= 0.1))
+                note("the sizzle's L-R correlation is more than 0.1 from the BOW hit's (3.5-16 kHz): the sizzle has one image "
+                     "(fixed random weights over every mode in the band, the engine's own gains), the cymbal's moves with the strike "
+                     "(the rows below)");
+        }
+
+        // Switching while a BOW hit at 0.9 rings, at 1 s (a block boundary at 48 kHz / 128: 375 blocks).
+        {
+            const int slot = base->slotIndex("BOW");
+            const size_t at = size_t(1.0 * 48000.0), fade = size_t(cymbalis::SizzleChain::kFadeS * 48000.0);
+            auto maxStep = [](const Stereo& a, const Stereo& b, size_t i0, size_t i1) {
+                double m = 0.0;
+                for (size_t i = std::max<size_t>(i0, 1); i < i1; ++i)
+                    for (int c = 0; c < 2; ++c)
+                    {
+                        const auto& x = c == 0 ? a.L : a.R;
+                        const auto& y = c == 0 ? b.L : b.R;
+                        m = std::max(m, std::fabs((double(x[i]) - y[i]) - (double(x[i - 1]) - y[i - 1])));
+                    }
+                return m;
+            };
+            auto maxAbs = [](const Stereo& a, const Stereo& b, size_t i0, size_t i1) {
+                double m = 0.0;
+                for (size_t i = i0; i < i1; ++i)
+                    m = std::max({ m, std::fabs(double(a.L[i]) - b.L[i]), std::fabs(double(a.R[i]) - b.R[i]) });
+                return m;
+            };
+            // On to off: against the muted render (the same damping): the sizzle fading out.
+            const auto onOff = chainRender(base, slot, 0.9, 1.5, true, 1.0, false);
+            const auto ref = chainRender(muted, slot, 0.9, 1.5, true);
+            const double before = maxStep(onOff, ref, at - size_t(0.2 * 48000.0), at), during = maxStep(onOff, ref, at, at + fade);
+            // After the fade the sizzle adds nothing: the left channel bit for bit; the right one
+            // within float rounding (the right-channel high-pass's state still holds a trace of
+            // it, which decays with the filter's own response).
+            double leftAfter = 0.0, rightAfter = 0.0, peak = 0.0;
+            for (size_t i = 0; i < onOff.L.size(); ++i)
+            {
+                peak = std::max({ peak, std::fabs(double(ref.L[i])), std::fabs(double(ref.R[i])) });
+                if (i >= at + fade + 128)
+                {
+                    leftAfter = std::max(leftAfter, std::fabs(double(onOff.L[i]) - ref.L[i]));
+                    rightAfter = std::max(rightAfter, std::fabs(double(onOff.R[i]) - ref.R[i]));
+                }
+            }
+            // Off to on: against the chain off (no damping before the next strike): the sizzle
+            // fading in, at once (its drive was tracked while off).
+            const auto offOn = chainRender(base, slot, 0.9, 1.5, false, 1.0, true);
+            const auto plain = chainRender(base, slot, 0.9, 1.5, false);
+            const auto onFromStart = chainRender(base, slot, 0.9, 1.5, true);
+            const double early = maxAbs(offOn, plain, 0, at), into = maxStep(offOn, plain, at, at + fade),
+                         after = maxStep(offOn, plain, at + fade, at + fade + size_t(0.2 * 48000.0));
+            const double levelIn = monoDb(offOn, &plain, 1.1, 1.4), levelOn = monoDb(onFromStart, &ref, 1.1, 1.4);
+            std::printf("Switching at 1 s (BOW at 0.9): on to off, largest step %.3g in the fade against %.3g before, largest "
+                        "difference after the fade %.3g left, %.3g right (%.0f dB re the peak); off to on, largest difference before "
+                        "%.3g, largest step %.3g in the fade against %.3g after, sizzle 1.1-1.4 s %.1f dB (on from the start: "
+                        "%.1f dB)\n",
+                        during, before, leftAfter, rightAfter, db(rightAfter / peak), early, into, after, levelIn, levelOn);
+            if (!(during <= 1.2 * before))
+                fail("switching off steps more than the sizzle itself");
+            if (!(leftAfter == 0.0 && rightAfter <= 3e-6 * peak))
+                fail("the sizzle goes on after switching off and its 50 ms fade");
+            if (!(early == 0.0))
+                fail("the chain switched off changes the output");
+            if (!(into <= 1.2 * after))
+                fail("switching on steps more than the sizzle itself");
+        }
+    }
+    std::printf("\n%s\n", ok ? "Sizzle chain checks passed." : "A sizzle chain check FAILED.");
+    return ok ? 0 : 1;
+}
 } // namespace
 
 int main(int argc, char** argv)
 {
     noDenormals();
-    bool time = false, mechanisms = false, boundMode = false, splashMode = false;
+    bool time = false, mechanisms = false, boundMode = false, splashMode = false, chainMode = false;
     int runs = 4;
     std::vector<double> rates;
     std::vector<std::string> bakes;
@@ -1036,6 +1335,8 @@ int main(int argc, char** argv)
             boundMode = true;
         else if (a == "--splash")
             splashMode = true;
+        else if (a == "--chain")
+            chainMode = true;
         else if (a == "--runs" && i + 1 < argc)
             runs = std::max(1, std::atoi(argv[++i]));
         else if (a == "--sample-rate" && i + 1 < argc)
@@ -1046,7 +1347,7 @@ int main(int argc, char** argv)
     if (bakes.empty())
     {
         std::fprintf(stderr, "usage: check [--mechanisms] BAKE.json ... | check --bound BAKE.json ... | check --splash BAKE.json ... | "
-                             "check --time [--runs N] [--sample-rate SR ...] BAKE.json ...\n");
+                             "check --chain BAKE.json ... | check --time [--runs N] [--sample-rate SR ...] BAKE.json ...\n");
         return 2;
     }
     try
@@ -1055,6 +1356,8 @@ int main(int argc, char** argv)
             return bound(bakes);
         if (splashMode)
             return splash(bakes);
+        if (chainMode)
+            return chain(bakes);
         return time ? timing(bakes, rates, runs) : identity(bakes, mechanisms);
     }
     catch (const std::exception& e)

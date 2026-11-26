@@ -10,9 +10,20 @@
 namespace cymbalis
 {
 
+namespace
+{
+// The sizzle chain's values (ChainSettings.h, its presets only) after the others, with their own keys.
+std::vector<CymbalKey> withChainKeys (std::vector<CymbalKey> keys)
+{
+    for (const auto& c : chainKeys())
+        keys.push_back ({ c.key, static_cast<double CymbalTuning::*> (c.member) });
+    return keys;
+}
+} // namespace
+
 const std::vector<CymbalKey>& cymbalKeys()
 {
-    static const std::vector<CymbalKey> keys {
+    static const std::vector<CymbalKey> keys = withChainKeys ({
         { "output_gain_db", &CymbalTuning::outputGainDb },
         { "edge_velocity_remap_exponent", &CymbalTuning::edgeRemapExponent },
         { "tau_ref_ms", &CymbalTuning::tauRefMs },
@@ -65,7 +76,7 @@ const std::vector<CymbalKey>& cymbalKeys()
         { "rehit_damp_time_ms", &CymbalTuning::rehitDampTimeMs },
         { "stereo_width", &CymbalTuning::stereoWidth },
         { "right_highpass_hz", &CymbalTuning::highPassHz },
-    };
+    });
     return keys;
 }
 
@@ -561,6 +572,8 @@ Tuning parseTuningBlock(const json::Value& block, const BakeData& b, const Tunin
     if (! (t.cymbal.hhSplashWindowMs >= kHhSplashWindowMin && t.cymbal.hhSplashWindowMs <= kHhSplashWindowMax)
         || ! (t.cymbal.hhSplashReopen >= kHhSplashReopenMin && t.cymbal.hhSplashReopen <= kHhSplashReopenMax))
         throw std::runtime_error("tuning: hh_splash_window_ms must lie in 50 to 400 and hh_splash_reopen in 5 to 80");
+    if (! chainSettingsValid (t.cymbal))
+        throw std::runtime_error("tuning: a chain_ value lies outside its range (ChainSettings.h)");
     for (int s = 0; s < t.numArticulations && s < kMaxArticulations; ++s)
     {
         const ArticulationTuning& a = t.articulations[size_t(s)];

@@ -1,7 +1,7 @@
 // Dense.cpp — cymbalis_bench --dense: FastEngine's block times in dense playing.
 //
 //   cymbalis_bench --dense --bake BAKE.json [--bake ...] [--sample-rate SR ...] [--block N ...]
-//                  [--runs 3] [--lead 1] [--seconds 4] [--ftz-off] [--free] [--normal-priority]
+//                  [--runs 3] [--lead 1] [--seconds 4] [--ftz-off] [--free] [--normal-priority] [--chain]
 //
 // A strike every 24 ms, cycling through the bake's slots at their default positions with
 // velocities cycling 0.95, 0.4, 0.8, 0.6, 1.0, 0.3, 0.7, rendered block by block in real time
@@ -19,6 +19,8 @@
 // bake's seed), so block i of every run does the same work: the smallest of the runs' times
 // for block i is the engine's own cost, and a block slow in one run only is the machine's.
 // --ftz-off adds each bake at the first rate and block size with denormals not flushed.
+// --chain plays with the sizzle chain on (docs/PORT_MAP.md, "Sizzle chain"); every bake must have
+// one, and the cases are marked "(chain)".
 //
 // For each case: block time median, p99, p99.9 and worst (and the worst against the block's
 // budget), over the smallest-of-the-runs series and over every run; the same for the blocks
@@ -165,6 +167,7 @@ struct Options
     bool ftzOff = false;
     bool paced = true;
     bool realtime = true;
+    bool chain = false;    // the sizzle chain on
 };
 
 struct Case
@@ -211,6 +214,7 @@ Run runOnce(const std::shared_ptr<const cymbalis::BakeData>& bake, const Case& c
     r.realtime = o.realtime && makeRealtime(1000.0 * c.block / c.rate);
     cymbalis::FastEngine engine(bake);
     engine.prepare(c.rate);
+    engine.setChain(o.chain);
     r.pool = engine.isHiHat() ? FastEngine::kMaxPool : FastEngine::kMaxComponents;
     const int slots = engine.numSlots();
     // The hi-hat's pedal: a CC on a 10 ms grid (Dense.h).
@@ -383,8 +387,8 @@ std::string stem(const std::string& path)
 std::string caseName(const Options& o, const Case& c)
 {
     char buf[160];
-    std::snprintf(buf, sizeof(buf), "%s %.1f kHz / %d%s", stem(o.bakes[c.bake]).c_str(), c.rate / 1000.0, c.block,
-                  c.ftz ? "" : " (FTZ off)");
+    std::snprintf(buf, sizeof(buf), "%s%s %.1f kHz / %d%s", stem(o.bakes[c.bake]).c_str(), o.chain ? " (chain)" : "",
+                  c.rate / 1000.0, c.block, c.ftz ? "" : " (FTZ off)");
     return buf;
 }
 
@@ -632,11 +636,13 @@ int runDense(int argc, char** argv)
             o.paced = false;
         else if (a == "--normal-priority")
             o.realtime = false;
+        else if (a == "--chain")
+            o.chain = true;
         else
         {
             std::fprintf(stderr, "usage: cymbalis_bench --dense --bake BAKE.json [--bake ...] [--sample-rate SR ...] "
                                  "[--block N ...] [--runs 3] [--lead 1] [--seconds 4] [--ftz-off] [--free] "
-                                 "[--normal-priority]\n");
+                                 "[--normal-priority] [--chain]\n");
             return 2;
         }
     }
@@ -649,7 +655,11 @@ int runDense(int argc, char** argv)
 
     std::vector<std::shared_ptr<const cymbalis::BakeData>> bakes;
     for (const auto& path : o.bakes)
+    {
         bakes.push_back(cymbalis::loadBake(path));
+        if (o.chain && !bakes.back()->chain.present)
+            throw std::runtime_error(stem(path) + " has no sizzle chain (--chain)");
+    }
     std::vector<Case> cases;
     for (size_t b = 0; b < bakes.size(); ++b)
         for (const double rate : o.rates)
@@ -674,10 +684,11 @@ int runDense(int argc, char** argv)
 
     std::printf("Dense playing on %s: a strike every %.0f ms, slots in turn at their default positions, velocities "
                 "0.95 0.4 0.8 0.6 1.0 0.3 0.7; %.0f s timed after %.0f s; %d runs per case, the cases in turn; %s; "
-                "audio thread %s; denormals flushed unless marked.%s\n",
+                "audio thread %s; denormals flushed unless marked.%s%s\n",
                 machine().c_str(), 1000.0 * o.every, o.seconds, o.lead, o.runs,
                 o.paced ? "each block waits for its deadline (real time)" : "blocks back to back",
                 realtime ? "real-time" : "at normal priority (real-time not permitted)",
+                o.chain ? " The sizzle chain on." : "",
 #if CYMBALIS_ENGINE_PROFILE
                 " Profile build: the engine's parts are timed, which adds to every time."
 #else

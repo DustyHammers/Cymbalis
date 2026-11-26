@@ -8,9 +8,14 @@
 # for a change meant to differ only far below hearing, the bounds of check.cpp's --bound instead
 # of bit-identity (docs/PORT_MAP.md, "One silence rule: 140 dB below a full hit").
 #
-#   tools/cymbalis_identity/run.sh [--ref REF] [--build DIR] [--arch arm64|x86_64] [--time [--runs N] | --bound | --splash]
+#   tools/cymbalis_identity/run.sh [--ref REF] [--build DIR] [--arch arm64|x86_64] [--time [--runs N] | --bound | --splash | --chain]
 #
 # --splash: the hi-hat's foot splash and fast-tap FOOT against REF (check.cpp's --splash).
+# --chain: the sizzle chain's levels, order, stereo and switching, the working tree's engine
+# alone (check.cpp's --chain), on the bakes with a chain block.
+#
+# The sizzle chain (plugin/dsp/SizzleChain.cpp) is compiled with each engine that has it; REF's
+# with its class renamed, as its FastEngine.
 #
 # On a Mac, --arch x86_64 checks the Intel slice (under Rosetta on Apple Silicon).
 set -euo pipefail
@@ -21,6 +26,7 @@ ARCH=""
 TIME=()
 BOUND=0
 SPLASH=0
+CHAIN=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --ref) REF=$2; shift 2 ;;
@@ -30,7 +36,8 @@ while [ $# -gt 0 ]; do
     --runs) TIME+=(--runs "$2"); shift 2 ;;
     --bound) BOUND=1; shift ;;
     --splash) SPLASH=1; shift ;;
-    *) echo "usage: $0 [--ref REF] [--build DIR] [--arch arm64|x86_64] [--time [--runs N] | --bound | --splash]" >&2; exit 2 ;;
+    --chain) CHAIN=1; shift ;;
+    *) echo "usage: $0 [--ref REF] [--build DIR] [--arch arm64|x86_64] [--time [--runs N] | --bound | --splash | --chain]" >&2; exit 2 ;;
   esac
 done
 
@@ -41,6 +48,12 @@ trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/ref"
 git -C "$ROOT" show "$REF:plugin/dsp/FastEngine.cpp" > "$TMP/ref/FastEngine.cpp"
 git -C "$ROOT" show "$REF:plugin/dsp/FastEngine.h" > "$TMP/ref/FastEngine.h"
+REF_CHAIN=0
+if git -C "$ROOT" cat-file -e "$REF:plugin/dsp/SizzleChain.cpp" 2>/dev/null; then
+  git -C "$ROOT" show "$REF:plugin/dsp/SizzleChain.cpp" > "$TMP/ref/SizzleChain.cpp"
+  git -C "$ROOT" show "$REF:plugin/dsp/SizzleChain.h" > "$TMP/ref/SizzleChain.h"
+  REF_CHAIN=1
+fi
 
 CXX=${CXX:-clang++}
 FLAGS=(-std=gnu++17 -O3 -DNDEBUG -ffp-contract=fast -fno-fast-math -DCYMBALIS_TUNING=1 -I"$ROOT/plugin/dsp")
@@ -53,12 +66,22 @@ if [ -n "$ARCH" ]; then
   fi
 fi
 
-# REF's engine with its class renamed; its own FastEngine.h is found next to it first.
-"$CXX" "${FLAGS[@]}" -DFastEngine=FastEngineRef -c "$TMP/ref/FastEngine.cpp" -o "$TMP/ref.o" &
+# REF's engine with its class renamed; its own FastEngine.h (and SizzleChain.h) is found next to
+# it first.
+OBJS=("$TMP/check.o" "$TMP/ref.o" "$TMP/new.o")
+"$CXX" "${FLAGS[@]}" -DFastEngine=FastEngineRef -DSizzleChain=SizzleChainRef -c "$TMP/ref/FastEngine.cpp" -o "$TMP/ref.o" &
 "$CXX" "${FLAGS[@]}" -c "$ROOT/plugin/dsp/FastEngine.cpp" -o "$TMP/new.o" &
 "$CXX" "${FLAGS[@]}" -I"$TMP" -c "$ROOT/tools/cymbalis_identity/check.cpp" -o "$TMP/check.o" &
+if [ -f "$ROOT/plugin/dsp/SizzleChain.cpp" ]; then
+  "$CXX" "${FLAGS[@]}" -c "$ROOT/plugin/dsp/SizzleChain.cpp" -o "$TMP/chain.o" &
+  OBJS+=("$TMP/chain.o")
+fi
+if [ "$REF_CHAIN" = 1 ]; then
+  "$CXX" "${FLAGS[@]}" -DSizzleChain=SizzleChainRef -c "$TMP/ref/SizzleChain.cpp" -o "$TMP/refchain.o" &
+  OBJS+=("$TMP/refchain.o")
+fi
 wait
-"$CXX" ${ARCH:+-arch "$ARCH"} "$TMP/check.o" "$TMP/ref.o" "$TMP/new.o" "$BUILD/plugin/dsp/libcymbalis_engine.a" -o "$TMP/check"
+"$CXX" ${ARCH:+-arch "$ARCH"} "${OBJS[@]}" "$BUILD/plugin/dsp/libcymbalis_engine.a" -o "$TMP/check"
 
 # Every bake REF's engine can play: a preset newer than REF (the hi-hat, with its own strike
 # model, before it was added) is left out and named.
@@ -72,7 +95,9 @@ for B in "$ROOT"/resources/presets/*.bake.json; do
 done
 echo "FastEngine of the working tree against $REF ($(git -C "$ROOT" rev-parse --short "$REF"))${ARCH:+, $ARCH}"
 # ${a[@]+"${a[@]}"}: an empty array under set -u in bash 3.2 (macOS).
-if [ "$SPLASH" = 1 ]; then
+if [ "$CHAIN" = 1 ]; then
+  ${RUN[@]+"${RUN[@]}"} "$TMP/check" --chain "${BAKES[@]}"
+elif [ "$SPLASH" = 1 ]; then
   ${RUN[@]+"${RUN[@]}"} "$TMP/check" --splash "${BAKES[@]}"
 elif [ "$BOUND" = 1 ]; then
   ${RUN[@]+"${RUN[@]}"} "$TMP/check" --bound "${BAKES[@]}"

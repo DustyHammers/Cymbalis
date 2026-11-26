@@ -117,8 +117,8 @@ jobs:
         run: build/shared/dhpool/dhpool_selftest
 
       # CPU cost of the real-time engine on this runner (Apple Silicon), every slot playing (on
-      # HI-HAT with the pedal moving: cymbalis_bench). Printed to the log and the job summary
-      # only; nothing is uploaded.
+      # HI-HAT with the pedal moving: cymbalis_bench), then the five presets with a sizzle chain
+      # with it on (--chain). Printed to the log and the job summary only; nothing is uploaded.
       - name: CPU benchmark (fast engine, all slots playing)
         run: |
           CPU=$(sysctl -n machdep.cpu.brand_string)
@@ -134,17 +134,28 @@ jobs:
               echo
               "$BENCH" --bake "$BAKE" --seconds 60 --block 64 --sample-rate 48000
             done
+            for PRESET in stine_flat_ride hammered_thin_ride swish raven paperthin; do
+              BAKE="resources/presets/${PRESET}.bake.json"
+              echo
+              echo "#### ${PRESET}, sizzle chain on"
+              echo
+              "$BENCH" --bake "$BAKE" --seconds 60 --block 256 --chain
+              echo
+              "$BENCH" --bake "$BAKE" --seconds 60 --block 64 --sample-rate 48000 --chain
+            done
           } | tee -a "$GITHUB_STEP_SUMMARY"
           test "${PIPESTATUS[0]}" -eq 0
 
       # The engine's block times in dense playing (a strike every 24 ms, every preset, HI-HAT with
       # its pedal moving, 44.1 and 96 kHz, 128- and 64-sample blocks, real-time thread, each case three times in turn),
       # then where strike() and the slowest blocks spend their time (profile build, blocks back
-      # to back). Printed to the log and the job summary only; nothing is uploaded.
+      # to back); then the five presets with a sizzle chain with it on (--chain, one run per case).
+      # Printed to the log and the job summary only; nothing is uploaded. About 11.5 minutes
+      # without the chain's cases (run 45846077160), about 2 more with them.
       # On request only (full_tests) or on a v* tag.
       - name: Engine block times in dense playing
         if: (github.event_name == 'workflow_dispatch' && inputs.full_tests) || startsWith(github.ref, 'refs/tags/v')
-        timeout-minutes: 15
+        timeout-minutes: 18
         run: |
           BAKES=()
           for PRESET in nova_ride stine_flat_ride hammered_thin_ride swish raven paperthin konstan azcrash hihat; do
@@ -158,6 +169,14 @@ jobs:
             echo "### Engine parts in dense playing (profile build)"
             echo
             build/tools/cymbalis_bench/cymbalis_bench_profile --dense "${BAKES[@]}" --runs 1 --sample-rate 44100 --block 128 --free
+            CHAIN=()
+            for PRESET in stine_flat_ride hammered_thin_ride swish raven paperthin; do
+              CHAIN+=(--bake "resources/presets/${PRESET}.bake.json")
+            done
+            echo
+            echo "### Engine block times in dense playing, sizzle chain on"
+            echo
+            build/tools/cymbalis_bench/cymbalis_bench --dense "${CHAIN[@]}" --chain --runs 1
           } | tee -a "$GITHUB_STEP_SUMMARY"
           test "${PIPESTATUS[0]}" -eq 0
 
@@ -312,14 +331,15 @@ jobs:
       # (tools/cymbalis_uitest).
       # 65 steps in each host took about 2.6 minutes per host on the runner (59 took 4.8 minutes in
       # all with EXTRA PAPER THIN 24"); 68 with the editor's sizes took under 8 minutes; 72 with STINE FLAT RIDE's took
-      # 6 minutes in all; 76 with the TUNING page's, within 10; 77 with the splash's.
+      # 6 minutes in all; 76 with the TUNING page's, within 10; 77 with the splash's took 6.5 minutes in
+      # all; 83 with the sizzle chain's (its switch and two values, in the session and a tuning file).
       # On request only (full_tests) or on a v* tag.
       - name: Editor mouse test (AU and VST3)
         if: (github.event_name == 'workflow_dispatch' && inputs.full_tests) || startsWith(github.ref, 'refs/tags/v')
         timeout-minutes: 10
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
-          STEPS="opensize edge sticks channel drag reset none edgereset list stick preset shoulder swish raven paperthin konstan azcrash hihat blendhidden hihatplay hihatpedal hihatswing pedalchannel pedalcc konstan blendshown wheel arcs tuning wheeltuning voice raven voice swish voice profile paperthin voice ptprofile savetuning loadtuning azcrash voice azprofile savetuning loadtuning preset voice stine stinerows smokesession voice savetuning loadtuning nova noprofile nohihatvalues clickweights hitvariation savetuning loadtuning hihat hihattuning hihatvalues hihatopen hihatsplash savetuning loadtuning tuningpreset tuningclose tuning tuningclose dragsize tuning tuningresize savedpage savedsize"
+          STEPS="opensize edge sticks channel drag reset none edgereset list stick preset shoulder swish raven paperthin konstan azcrash hihat blendhidden hihatplay hihatpedal hihatswing pedalchannel pedalcc konstan blendshown wheel arcs tuning wheeltuning voice raven voice swish voice profile paperthin voice ptprofile savetuning loadtuning azcrash voice azprofile savetuning loadtuning preset voice stine stinerows smokesession voice savetuning loadtuning chain chainvalues savetuning loadtuning chainsession nova noprofile nohihatvalues nochain clickweights hitvariation savetuning loadtuning hihat hihattuning hihatvalues hihatopen hihatsplash savetuning loadtuning tuningpreset tuningclose tuning tuningclose dragsize tuning tuningresize savedpage savedsize"
           echo "--- VST3 ---"
           "$UITEST" "$PWD/$VST3" $STEPS
           echo "--- AU ---"

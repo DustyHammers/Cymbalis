@@ -39,6 +39,10 @@ tuning block it already has). Then:
     tuning block;
   * HIT VARIATION (hit_variation on / off, hit_position_spread, hit_velocity_spread_pct) goes
     into the tuning block where it differs from off, 0.04 and 3 %;
+  * the sizzle chain's values (chain_level_db, chain_edge_db, chain_bow_db, chain_bell_db,
+    chain_velocity, chain_stop_db, chain_swing, chain_damping; bakes with a chain block only) go
+    into the tuning block where they differ from their defaults (0, +6, 0, -10 dB, 1.0, -28 dB,
+    1.2, 0.35); the chain's on/off switch is session state and no tuning file holds it;
   * every other value that differs from the bake's own value goes into the bake's
     "tuning" block, which the plugin's bake loader applies; per-band cymbal values
     (ring_length_bands, stereo_pan_bands, stereo_width_bands) as 22 values. The plugin's own mechanisms (energy cascade
@@ -82,6 +86,8 @@ CYMBAL_KEYS = [
     'loud_damp_amount', 'loud_damp_threshold_db', 'loud_damp_tilt',
     'rehit_damp_amount', 'rehit_damp_time_ms',
     'stereo_width', 'right_highpass_hz',
+    'chain_level_db', 'chain_edge_db', 'chain_bow_db', 'chain_bell_db',
+    'chain_velocity', 'chain_stop_db', 'chain_swing', 'chain_damping',
 ]
 # The plugin's own whole-cymbal mechanisms (plugin/dsp/Tuning.h): their neutral values (the
 # bake's own) and allowed ranges; (lo, hi, whole) with whole = a whole number.
@@ -111,6 +117,15 @@ PLUGIN_KEYS = {
     'rehit_damp_time_ms': (10.0, (1.0, 50.0, False)),
     'stereo_width': (100.0, (0.0, 200.0, False)),
     'right_highpass_hz': (120.0, (20.0, 300.0, False)),
+    # The sizzle chain (plugin/dsp/ChainSettings.h): its defaults, the same on every preset.
+    'chain_level_db': (0.0, (-20.0, 12.0, False)),
+    'chain_edge_db': (6.0, (-30.0, 12.0, False)),
+    'chain_bow_db': (0.0, (-30.0, 12.0, False)),
+    'chain_bell_db': (-10.0, (-30.0, 12.0, False)),
+    'chain_velocity': (1.0, (0.0, 2.0, False)),
+    'chain_stop_db': (-28.0, (-50.0, -10.0, False)),
+    'chain_swing': (1.2, (0.0, 3.0, False)),
+    'chain_damping': (0.35, (0.0, 1.0, False)),
 }
 # Re-hit damping weight of each articulation, {id: weight}; neutral 1.
 WEIGHTS_KEY = 'rehit_damp_weights'
@@ -125,6 +140,9 @@ HITVAR_KEY = 'hit_variation'          # HIT VARIATION on or off (the bake's own:
 FREE_RING_KEY = 'hh_free_ring'
 HIHAT_KEYS = ('hh_tip_open_level', 'hh_tip_open_tick_db', 'hh_ring_floor', FREE_RING_KEY, 'hh_tip_modes_db', 'hh_max_open',
               'hh_splash_window_ms', 'hh_splash_reopen')
+# The sizzle chain's values (bakes with a chain block only: STINE FLAT RIDE, HAMMERED THIN RIDE,
+# SWISH, RAVEN, EXTRA PAPER THIN 24"). Its on/off switch is session state, not in tuning files.
+CHAIN_KEYS = tuple(k for k in PLUGIN_KEYS if k.startswith('chain_'))
 # Per-band cymbal values (22 values, lowest band first): name -> (range, unit, neutral value).
 CYMBAL_BAND_KEYS = {
     'ring_length_bands': ((0.25, 4.0), 'x', 1.0),
@@ -370,6 +388,8 @@ def main():
             fail(f'{VOICE_KEY}: the bake has no NPZ edge data')
         if key in HIHAT_KEYS and not bake.get('hihat'):
             fail(f'{key}: the bake is not the hi-hat')
+        if key in CHAIN_KEYS and not bake.get('chain'):
+            fail(f'{key}: the bake has no sizzle chain')
         if key in (RESTART_KEY, ENVELOPE_KEY, HIGHPASS_KEY, HITVAR_KEY, FREE_RING_KEY):
             if not isinstance(v, bool):
                 fail(f'{key} must be true or false')

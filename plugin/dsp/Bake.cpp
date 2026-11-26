@@ -622,6 +622,23 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
                 throw BakeError("hihat: the hi-hat bake must have no NPZ edge data, contact or onset ramp");
             readHiHat(*hh, b, b.hihat, rep);
         }
+        // The sizzle chain: its ref_ms (measured; null until then) and its seed.
+        if (const json::Value* ch = root.find("chain"); ch != nullptr && !ch->isNull())
+        {
+            if (b.hihat.present)
+                throw BakeError("chain: the hi-hat has no sizzle chain");
+            b.chain.present = true;
+            const json::Value* ref = ch->find("ref_ms");
+            b.chain.refMs = ref != nullptr && !ref->isNull() ? ref->number() : 0.0;
+            if (!std::isfinite(b.chain.refMs) || b.chain.refMs < 0.0)
+                throw BakeError("chain.ref_ms must be a finite value >= 0");
+            const double seed = ch->at("seed").number();
+            if (!(seed >= 0.0 && seed < 9007199254740992.0) || seed != std::floor(seed))
+                throw BakeError("chain.seed must be a whole number from 0 to 2^53");
+            b.chain.seed = static_cast<std::uint64_t>(seed);
+            rep.push_back("chain        sizzle chain, ref_ms " + (b.chain.refMs > 0.0 ? fmt("%.6g", b.chain.refMs) : std::string("not measured")) +
+                          ", seed " + std::to_string(b.chain.seed));
+        }
         if (ep.mfDepth > 0.0)
         {
             if (sh.at("mf_bandpass").isNull())

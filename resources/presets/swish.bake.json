@@ -1358,5 +1358,17 @@
         "stick_decay_ms": 5.0
       }
     }
+  },
+  "chain": {
+    "seed": 5980940787981537,
+    "ref_ms": 0.00286683,
+    "measured_by": "tools/cymbalis_trims --chain-ref (FastEngine)",
+    "sample_rate": 44100,
+    "slot": "BOW",
+    "position": 0.5,
+    "velocity": 0.9,
+    "band_hz": [40,1000],
+    "window_s": [0.3,1],
+    "output_gain_db": -11.0
   }
 }

@@ -42,6 +42,16 @@
 // skip_threshold_rel = 10^((peak dB re level - 140) / 20), the threshold being
 // skip_threshold_rel x calibration x trim. With --json, written for tools/set_skip_thresholds.py,
 // which stores the factors in the bake.
+//
+//   cymbalis_trims --bake BAKE.json --chain-ref [--json CHAIN.json]
+//
+// The sizzle chain's reference level instead (docs/PORT_MAP.md, "Sizzle chain"; the bake needs a
+// chain block, tools/set_chain_ref.py --init): ref_ms, the mean square of the output's 40-1000 Hz
+// band (4th-order Butterworth high-pass at 40 Hz and low-pass at 1 kHz, mono mean of L and R)
+// 0.3-1.0 s after a lone BOW strike at velocity 0.9 at its base position, with the chain on (its
+// damping; no sizzle, which lies above 3.5 kHz) and HIT VARIATION off, the bake's trims and
+// tuning as played, divided by the output gain squared (the sizzle passes through the output
+// gain as the cymbal does). With --json, written for tools/set_chain_ref.py, which stores it.
 #include "Bake.h"
 #include "FastEngine.h"
 
@@ -117,6 +127,101 @@ double hitPeak(const std::shared_ptr<const cymbalis::BakeData>& bake, int slot, 
     return peaks[size_t(k)];
 }
 
+// A 2nd-order section (direct form II transposed, double).
+struct Biquad
+{
+    double b0, b1, b2, a1, a2, z1 = 0.0, z2 = 0.0;
+    double run(double x)
+    {
+        const double y = b0 * x + z1;
+        z1 = b1 * x - a1 * y + z2;
+        z2 = b2 * x - a2 * y;
+        return y;
+    }
+};
+// Butterworth sections at fc (bilinear, prewarped): high-pass or low-pass, quality q.
+Biquad section(double fc, double sr, double q, bool highPass)
+{
+    const double w0 = 2.0 * 3.14159265358979323846 * fc / sr, cw = std::cos(w0), alpha = std::sin(w0) / (2.0 * q);
+    const double a0 = 1.0 + alpha;
+    Biquad s {};
+    if (highPass)
+    {
+        s.b0 = (1.0 + cw) * 0.5 / a0;
+        s.b1 = -(1.0 + cw) / a0;
+    }
+    else
+    {
+        s.b0 = (1.0 - cw) * 0.5 / a0;
+        s.b1 = (1.0 - cw) / a0;
+    }
+    s.b2 = s.b0;
+    s.a1 = -2.0 * cw / a0;
+    s.a2 = (1.0 - alpha) / a0;
+    return s;
+}
+
+// --chain-ref: the sizzle chain's ref_ms (see the top of this file).
+int chainRef(const std::shared_ptr<const cymbalis::BakeData>& bake, const std::string& jsonPath)
+{
+    if (!bake->chain.present)
+        throw std::runtime_error("the bake has no chain block (tools/set_chain_ref.py --init)");
+    const int slot = bake->slotIndex("BOW");
+    if (slot < 0)
+        throw std::runtime_error("the bake has no BOW slot");
+    const double sr = bake->sampleRate, velocity = 0.9, t0 = 0.3, t1 = 1.0;
+    cymbalis::FastEngine engine(bake);
+    engine.prepare(sr);
+    engine.setChain(true);
+    const double position = bake->slots[size_t(slot)].position;
+    engine.strike(slot, velocity, position);
+    // 4th-order Butterworth high-pass at 40 Hz and low-pass at 1 kHz (two sections each, q 0.5412
+    // and 1.3066).
+    constexpr double q1 = 0.54119610014619701, q2 = 1.3065629648763766;
+    Biquad f[4] = { section(40.0, sr, q1, true), section(40.0, sr, q2, true), section(1000.0, sr, q1, false),
+                    section(1000.0, sr, q2, false) };
+    const long total = std::lround(t1 * sr), from = std::lround(t0 * sr);
+    constexpr int block = 512;
+    std::vector<float> L(block), R(block);
+    double sum = 0.0;
+    long count = 0;
+    for (long start = 0; start < total; start += block)
+    {
+        const int n = static_cast<int>(std::min<long>(block, total - start));
+        engine.process(L.data(), R.data(), n);
+        for (int i = 0; i < n; ++i)
+        {
+            double y = 0.5 * (double(L[size_t(i)]) + double(R[size_t(i)]));
+            for (auto& s : f)
+                y = s.run(y);
+            if (start + i >= from)
+            {
+                sum += y * y;
+                ++count;
+            }
+        }
+    }
+    const double outGain = std::pow(10.0, bake->tuning.cymbal.outputGainDb / 20.0);
+    const double ms = sum / double(count), ref = ms / (outGain * outGain);
+    std::printf("Sizzle chain reference: BOW (slot %d, position %.2f), velocity %.1f, 40-1000 Hz, %.1f-%.1f s, chain damping on, "
+                "HIT VARIATION off\n  mean square %.6g after the output gain (%+.1f dB), ref_ms %.6g before it (%.2f dB re full scale)\n",
+                slot, position, velocity, t0, t1, ms, bake->tuning.cymbal.outputGainDb, ref, 10.0 * std::log10(ref));
+    if (!jsonPath.empty())
+    {
+        FILE* fj = std::fopen(jsonPath.c_str(), "w");
+        if (fj == nullptr)
+            throw std::runtime_error("cannot write " + jsonPath);
+        std::fprintf(fj, "{\n  \"measured_by\": \"tools/cymbalis_trims --chain-ref (FastEngine)\",\n");
+        std::fprintf(fj, "  \"sample_rate\": %.17g,\n  \"slot\": \"BOW\",\n  \"position\": %.17g,\n  \"velocity\": %.17g,\n", sr, position,
+                     velocity);
+        std::fprintf(fj, "  \"band_hz\": [40, 1000],\n  \"window_s\": [%.17g, %.17g],\n  \"output_gain_db\": %.17g,\n", t0, t1,
+                     bake->tuning.cymbal.outputGainDb);
+        std::fprintf(fj, "  \"ref_ms\": %.17g\n}\n", ref);
+        std::fclose(fj);
+    }
+    return 0;
+}
+
 // --skip-thresholds: per slot, the median peak of a velocity-1.0 hit against the slot's level,
 // and the skip threshold factor 140 dB below it.
 int skipThresholds(const std::shared_ptr<const cymbalis::BakeData>& bake, int hits, const std::string& jsonPath)
@@ -164,7 +269,7 @@ int main(int argc, char** argv)
     std::string bakePath, jsonPath, referencePath;
     double velocity = 0.9, windowSeconds = 1.0, peakLimit = 0.0;
     int peakHits = 1024;
-    bool skipMode = false, peakHitsGiven = false;
+    bool skipMode = false, chainMode = false, peakHitsGiven = false;
     std::map<std::string, double> targets;
     std::map<std::string, std::string> sameAs;
     bool usage = false;
@@ -183,6 +288,7 @@ int main(int argc, char** argv)
             peakHitsGiven = true;
         }
         else if (a == "--skip-thresholds") skipMode = true;
+        else if (a == "--chain-ref") chainMode = true;
         else if (a == "--spear-target" && i + 1 < argc)
         {
             const std::string t = argv[++i];
@@ -204,7 +310,8 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "usage: cymbalis_trims --bake BAKE.json [--reference NOVA_BAKE.json] [--velocity V] "
                              "[--window S] [--spear-target SLOT=DB ...] [--peak-limit P] [--peak-hits N] "
                              "[--same-as SLOT=SOURCE ...] [--json TRIMS.json]\n"
-                             "       cymbalis_trims --bake BAKE.json --skip-thresholds [--peak-hits N] [--json SKIP.json]\n");
+                             "       cymbalis_trims --bake BAKE.json --skip-thresholds [--peak-hits N] [--json SKIP.json]\n"
+                             "       cymbalis_trims --bake BAKE.json --chain-ref [--json CHAIN.json]\n");
         return 2;
     }
     try
@@ -217,6 +324,13 @@ int main(int argc, char** argv)
             b->tuning.cymbal.hitVariation = false;
             return b;
         };
+        if (chainMode)
+        {
+            // As played: the bake's trims and tuning, HIT VARIATION off.
+            auto b = std::make_shared<cymbalis::BakeData>(*cymbalis::loadBake(bakePath));
+            b->tuning.cymbal.hitVariation = false;
+            return chainRef(b, jsonPath);
+        }
         auto bake = untrimmed(bakePath);
         if (skipMode)
             return skipThresholds(bake, peakHitsGiven ? peakHits : kSkipHits, jsonPath);

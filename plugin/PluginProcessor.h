@@ -82,6 +82,17 @@ public:
     // of the last block, for the editor's hats and pedal; unchanged while another preset plays.
     float pedalOpenness() const noexcept { return pedalShown.load(); }
 
+    // The sizzle chain (docs/PORT_MAP.md, "Sizzle chain"; Kris, 2026-11-26): on the presets whose
+    // bake has one (STINE FLAT RIDE, HAMMERED THIN RIDE, SWISH, RAVEN, EXTRA PAPER THIN 24"), a
+    // switch per preset, kept for each and saved with the session (chain_<preset id>); not a
+    // parameter. It acts at once: the sizzle fades in or out over 50 ms, the strikes from the next
+    // one are damped. The chain's envelope at the end of the last block (1: a full hit's drive
+    // 0.5 s after it), for the editor's drawing of the chain; 0 while it is off.
+    bool presetHasChain (int preset) const noexcept;
+    bool chainOn (int preset) const noexcept { return chainSwitch[(size_t) preset].load(); }
+    void setChainOn (int preset, bool on) noexcept { chainSwitch[(size_t) preset].store (on); }
+    float chainEnvelope() const noexcept { return chainShown.load(); }
+
     // The stick chosen for a slot (TIP or SHOULDER) in the current preset, where the preset
     // offers a choice on it (StickDisplay::choice). Each preset keeps its own choices. Not a
     // parameter.
@@ -196,6 +207,8 @@ private:
     std::atomic<float>* pan = nullptr;
 
     std::array<Preset, cymbalis::kNumPresets> presets;
+    std::array<std::atomic<bool>, cymbalis::kNumPresets> chainSwitch {}; // the sizzle chain, per preset
+    std::atomic<float> chainShown { 0.0f };                              // its envelope (audio thread)
     std::atomic<int> presetTarget { 0 }; // set by the editor or the session
 
     // Ownership of cymbals. The audio thread plays `current` and, for 30 ms after a switch,

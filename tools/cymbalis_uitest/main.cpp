@@ -130,6 +130,19 @@
 //   nohihatvalues (on any preset but HI-HAT) look for TIP OPEN LEVEL, TIP OPEN TICK, RING FLOOR,
 //                FREE RING, TIP MODES, MAX OPEN, SPLASH WINDOW and SPLASH REOPEN down the list
 //                                                                    -> none
+//   chain        (on a preset with a sizzle chain: STINE FLAT RIDE, HAMMERED THIN RIDE, SWISH,
+//                RAVEN, EXTRA PAPER THIN 24") click CHAIN ON in the SIZZLE CHAIN group's header,
+//                at the top of the list                              -> the session's
+//                chain_<preset> 1 (the switch is session state, not a tuning value)
+//   chainvalues  (after chain) click SIZZLE LEVEL's slider a quarter of the way along and SWING's
+//                at 0.6                                              -> the two moved
+//                (SIZZLE LEVEL to -17 to -5 dB from 0, SWING to above 1.4 from 1.2); savetuning
+//                and loadtuning after it check they are saved and restored in a tuning file
+//   chainsession (after chainvalues) the state saved; CHAIN OFF clicked and SIZZLE LEVEL's slider
+//                at 0.75; the state restored                         -> the switch on and the
+//                two values as saved (both changed in between)
+//   nochain      (on a preset without one) look for CHAIN ON and SIZZLE LEVEL down the list
+//                                                                    -> none
 //
 //   opensize  (first, on a new instance) the editor's size and the session's editorWidth and
 //             editorHeight: the opening size for the primary display's user area
@@ -1825,6 +1838,111 @@ private:
                          },
                           wait };
             s.key = "hi-hat values";
+            s.expected = "none";
+            s.probe = [this] { return actionError; };
+        }
+        else if (name == "chain")
+        {
+            s.actions = { [this] { actionError = cymbalis::uitest::clickTuningButton (*editor, "CHAIN ON", true); }, wait, wait };
+            s.key = "chain switch";
+            s.expected = "on";
+            s.probe = [this] {
+                if (actionError.isNotEmpty())
+                    return actionError;
+                const auto session = sessionNow();
+                const auto key = "chain_" + attribute (session, "preset");
+                const auto on = attribute (session, key);
+                std::printf ("      %s %s\n", key.toRawUTF8(), on.toRawUTF8());
+                return on == "1" ? juce::String ("on") : key + " " + (on.isEmpty() ? juce::String ("missing") : on);
+            };
+        }
+        else if (name == "chainvalues")
+        {
+            // Two of the sizzle chain's values (docs/TUNING.md) moved with the mouse; savetuning
+            // and loadtuning after it check they are saved and restored.
+            s.actions = { [this] { actionError = cymbalis::uitest::clickTuningSlider (*editor, "SIZZLE LEVEL", 0.25f); },
+                          wait,
+                          [this] {
+                              if (actionError.isEmpty())
+                                  actionError = cymbalis::uitest::clickTuningSlider (*editor, "SWING", 0.6f);
+                          },
+                          wait, wait };
+            s.key = "sizzle chain values";
+            s.expected = "moved";
+            s.probe = [this] {
+                if (actionError.isNotEmpty())
+                    return actionError;
+                const auto c = currentTuning (sessionNow())["effective"]["cymbal"];
+                const auto& level = c["chain_level_db"];
+                const auto& swing = c["chain_swing"];
+                const auto values = "chain_level_db " + level.toString() + ", chain_swing " + swing.toString();
+                std::printf ("      %s\n", values.toRawUTF8());
+                const bool moved = ! level.isVoid() && (double) level >= -17.0 && (double) level <= -5.0 && ! swing.isVoid()
+                                   && (double) swing > 1.4 && (double) swing <= 3.0;
+                return moved ? juce::String ("moved") : values;
+            };
+        }
+        else if (name == "chainsession")
+        {
+            // The switch and the two values saved with the session and restored from it: the state
+            // saved, the switch turned off and SIZZLE LEVEL moved, the state restored.
+            auto saved = std::make_shared<juce::MemoryBlock>();
+            auto savedValues = std::make_shared<juce::String>();
+            auto between = std::make_shared<juce::String>();
+            auto read = [this] {
+                const auto session = sessionNow();
+                const auto c = currentTuning (session)["effective"]["cymbal"];
+                return "chain_" + attribute (session, "preset") + " " + attribute (session, "chain_" + attribute (session, "preset"))
+                       + ", chain_level_db " + c["chain_level_db"].toString() + ", chain_swing " + c["chain_swing"].toString();
+            };
+            s.actions = { [this, saved, savedValues, read] {
+                             plugin->getStateInformation (*saved);
+                             *savedValues = read();
+                             actionError = cymbalis::uitest::clickTuningButton (*editor, "CHAIN OFF", true);
+                         },
+                          wait,
+                          [this] {
+                              if (actionError.isEmpty())
+                                  actionError = cymbalis::uitest::clickTuningSlider (*editor, "SIZZLE LEVEL", 0.75f);
+                          },
+                          wait,
+                          [this, saved, between, read] {
+                              *between = read();
+                              plugin->setStateInformation (saved->getData(), (int) saved->getSize());
+                          },
+                          wait, wait };
+            s.key = "sizzle chain from the session";
+            s.expected = "restored";
+            s.probe = [this, savedValues, between, read] {
+                if (actionError.isNotEmpty())
+                    return actionError;
+                const auto now = read();
+                std::printf ("      saved: %s\n      between: %s\n      restored: %s\n", savedValues->toRawUTF8(), between->toRawUTF8(),
+                             now.toRawUTF8());
+                // The switch: the first value, "1" or "0".
+                auto sw = [] (const juce::String& r) { return r.upToFirstOccurrenceOf (",", false, false).fromLastOccurrenceOf (" ", false, false); };
+                const bool changed = sw (*between) == "0" && *between != *savedValues;
+                return now == *savedValues && sw (*savedValues) == "1" && changed ? juce::String ("restored")
+                                                                        : "restored " + now + ", saved " + *savedValues + ", between " + *between;
+            };
+        }
+        else if (name == "nochain")
+        {
+            s.actions = { [this] {
+                             for (const char* row : { "CHAIN ON", "SIZZLE LEVEL" })
+                             {
+                                 const auto got = cymbalis::uitest::tuningShows (*editor, row);
+                                 std::printf ("      \"%s\": %s\n", row, got.toRawUTF8());
+                                 if (got != "none")
+                                 {
+                                     actionError = juce::String (row) + ": " + got;
+                                     return;
+                                 }
+                             }
+                             actionError = "none";
+                         },
+                          wait };
+            s.key = "sizzle chain";
             s.expected = "none";
             s.probe = [this] { return actionError; };
         }

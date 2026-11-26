@@ -319,6 +319,12 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
     hhMaxOpen_ = b.tuning.cymbal.hhMaxOpen * 0.01;
     hhSplashWindowS_ = b.tuning.cymbal.hhSplashWindowMs * 1e-3;
     hhSplashReopen_ = b.tuning.cymbal.hhSplashReopen * 0.01;
+    if (b.chain.present)
+    {
+        chain_.build(b, b.chain.seed, b.chain.refMs);
+        chain_.setSettings(b.tuning.cymbal);
+        chainRate_.assign(size_t(b.numModes), 0.0);
+    }
     {
         // HIT VARIATION's stream: two outputs of a copy of the render stream (the strike
         // phases are not touched), mixed with constants, as its state.
@@ -704,6 +710,8 @@ void FastEngine::prepare(double sampleRate)
     sampleNow_ = 0;
     baseSample_ = 0;
     startFreePhase();
+    if (chain_.built())
+        chain_.prepare(sr_, negLambda_.data(), gainL_.data(), gainR_.data());
 }
 
 double FastEngine::timeSeconds() const noexcept
@@ -837,6 +845,10 @@ void FastEngine::processSpan(float* left, float* right, int numSamples) noexcept
         renderStick(left, right, numSamples);
         CYM_PROF_END(stickRender);
     }
+    // The sizzle chain (SizzleChain.h), before the high-pass and the output gain: it follows the
+    // output gain as the cymbal does. Off and faded out, it adds nothing.
+    if (chain_.built())
+        chain_.process(left, right, numSamples);
     CYM_PROF_BEGIN(highPass);
 
     // Right-channel high-pass (render() line 703; its on/off and frequency are tuning values),
@@ -3321,6 +3333,8 @@ void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecayS
                 std::copy(R, R + n, pendR_.begin());
                 gainPending_ = true;
             }
+            if (chain_.built())
+                chain_.setGains(L, R); // the sizzle sits where the cymbal does
         }
     }
     // Right-channel high-pass: to the new settings over kHpRampS.
@@ -3337,6 +3351,19 @@ void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecayS
     // Energy cascade and loud-band damping from the next control point, re-hit damping from
     // the next strike. Their thresholds follow the BOW articulation's values set above.
     setMechanisms(c);
+
+    // The sizzle chain's values: from the next block (the drive weights on the ringing strikes
+    // too), the damping from the next strike.
+    if (chain_.built())
+    {
+        const ChainSettings& next = c;
+        const ChainSettings& now = chain_.settings();
+        bool changed = false;
+        for (const auto& k : chainKeys())
+            changed = changed || next.*(k.member) != now.*(k.member);
+        if (changed)
+            chain_.setSettings(next);
+    }
 }
 #endif
 
@@ -3355,7 +3382,7 @@ bool FastEngine::isSilent() const noexcept
     for (const auto& c : components_)
         if (c.used)
             return false;
-    return true;
+    return chain_.isSilent();
 }
 
 
@@ -3579,6 +3606,19 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     comp.eps = std::max(washDamp - oscWash_, 0.0); // 0 only for a velocity outside 0..1
     for (size_t i = 0; i < n; ++i)
         comp.epsK[i] = comp.eps;
+    if (chain_.built())
+    {
+        // The sizzle chain: with it on, this strike's modes take t60 / (1 + DAMPING (f / 4 kHz) ^ 1.5)
+        // (the ringing strikes keep theirs); its drive takes this strike, on or off, from its
+        // coupling and each mode's whole decay rate.
+        const double* damp = chain_.dampingFactor();
+        if (chain_.on())
+            for (size_t i = 0; i < n; ++i)
+                comp.epsK[i] = (oscWash_ + comp.eps) * damp[i] - oscWash_;
+        for (size_t i = 0; i < n; ++i)
+            chainRate_[i] = -negLambda_[i] * (oscWash_ + comp.epsK[i]);
+        chain_.strike(pos, velocity, comp.Br.data(), comp.Bi.data(), chainRate_.data());
+    }
     if (!comp.pending)
         setDecayAll(comp); // without a contact phase the decay starts now
     CYM_PROF_END(strikeDecay);
@@ -3930,6 +3970,8 @@ void FastEngine::applyDecay() noexcept
     cymbalWideAtStrike(t);
     takeDecay(pendDecay_);
     decayPending_ = false;
+    if (chain_.built())
+        chain_.setDecay(negLambda_.data()); // its resonators' t60 with the new ring lengths
     // Each ringing strike's own decay with the new T60 (silent modes hold nothing).
     for (auto& c : components_)
         if (c.used && ! c.pending)

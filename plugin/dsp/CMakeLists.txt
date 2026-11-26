@@ -30,6 +30,7 @@ endif()
 # (CYMBALIS_TUNING, docs/TUNING.md), and so do the plugin and the tools that link it.
 add_library(cymbalis_fast STATIC
     FastEngine.cpp
+    SizzleChain.cpp
 )
 target_link_libraries(cymbalis_fast PUBLIC cymbalis_engine)
 if(CYMBALIS_WITH_TUNING)
@@ -47,6 +48,7 @@ endif()
 # cymbalis_bench_profile only. The plugin never links it.
 add_library(cymbalis_fast_profile STATIC
     FastEngine.cpp
+    SizzleChain.cpp
     EngineProfile.cpp
 )
 target_link_libraries(cymbalis_fast_profile PUBLIC cymbalis_engine)

@@ -1,6 +1,6 @@
 // cymbalis_bench — CPU cost of FastEngine, the plugin's real-time engine.
 //
-//   cymbalis_bench --bake BAKE.json [--sample-rate 48000 ...] [--seconds 60] [--block 256]
+//   cymbalis_bench --bake BAKE.json [--sample-rate 48000 ...] [--seconds 60] [--block 256] [--chain]
 //
 // Plays every slot of the bake on a busy pattern: a strike every 1/8 s cycling through
 // the slots at their default positions, velocities cycling 0.3 .. 1.0, plus a second,
@@ -11,6 +11,8 @@
 // It also reports the output's peak and fails if any sample is not finite. Nothing is
 // written to disk. On the hi-hat the pedal moves as well (pedalOpenness, Dense.h): a CC every
 // 10 ms, opening and closing every 1.5 s, so the choke runs and FOOT fires at every close.
+// --chain plays with the sizzle chain on (the five presets that have one; docs/PORT_MAP.md,
+// "Sizzle chain"); without it the chain is off, as the plugin starts.
 //
 //   cymbalis_bench --dense --bake BAKE.json [--bake ...] [options]
 //
@@ -92,6 +94,7 @@ int main(int argc, char** argv)
     std::vector<double> rates;
     double seconds = 60.0;
     int block = 256;
+    bool chain = false;
     for (int i = 1; i < argc; ++i)
     {
         const std::string a = argv[i];
@@ -103,9 +106,10 @@ int main(int argc, char** argv)
         else if (a == "--sample-rate") rates.push_back(std::stod(next()));
         else if (a == "--seconds") seconds = std::stod(next());
         else if (a == "--block") block = std::stoi(next());
+        else if (a == "--chain") chain = true;
         else
         {
-            std::fprintf(stderr, "usage: cymbalis_bench --bake BAKE.json [--sample-rate SR ...] [--seconds S] [--block N]\n");
+            std::fprintf(stderr, "usage: cymbalis_bench --bake BAKE.json [--sample-rate SR ...] [--seconds S] [--block N] [--chain]\n");
             return 2;
         }
     }
@@ -115,6 +119,10 @@ int main(int argc, char** argv)
     try
     {
         auto bake = cymbalis::loadBake(bakePath);
+        if (chain && !bake->chain.present)
+            throw std::runtime_error(bakePath + " has no sizzle chain (--chain)");
+        if (chain)
+            std::printf("The sizzle chain on.\n\n");
         const int slots = static_cast<int>(bake->slots.size());
         std::printf("| Sample rate | Control block | Host block | Strikes | CPU (%% of one core) | Mean strike (us) | "
                     "Block p99 (us) | Worst block (us) | Block budget (us) | Peak |\n");
@@ -124,6 +132,7 @@ int main(int argc, char** argv)
         {
             cymbalis::FastEngine engine(bake);
             engine.prepare(sr);
+            engine.setChain(chain);
             const int64_t total = static_cast<int64_t>(seconds * sr);
             struct Hit { int64_t sample; int slot; double velocity; }; // slot -1: the pedal at `velocity`
             std::vector<Hit> hits;

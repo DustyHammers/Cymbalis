@@ -82,6 +82,7 @@
 
 #include "Bake.h"
 #include "Pcg64.h"
+#include "SizzleChain.h"
 
 #include <array>
 #include <cstdint>
@@ -166,6 +167,19 @@ public:
     void continueFrom(const FastEngine& previous) noexcept;
     // Nothing rings: no ringing mode, no running contact, no strike energy.
     bool isSilent() const noexcept;
+
+    // The sizzle chain (SizzleChain.h; docs/PORT_MAP.md, "Sizzle chain"): only on a bake with a
+    // chain block. On, the sizzle fades in over 50 ms and the strikes from the next one are damped;
+    // off, it fades out and the engine plays exactly as without a chain. Its drive is tracked
+    // either way. The envelope env (1: a full hit's drive 0.5 s after it, the gate open), its mean
+    // over the last process(), for the chain's drawing; the drive and gate now, for checks.
+    bool hasChain() const noexcept { return chain_.built(); }
+    void setChain(bool on) noexcept { chain_.setOn(on); }
+    bool chainOn() const noexcept { return chain_.on(); }
+    float chainEnvelope() const noexcept { return chain_.envelope(); }
+    double chainDrive() const noexcept { return chain_.drive(); }
+    double chainGate() const noexcept { return chain_.gate(); }
+    int chainResonators() const noexcept { return chain_.numResonators(); }
 
 #if CYMBALIS_TUNING
     // Tuning code only (CYMBALIS_TUNING, docs/TUNING.md): the live tuning values, every one but the ring
@@ -461,6 +475,8 @@ private:
     std::vector<double> oscR_, oscI_;   // shared oscillator: per-sample step (decay T60 / oscWash_)
     std::vector<double> PKr_, PKi_;     // shared oscillator: step over one control block
     std::vector<double> negLambda_;     // -ln(1000) / T60 per mode (undamped decay rate, 1/s)
+    SizzleChain chain_;                 // built only with the bake's chain block
+    std::vector<double> chainRate_;     // a strike's amplitude decay rate per mode, for the chain
     // Per-band ring lengths (docs/TUNING.md): the band factors negLambda_ holds, the ring
     // length the engine was built with, and new coefficients waiting for a control point.
     std::array<double, kExcitationBands> ringBandNow_ = kUnitBands;
