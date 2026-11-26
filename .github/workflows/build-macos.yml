@@ -8,6 +8,13 @@ on:
   pull_request:
     paths-ignore: ['docs/**', '**.md']
   workflow_dispatch:
+    inputs:
+      # The long tests (dhpool self-test, dense block times, kit benchmark, mouse test, hit display
+      # timing) run only when asked for here, or on a v* tag (docs/BUILDS.md, "What CI runs").
+      full_tests:
+        description: 'full tests (dhpool self-test, dense block times, kit benchmark, mouse test, hit display timing)'
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -88,6 +95,8 @@ jobs:
             exit 1
           fi
 
+      # The test tools are built every time (a broken one is a build error) even when their steps
+      # don't run: they compile alongside the plugin and finish before its link.
       - name: Build
         run: |
           set -o pipefail
@@ -101,7 +110,9 @@ jobs:
       # at every thread count (flush to zero on and off), and work in several runs per block; a
       # workgroup hook change must reach every worker; prepare / release must leave no thread
       # behind. Log only; a failed check fails the job.
+      # On request only (full_tests) or on a v* tag, as the other long tests below.
       - name: Job pool self-test (dhpool)
+        if: (github.event_name == 'workflow_dispatch' && inputs.full_tests) || startsWith(github.ref, 'refs/tags/v')
         timeout-minutes: 5
         run: build/shared/dhpool/dhpool_selftest
 
@@ -130,7 +141,9 @@ jobs:
       # its pedal moving, 44.1 and 96 kHz, 128- and 64-sample blocks, real-time thread, each case three times in turn),
       # then where strike() and the slowest blocks spend their time (profile build, blocks back
       # to back). Printed to the log and the job summary only; nothing is uploaded.
+      # On request only (full_tests) or on a v* tag.
       - name: Engine block times in dense playing
+        if: (github.event_name == 'workflow_dispatch' && inputs.full_tests) || startsWith(github.ref, 'refs/tags/v')
         timeout-minutes: 15
         run: |
           BAKES=()
@@ -162,7 +175,9 @@ jobs:
       # finite; never on timing. 2 s timed per run, not the 60 s the bench defaults to (at 60 s
       # these cases would take about 6 hours): about 15 minutes in all. Printed to the log and the
       # job summary only; nothing is uploaded.
+      # On request only (full_tests) or on a v* tag.
       - name: Kit benchmark (engine pool)
+        if: (github.event_name == 'workflow_dispatch' && inputs.full_tests) || startsWith(github.ref, 'refs/tags/v')
         timeout-minutes: 20
         run: |
           BENCH=build/tools/cymbalis_bench/cymbalis_bench
@@ -298,7 +313,9 @@ jobs:
       # 65 steps in each host took about 2.6 minutes per host on the runner (59 took 4.8 minutes in
       # all with EXTRA PAPER THIN 24"); 68 with the editor's sizes took under 8 minutes; 72 with STINE FLAT RIDE's took
       # 6 minutes in all; 76 with the TUNING page's, within 10; 77 with the splash's.
+      # On request only (full_tests) or on a v* tag.
       - name: Editor mouse test (AU and VST3)
+        if: (github.event_name == 'workflow_dispatch' && inputs.full_tests) || startsWith(github.ref, 'refs/tags/v')
         timeout-minutes: 10
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
@@ -319,7 +336,9 @@ jobs:
       # once, that nothing is drawn after every hit is older than 6 s.
       # Printed to the log and the job summary only. With the TUNING page's two cases (hits, and
       # idle) it takes about 8.5 minutes (7 with the first alone), hence 12.
+      # On request only (full_tests) or on a v* tag.
       - name: Hit display timing
+        if: (github.event_name == 'workflow_dispatch' && inputs.full_tests) || startsWith(github.ref, 'refs/tags/v')
         timeout-minutes: 12
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"

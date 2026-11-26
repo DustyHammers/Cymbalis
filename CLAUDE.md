@@ -8,7 +8,7 @@ Cymbalis is a physically modelled cymbal instrument (macOS VST3 + AU, JUCE 7.0.1
 - Never modify `prototype/engine/*.py` or anything under `presets/`. They are the locked source data (`docs/BASELINE_MANIFEST.md`). Sound changes go into the plugin's engine and its baked preset data (`resources/presets/`).
 - One change per task. Do not bundle unrelated changes.
 - SPEAR `.txt` files never enter this repo.
-- **No regression or A/B renders.** Do not compare against Python, do not render audio for checking, and put no audio in CI or pull requests, unless Kris asks. Verify changes with the build, pluginval/auval and the CPU benchmark. Kris judges the sound by ear.
+- **No regression or A/B renders.** Do not compare against Python, do not render audio for checking, and put no audio in CI or pull requests, unless Kris asks. Verify changes with the build, pluginval/auval and the CPU benchmark. The long tests (dhpool self-test, dense block times, kit benchmark, mouse test, hit display timing) run only on request (`full_tests`) or on a release tag; run them when a change touches threads, the pool, the editor or the hit display. Kris judges the sound by ear.
 - **CI output is the VST3 and AU zips of Cymbalis only.** No editor snapshots, screenshots or other renders of the UI in CI, artifacts or pull requests, unless Kris asks.
 - When a new preset needs engine features the C++ engine doesn't have yet, port them from the Python engine as a guide; no render comparison.
 - Real-time requirement: the engine must stay at least 3× faster than real time (`cymbalis_bench`).
