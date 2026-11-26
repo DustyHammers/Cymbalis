@@ -314,9 +314,29 @@ void hookChange(int threads)
                 workers, log.onCaller.load() == 0 ? ", never on the caller" : "");
 }
 
+// The process's thread count once it has settled: a thread that has just been joined (or one
+// the system ran briefly) can still be counted for a moment, so read until two reads 20 ms
+// apart agree, at most `limitMs`.
+int settledThreads(int limitMs)
+{
+    int last = liveThreads();
+    for (int waited = 0; waited < limitMs; waited += 20)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        const int now = liveThreads();
+        if (now == last)
+            return now;
+        last = now;
+    }
+    return last;
+}
+
 void cycles(int count)
 {
-    const int before = liveThreads();
+    // No thread left behind: the count after the cycles must not be above the count before
+    // them. Both are read once the process has settled, and the count after is read again for
+    // up to 2 s while it is above (threads finishing their exit).
+    const int before = settledThreads(1000);
     Lcg rnd { 777 };
     Jobs jobs(64);
     for (int c = 0; c < count; ++c)
@@ -334,8 +354,13 @@ void cycles(int count)
         }
         // the destructor releases
     }
-    const int after = liveThreads();
-    check(before == after, "prepare / release cycles: " + std::to_string(before) + " threads before, " + std::to_string(after)
+    int after = settledThreads(1000);
+    for (int waited = 0; after > before && waited < 2000; waited += 20)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        after = liveThreads();
+    }
+    check(after <= before, "prepare / release cycles: " + std::to_string(before) + " threads before, " + std::to_string(after)
                                + " after");
     std::printf("  %d pools prepared and released (some twice): threads before %d, after %d\n", count, before, after);
 }
