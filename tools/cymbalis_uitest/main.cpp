@@ -1798,12 +1798,12 @@ private:
                 if (actionError.isNotEmpty())
                     return actionError;
                 const auto c = currentTuning (sessionNow())["effective"]["cymbal"];
-                const auto& window = c["hh_splash_window_ms"];
-                const auto& reopen = c["hh_splash_reopen"];
-                const auto values = "hh_splash_window_ms " + window.toString() + ", hh_splash_reopen " + reopen.toString();
+                const auto& windowMs = c["hh_splash_window_ms"];
+                const auto& reopenPct = c["hh_splash_reopen"];
+                const auto values = "hh_splash_window_ms " + windowMs.toString() + ", hh_splash_reopen " + reopenPct.toString();
                 std::printf ("      %s\n", values.toRawUTF8());
-                const bool moved = ! window.isVoid() && (double) window >= 90.0 && (double) window <= 250.0 && (double) window != 150.0
-                                   && ! reopen.isVoid() && (double) reopen >= 35.0 && (double) reopen <= 65.0;
+                const bool moved = ! windowMs.isVoid() && (double) windowMs >= 90.0 && (double) windowMs <= 250.0 && (double) windowMs != 150.0
+                                   && ! reopenPct.isVoid() && (double) reopenPct >= 35.0 && (double) reopenPct <= 65.0;
                 return moved ? juce::String ("moved") : values;
             };
         }
