@@ -24,6 +24,17 @@
 //       0.8 on each row: how long until each engine is silent (isSilent). Exit status 1 if any
 //       bound is broken.
 //
+//   check --splash BAKE.json ...
+//       The HI-HAT's foot splash and fast-tap FOOT (docs/PORT_MAP.md, "Hi-hat"), in memory, the
+//       working tree against REF: every other preset bit for bit (the identity sequences above);
+//       the hi-hat bit for bit wherever there is no splash and no fast tap (TIP, EDGE and FOOT
+//       strikes with the pedal as --dense moves it, opening and closing slowly, closing and staying
+//       closed, and open/closed 8ths at 120 bpm with no splash); the splash gestures' levels (mono
+//       mean of both channels, dB re full scale, in windows after the stomp) against the prototype's;
+//       the join (high-passed level per 5 ms around the splash); the fast taps (a 5 ms tap plays
+//       one FOOT; taps the smoothed openness reaches play as today); the cost of the gestures.
+//       Exit status 1 if anything that must be bit for bit is not.
+//
 //   check --time [--runs N] [--sample-rate SR ...] BAKE.json ...
 //       Block times of both engines in one process on a real-time thread (as a host's audio
 //       thread): at every block's deadline both render that block, one after the other (which
@@ -472,6 +483,379 @@ int bound(const std::vector<std::string>& bakes)
     return pass ? 0 : 1;
 }
 
+// --splash ------------------------------------------------------------------------------------
+
+// Renders `total` samples in blocks, split at each event; slot -1: the pedal at `velocity`.
+template <class E>
+void renderEvents(E& e, const std::vector<Hit>& hits, int64_t total, int block, std::vector<float>& L, std::vector<float>& R)
+{
+    L.assign(size_t(total), 0.0f);
+    R.assign(size_t(total), 0.0f);
+    size_t h = 0;
+    for (int64_t start = 0; start < total; start += block)
+    {
+        const int n = int(std::min<int64_t>(block, total - start));
+        int pos = 0;
+        for (; h < hits.size() && hits[h].sample < start + n; ++h)
+        {
+            const int at = int(hits[h].sample - start);
+            if (at > pos)
+            {
+                e.process(L.data() + start + pos, R.data() + start + pos, at - pos);
+                pos = at;
+            }
+            if (hits[h].slot < 0)
+                e.setPedal(hits[h].velocity);
+            else
+                e.strike(hits[h].slot, hits[h].velocity, hits[h].position);
+        }
+        if (pos < n)
+            e.process(L.data() + start + pos, R.data() + start + pos, n - pos);
+    }
+}
+
+void sortHits(std::vector<Hit>& hits)
+{
+    std::stable_sort(hits.begin(), hits.end(), [](const Hit& x, const Hit& y) { return x.sample < y.sample; });
+}
+
+// The pedal along a piecewise-linear path of (time s, openness) points: a CC every `step` seconds
+// on each slope (each point's own value at its time), in the CC's 127 steps.
+void pedalPath(std::vector<Hit>& out, double sr, const std::vector<std::pair<double, double>>& pts, double step = 0.001)
+{
+    const auto cc = [](double o) { return std::round(127.0 * std::min(std::max(o, 0.0), 1.0)) / 127.0; };
+    for (size_t i = 0; i < pts.size(); ++i)
+    {
+        out.push_back({int64_t(std::floor(pts[i].first * sr)), -1, cc(pts[i].second), 0.0});
+        if (i + 1 < pts.size() && pts[i + 1].second != pts[i].second)
+            for (double t = pts[i].first + step; t < pts[i + 1].first - 1e-9; t += step)
+            {
+                const double a = (t - pts[i].first) / (pts[i + 1].first - pts[i].first);
+                out.push_back({int64_t(std::floor(t * sr)), -1, cc(pts[i].second + a * (pts[i + 1].second - pts[i].second)), 0.0});
+            }
+    }
+}
+
+struct Pair
+{
+    std::vector<float> La, Ra, Lb, Rb;
+    uint64_t footA = 0, footB = 0, splashB = 0;
+    double splashTime = -1.0, cpuB = 0.0;
+    size_t differing() const
+    {
+        size_t d = 0;
+        for (size_t i = 0; i < La.size(); ++i)
+            d += std::memcmp(&La[i], &Lb[i], 4) != 0 || std::memcmp(&Ra[i], &Rb[i], 4) != 0;
+        return d;
+    }
+    int64_t firstDiff() const
+    {
+        for (size_t i = 0; i < La.size(); ++i)
+            if (std::memcmp(&La[i], &Lb[i], 4) != 0 || std::memcmp(&Ra[i], &Rb[i], 4) != 0)
+                return int64_t(i);
+        return -1;
+    }
+};
+
+Pair renderPair(const std::shared_ptr<const cymbalis::BakeData>& bake, double sr, const std::vector<Hit>& hits, double seconds,
+                const cymbalis::Tuning* tuning = nullptr)
+{
+    Pair p;
+    cymbalis::FastEngineRef a(bake);
+    cymbalis::FastEngine b(bake);
+    a.prepare(sr);
+    b.prepare(sr);
+    if (tuning != nullptr)
+    {
+        a.setTuning(*tuning, nullptr);
+        b.setTuning(*tuning, nullptr);
+    }
+    const int64_t total = int64_t(seconds * sr);
+    renderEvents(a, hits, total, 128, p.La, p.Ra);
+    const auto t0 = Clock::now();
+    renderEvents(b, hits, total, 128, p.Lb, p.Rb);
+    p.cpuB = std::chrono::duration<double>(Clock::now() - t0).count();
+    p.footA = a.footStrikes();
+    p.footB = b.footStrikes();
+    p.splashB = b.splashStrikes();
+    p.splashTime = b.lastSplashTime();
+    return p;
+}
+
+// Mono mean of both channels, RMS over [t0, t1) s, in dB re full scale.
+double levelDb(const std::vector<float>& L, const std::vector<float>& R, double sr, double t0, double t1)
+{
+    const size_t a = size_t(std::max(0.0, t0 * sr)), b = std::min(L.size(), size_t(t1 * sr));
+    double sum = 0.0;
+    for (size_t i = a; i < b; ++i)
+    {
+        const double m = 0.5 * (double(L[i]) + R[i]);
+        sum += m * m;
+    }
+    return b > a ? db(std::sqrt(sum / double(b - a))) : -400.0;
+}
+
+int splash(const std::vector<std::string>& bakes)
+{
+    bool ok = true;
+    std::vector<std::string> others;
+    std::string hihatPath;
+    for (const auto& path : bakes)
+    {
+        if (cymbalis::loadBake(path)->hihat.present)
+            hihatPath = path;
+        else
+            others.push_back(path);
+    }
+    std::printf("Every other preset (the identity sequences, with the bake's tuning and with the cascade and dampings on):\n");
+    ok = identity(others, false) == 0 && ok;
+    ok = identity(others, true) == 0 && ok;
+    if (hihatPath.empty())
+    {
+        std::printf("no hi-hat bake given\n");
+        return ok ? 0 : 1;
+    }
+    auto bake = cymbalis::loadBake(hihatPath);
+    const int tip = bake->slotIndex("TIP"), edge = bake->slotIndex("EDGE"), foot = bake->slotIndex("FOOT");
+    const auto pos = [&](int slot) { return bake->slots[size_t(slot)].position; };
+
+    // 1. Bit for bit wherever there is no splash and no fast tap.
+    std::printf("\nHI-HAT bit for bit (no splash, no fast tap), 128-sample blocks:\n\n| Pattern | Rate | Samples differing | FOOT (REF / now) | SPLASH |\n|---|---|---|---|---|\n");
+    for (const double sr : {44100.0, 96000.0})
+    {
+        struct Case
+        {
+            const char* name;
+            std::vector<Hit> hits;
+            double seconds;
+        };
+        std::vector<Case> cases;
+        {
+            // TIP, EDGE and FOOT every 24 ms, the pedal as --dense moves it.
+            Case c { "TIP, EDGE and FOOT every 24 ms, the pedal as --dense", {}, 30.0 };
+            const int slots3[] = {tip, edge, foot};
+            for (int k = 0; k * 0.024 < c.seconds; ++k)
+                c.hits.push_back({int64_t(std::floor(k * 0.024 * sr)), slots3[k % 3], kVelocities[k % 7], pos(slots3[k % 3])});
+            for (int64_t m = 0; double(m) * 0.01 < c.seconds; ++m)
+                c.hits.push_back({int64_t(std::floor(double(m) * 0.01 * sr)), -1, pedalOpenness(double(m) * 0.01), 0.0});
+            sortHits(c.hits);
+            cases.push_back(std::move(c));
+        }
+        {
+            // TIP and EDGE every 125 ms, the pedal opening and closing slowly (every 4 s).
+            Case c { "TIP and EDGE every 125 ms, the pedal opening and closing every 4 s", {}, 30.0 };
+            for (int k = 0; k * 0.125 < c.seconds; ++k)
+                c.hits.push_back({int64_t(std::floor(k * 0.125 * sr)), k % 2 ? edge : tip, kVelocities[k % 7], pos(k % 2 ? edge : tip)});
+            for (int64_t m = 0; double(m) * 0.01 < c.seconds; ++m)
+            {
+                const double t = double(m) * 0.01;
+                c.hits.push_back({int64_t(std::floor(t * sr)), -1, std::round(127.0 * (0.5 - 0.5 * std::cos(2.0 * 3.14159265358979323846 * t / 4.0))) / 127.0, 0.0});
+            }
+            sortHits(c.hits);
+            cases.push_back(std::move(c));
+        }
+        {
+            // Open for 1 s with EDGE hits, closed over 30 ms and held closed 2 s with TIP hits, again.
+            Case c { "Open 1 s (EDGE), closed over 30 ms and held 2 s (TIP), repeated", {}, 18.0 };
+            for (double t0 = 0.0; t0 < c.seconds; t0 += 3.0)
+            {
+                pedalPath(c.hits, sr, {{t0, 1.0}, {t0 + 1.0, 1.0}, {t0 + 1.03, 0.0}, {t0 + 2.99, 0.0}});
+                for (int k = 0; k < 4; ++k)
+                    c.hits.push_back({int64_t(std::floor((t0 + 0.1 + 0.2 * k) * sr)), edge, kVelocities[k % 7], pos(edge)});
+                for (int k = 0; k < 8; ++k)
+                    c.hits.push_back({int64_t(std::floor((t0 + 1.2 + 0.2 * k) * sr)), tip, kVelocities[(k + 3) % 7], pos(tip)});
+            }
+            sortHits(c.hits);
+            cases.push_back(std::move(c));
+        }
+        {
+            // Open/closed 8ths at 120 bpm: the pedal closing on the beat (TIP, closed) and reopening
+            // for the next "and" (EDGE, open): the reopen 200 ms after the beat.
+            Case c { "Open/closed 8ths at 120 bpm (reopen 200 ms after the beat)", {}, 16.0 };
+            for (double tb = 0.5; tb < c.seconds - 0.5; tb += 0.5)
+            {
+                c.hits.push_back({int64_t(std::floor(tb * sr)), -1, 0.0, 0.0});
+                c.hits.push_back({int64_t(std::floor((tb + 0.03) * sr)), tip, 0.7, pos(tip)});
+                c.hits.push_back({int64_t(std::floor((tb + 0.2) * sr)), -1, 1.0, 0.0});
+                c.hits.push_back({int64_t(std::floor((tb + 0.25) * sr)), edge, 0.85, pos(edge)});
+            }
+            c.hits.insert(c.hits.begin(), {0, -1, 1.0, 0.0});
+            sortHits(c.hits);
+            cases.push_back(std::move(c));
+        }
+        for (const auto& c : cases)
+        {
+            const Pair p = renderPair(bake, sr, c.hits, c.seconds);
+            const size_t d = p.differing();
+            ok = ok && d == 0 && p.splashB == 0;
+            std::printf("| %s | %.1f kHz | %zu | %llu / %llu | %llu |\n", c.name, sr / 1000.0, d, (unsigned long long) p.footA,
+                        (unsigned long long) p.footB, (unsigned long long) p.splashB);
+        }
+    }
+    {
+        // The same 8ths with SPLASH WINDOW at 250 ms: splashes fire (why 150 ms).
+        std::vector<Hit> hits {{0, -1, 1.0, 0.0}};
+        const double sr = 44100.0;
+        for (double tb = 0.5; tb < 15.5; tb += 0.5)
+        {
+            hits.push_back({int64_t(std::floor(tb * sr)), -1, 0.0, 0.0});
+            hits.push_back({int64_t(std::floor((tb + 0.03) * sr)), tip, 0.7, pos(tip)});
+            hits.push_back({int64_t(std::floor((tb + 0.2) * sr)), -1, 1.0, 0.0});
+            hits.push_back({int64_t(std::floor((tb + 0.25) * sr)), edge, 0.85, pos(edge)});
+        }
+        sortHits(hits);
+        for (const double ms : {100.0, 150.0, 250.0})
+        {
+            cymbalis::Tuning t = bake->tuning;
+            t.cymbal.hhSplashWindowMs = ms;
+            const Pair p = renderPair(bake, sr, hits, 16.0, &t);
+            std::printf("- The 8ths with SPLASH WINDOW %.0f ms: %llu splashes over %llu FOOTs; %s.\n", ms, (unsigned long long) p.splashB,
+                        (unsigned long long) p.footB, p.differing() == 0 ? "bit for bit as REF" : "differs from REF");
+        }
+    }
+
+    // 2. The splash gestures (the stomp at 1 s, the pedal open before it), against the prototype.
+    struct Gesture
+    {
+        const char* name;
+        std::vector<std::pair<double, double>> path;
+        double proto[3];
+        bool splash;
+    };
+    const double T0 = 1.0;
+    const std::vector<Gesture> gestures {
+        {"Fully open: 1 -> 0 over 30 ms, 30 ms closed, 0 -> 1 over 70 ms", {{0.0, 1.0}, {T0, 1.0}, {T0 + 0.03, 0.0}, {T0 + 0.06, 0.0}, {T0 + 0.13, 1.0}}, {-48, -59, -65}, true},
+        {"Half open: 0.5 -> 0 over 100 ms, 30 ms closed, 0 -> 1 over 100 ms", {{0.0, 0.5}, {T0, 0.5}, {T0 + 0.1, 0.0}, {T0 + 0.13, 0.0}, {T0 + 0.23, 1.0}}, {-64, -77, -85}, true},
+        {"Held closed 0.4 s before the release", {{0.0, 1.0}, {T0, 1.0}, {T0 + 0.03, 0.0}, {T0 + 0.43, 0.0}, {T0 + 0.5, 1.0}}, {0, 0, 0}, false},
+        {"Splash, closed again 1.2 s later", {{0.0, 1.0}, {T0, 1.0}, {T0 + 0.03, 0.0}, {T0 + 0.06, 0.0}, {T0 + 0.13, 1.0}, {T0 + 1.2, 1.0}, {T0 + 1.23, 0.0}}, {0, 0, 0}, true},
+    };
+    const double windows[3][2] = {{0.2, 0.6}, {1.0, 1.5}, {2.0, 3.0}};
+    std::printf("\nThe splash gestures, 44.1 kHz: level of the mono mean of both channels (dB re full scale, after the output gain, "
+                "HIT VARIATION as baked) in windows after the stomp, REF (today) / now (the prototype's).\n\n"
+                "| Gesture | 0.2-0.6 s | 1.0-1.5 s | 2-3 s | FOOT / SPLASH now |\n|---|---|---|---|---|\n");
+    double cpu = 0.0, audio = 0.0;
+    Pair first;
+    for (size_t g = 0; g < gestures.size(); ++g)
+    {
+        const double sr = 44100.0;
+        std::vector<Hit> hits;
+        pedalPath(hits, sr, gestures[g].path);
+        sortHits(hits);
+        const Pair p = renderPair(bake, sr, hits, T0 + 3.5);
+        cpu += p.cpuB;
+        audio += T0 + 3.5;
+        std::printf("| %s |", gestures[g].name);
+        for (const auto& w : windows)
+        {
+            const double a = levelDb(p.La, p.Ra, sr, T0 + w[0], T0 + w[1]), b = levelDb(p.Lb, p.Rb, sr, T0 + w[0], T0 + w[1]);
+            const size_t k = size_t(&w - &windows[0]);
+            if (gestures[g].proto[0] != 0)
+                std::printf(" %.0f / %.0f (%.0f) |", a, b, gestures[g].proto[k]);
+            else
+                std::printf(" %.0f / %.0f |", a, b);
+        }
+        std::printf(" %llu / %llu |\n", (unsigned long long) p.footB, (unsigned long long) p.splashB);
+        if (!gestures[g].splash)
+        {
+            const bool same = p.differing() == 0 && p.splashB == 0;
+            ok = ok && same;
+            std::printf("|   (held closed: %s) | | | | |\n", same ? "no splash, bit for bit as REF" : "DIFFERS FROM REF");
+        }
+        if (g == 0)
+            first = p;
+    }
+    // 3. The join: the high-passed (2nd-order Butterworth, 1 kHz) mono level per 5 ms around the
+    // splash of the fully open gesture.
+    if (first.splashTime >= 0.0)
+    {
+        const double sr = 44100.0;
+        const double w0 = 2.0 * 3.14159265358979323846 * 1000.0 / sr, cw = std::cos(w0), al = std::sin(w0) / std::sqrt(2.0);
+        const double b0 = (1 + cw) / 2 / (1 + al), b1 = -(1 + cw) / (1 + al), b2 = b0, a1 = -2 * cw / (1 + al), a2 = (1 - al) / (1 + al);
+        std::vector<double> hp(first.Lb.size());
+        double z1 = 0, z2 = 0;
+        for (size_t i = 0; i < hp.size(); ++i)
+        {
+            const double x = 0.5 * (double(first.Lb[i]) + first.Rb[i]);
+            const double y = b0 * x + z1;
+            z1 = b1 * x - a1 * y + z2;
+            z2 = b2 * x - a2 * y;
+            hp[i] = y;
+        }
+        const int64_t at = int64_t(std::llround(first.splashTime * sr)), win = int64_t(0.005 * sr);
+        std::printf("\nThe join (fully open gesture, the splash at %.1f ms after the stomp): high-passed (1 kHz) mono level per 5 ms, "
+                    "dB re full scale, from 30 ms before the splash to 30 ms after:\n\n", 1000.0 * (first.splashTime - T0));
+        double prev = 0.0, worst = 0.0;
+        for (int k = -6; k < 6; ++k)
+        {
+            double sum = 0.0;
+            for (int64_t i = at + k * win; i < at + (k + 1) * win; ++i)
+                sum += hp[size_t(i)] * hp[size_t(i)];
+            const double l = db(std::sqrt(sum / double(win)));
+            std::printf("%s%.1f", k == -6 ? "" : ", ", l);
+            if (k > -6)
+                worst = std::max(worst, std::fabs(l - prev));
+            prev = l;
+        }
+        std::printf("\n\nLargest step between neighbouring 5 ms windows: %.1f dB.\n", worst);
+        // The splash on its own (now - REF, broadband mono) per 5 ms from its first sample, and REF
+        // (the FOOT alone) over the 30 ms before it: no onset peak means no click.
+        std::printf("The splash alone (now - REF) per 5 ms from its first sample, dB:");
+        for (int k = 0; k < 6; ++k)
+        {
+            double sum = 0.0;
+            for (int64_t i = at + k * win; i < at + (k + 1) * win; ++i)
+            {
+                const double d = 0.5 * ((double(first.Lb[size_t(i)]) - first.La[size_t(i)]) + (double(first.Rb[size_t(i)]) - first.Ra[size_t(i)]));
+                sum += d * d;
+            }
+            std::printf("%s %.1f", k == 0 ? "" : ",", db(std::sqrt(sum / double(win))));
+        }
+        double prevRef = 0.0, worstRef = 0.0;
+        for (int k = -6; k < 0; ++k)
+        {
+            double sum = 0.0;
+            for (int64_t i = at + k * win; i < at + (k + 1) * win; ++i)
+            {
+                const double m = 0.5 * (double(first.La[size_t(i)]) + first.Ra[size_t(i)]);
+                sum += m * m;
+            }
+            const double l = db(std::sqrt(sum / double(win)));
+            if (k > -6)
+                worstRef = std::max(worstRef, std::fabs(l - prevRef));
+            prevRef = l;
+        }
+        std::printf(".\nREF alone (the FOOT) over the 30 ms before: largest step between neighbouring 5 ms windows %.1f dB.\n", worstRef);
+    }
+
+    // 4. The fast taps: the pedal resting at CC 25 (openness 0.197: armed, under the splash's
+    // reopen level), a tap to CC 0 of d ms.
+    std::printf("\nThe fast taps (the pedal at CC 25, a tap to CC 0 for d ms, 44.1 kHz):\n\n| Tap | FOOT (REF / now) | SPLASH now | Bit for bit |\n|---|---|---|---|\n");
+    for (const double d : {0.005, 0.010, 0.020, 0.040})
+    {
+        const double sr = 44100.0;
+        std::vector<Hit> hits {{0, -1, 25.0 / 127.0, 0.0}, {int64_t(T0 * sr), -1, 0.0, 0.0}, {int64_t((T0 + d) * sr), -1, 25.0 / 127.0, 0.0}};
+        const Pair p = renderPair(bake, sr, hits, T0 + 1.0);
+        const bool same = p.differing() == 0;
+        if (p.footA > 0)
+            ok = ok && same; // the smoothed openness reached it: as today
+        std::printf("| %.0f ms | %llu / %llu | %llu | %s |\n", d * 1000.0, (unsigned long long) p.footA, (unsigned long long) p.footB,
+                    (unsigned long long) p.splashB, same ? "yes" : "no");
+    }
+    {
+        // A 5 ms tap from fully open: the fast-tap FOOT finds the pedal still above the reopen level.
+        const double sr = 44100.0;
+        std::vector<Hit> hits {{0, -1, 1.0, 0.0}, {int64_t(T0 * sr), -1, 0.0, 0.0}, {int64_t((T0 + 0.005) * sr), -1, 1.0, 0.0}};
+        const Pair p = renderPair(bake, sr, hits, T0 + 3.5);
+        std::printf("\nA 5 ms tap from fully open: FOOT %llu / %llu, SPLASH %llu (at %.1f ms after the tap); level 0.2-0.6 s %.0f / %.0f dB.\n",
+                    (unsigned long long) p.footA, (unsigned long long) p.footB, (unsigned long long) p.splashB,
+                    p.splashTime >= 0.0 ? 1000.0 * (p.splashTime - T0) : -1.0, levelDb(p.La, p.Ra, sr, T0 + 0.2, T0 + 0.6),
+                    levelDb(p.Lb, p.Rb, sr, T0 + 0.2, T0 + 0.6));
+    }
+    std::printf("\nCost: the splash gestures rendered at %.0fx real time (now, one thread, 128-sample blocks).\n", audio / std::max(cpu, 1e-9));
+    std::printf("\n%s\n", ok ? "Everything that must be bit for bit is." : "SOMETHING THAT MUST BE BIT FOR BIT IS NOT.");
+    return ok ? 0 : 1;
+}
+
 // The block sequence of a run: the strikes in order, a strike every 24 ms or flams.
 std::vector<Hit> strikesFor(const cymbalis::BakeData& bake, double sr, int block, bool flams)
 {
@@ -637,7 +1021,7 @@ int timing(const std::vector<std::string>& bakes, std::vector<double> rates, int
 int main(int argc, char** argv)
 {
     noDenormals();
-    bool time = false, mechanisms = false, boundMode = false;
+    bool time = false, mechanisms = false, boundMode = false, splashMode = false;
     int runs = 4;
     std::vector<double> rates;
     std::vector<std::string> bakes;
@@ -650,6 +1034,8 @@ int main(int argc, char** argv)
             mechanisms = true;
         else if (a == "--bound")
             boundMode = true;
+        else if (a == "--splash")
+            splashMode = true;
         else if (a == "--runs" && i + 1 < argc)
             runs = std::max(1, std::atoi(argv[++i]));
         else if (a == "--sample-rate" && i + 1 < argc)
@@ -659,14 +1045,16 @@ int main(int argc, char** argv)
     }
     if (bakes.empty())
     {
-        std::fprintf(stderr, "usage: check [--mechanisms] BAKE.json ... | check --bound BAKE.json ... | check --time [--runs N] "
-                             "[--sample-rate SR ...] BAKE.json ...\n");
+        std::fprintf(stderr, "usage: check [--mechanisms] BAKE.json ... | check --bound BAKE.json ... | check --splash BAKE.json ... | "
+                             "check --time [--runs N] [--sample-rate SR ...] BAKE.json ...\n");
         return 2;
     }
     try
     {
         if (boundMode)
             return bound(bakes);
+        if (splashMode)
+            return splash(bakes);
         return time ? timing(bakes, rates, runs) : identity(bakes, mechanisms);
     }
     catch (const std::exception& e)

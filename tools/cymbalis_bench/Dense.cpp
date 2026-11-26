@@ -189,6 +189,7 @@ struct Run
     std::vector<int> activeAll; // after every block, the lead included
     int pool = FastEngine::kMaxComponents; // the engine's component pool (the hi-hat's is larger)
     uint64_t foot = 0;          // FOOT strikes the pedal fired (hi-hat)
+    uint64_t splash = 0;        // SPLASH strikes the pedal fired (hi-hat)
     bool realtime = false;
     bool finite = true;
     float peak = 0.0f;
@@ -316,6 +317,7 @@ Run runOnce(const std::shared_ptr<const cymbalis::BakeData>& bake, const Case& c
 #endif
     setFlushToZero(true);
     r.foot = engine.footStrikes();
+    r.splash = engine.splashStrikes();
     return r;
 }
 
@@ -552,7 +554,8 @@ void report(const Options& o, const std::vector<Case>& cases, const std::vector<
         }
         const double blocks = double(r0.activeAll.size() - lead);
         const std::string strikes =
-            std::to_string(r0.strikeUs.size()) + (r0.foot > 0 ? " + " + std::to_string(r0.foot) + " FOOT" : std::string());
+            std::to_string(r0.strikeUs.size()) + (r0.foot > 0 ? " + " + std::to_string(r0.foot) + " FOOT" : std::string())
+            + (r0.splash > 0 ? " + " + std::to_string(r0.splash) + " SPLASH" : std::string());
         std::printf("| %s | %s | %.0f | %.0f | %.0f | %.0f | %.1f | %d of %d | %.0f %% |\n", caseName(o, cases[ci]).c_str(),
                     strikes.c_str(), a.mean, a.p99, m.worst, a.worst, sum / blocks, most, r0.pool, 100.0 * double(full) / blocks);
     }

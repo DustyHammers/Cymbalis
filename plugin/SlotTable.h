@@ -167,8 +167,8 @@ constexpr std::array<PresetInfo, kNumPresets> kPresets {{
     }} },
     // HI-HAT (GF A60, 14"; docs/PORT_MAP.md, "Hi-hat"; a placeholder name until Kris names it):
     // the BOW row plays TIP and the EDGE row EDGE, each with its fixed stick, on General MIDI's
-    // closed and open hi-hat notes; no BELL, BELL2 or BOW2 rows. FOOT has no row: the pedal (a
-    // MIDI CC) plays it. Its wireframe is the pair of hats (the top cymbal's shape names the
+    // closed and open hi-hat notes; no BELL, BELL2 or BOW2 rows. FOOT and SPLASH have no row: the
+    // pedal (a MIDI CC) plays them. Its wireframe is the pair of hats (the top cymbal's shape names the
     // bottom one); the Blend Position knobs do nothing on it.
     { "hihat", "HI-HAT", "hihat.bake.json", &ui::kHiHatTopShape, {{
         { "", "", StickDisplay::dash, Stick::none },

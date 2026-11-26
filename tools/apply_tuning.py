@@ -76,6 +76,7 @@ CYMBAL_KEYS = [
     'lf_bow_weight', 'lf_edge_weight', 'lf_bell_weight', 'lf_wander_rate_boost',
     'edge_band_env_onset_s', 'edge_voice_from_bow', 'hit_position_spread', 'hit_velocity_spread_pct',
     'hh_tip_open_level', 'hh_tip_open_tick_db', 'hh_ring_floor', 'hh_tip_modes_db', 'hh_max_open',
+    'hh_splash_window_ms', 'hh_splash_reopen',
     'cascade_amount', 'cascade_threshold_db', 'cascade_speed_ms', 'cascade_release_ms',
     'cascade_spread', 'cascade_low_band', 'cascade_high_band',
     'loud_damp_amount', 'loud_damp_threshold_db', 'loud_damp_tilt',
@@ -94,6 +95,8 @@ PLUGIN_KEYS = {
     'hh_ring_floor': (100.0, (0.0, 200.0, False)),
     'hh_tip_modes_db': (0.0, (0.0, 20.0, False)),
     'hh_max_open': (100.0, (75.0, 100.0, False)),
+    'hh_splash_window_ms': (150.0, (50.0, 400.0, False)),
+    'hh_splash_reopen': (25.0, (5.0, 80.0, False)),
     'cascade_amount': (0.0, (0.0, 1.0, False)),
     'cascade_threshold_db': (-12.0, (-120.0, 40.0, False)),
     'cascade_speed_ms': (100.0, (0.1, 60000.0, False)),
@@ -118,9 +121,10 @@ VOICE_KEY = 'edge_voice_from_bow'     # EDGE VOICE FROM BOW, %: 0 if a file has 
 HIGHPASS_KEY = 'right_highpass'       # the right channel's 120 Hz high-pass on (the bake's own) or off
 HITVAR_KEY = 'hit_variation'          # HIT VARIATION on or off (the bake's own: off)
 # The hi-hat's own values (bakes with a hihat block only): TIP OPEN LEVEL, TIP OPEN TICK, RING FLOOR,
-# FREE RING (on / off; the bake's own: off), TIP MODES, MAX OPEN.
+# FREE RING (on / off; the bake's own: off), TIP MODES, MAX OPEN, SPLASH WINDOW (ms), SPLASH REOPEN (%).
 FREE_RING_KEY = 'hh_free_ring'
-HIHAT_KEYS = ('hh_tip_open_level', 'hh_tip_open_tick_db', 'hh_ring_floor', FREE_RING_KEY, 'hh_tip_modes_db', 'hh_max_open')
+HIHAT_KEYS = ('hh_tip_open_level', 'hh_tip_open_tick_db', 'hh_ring_floor', FREE_RING_KEY, 'hh_tip_modes_db', 'hh_max_open',
+              'hh_splash_window_ms', 'hh_splash_reopen')
 # Per-band cymbal values (22 values, lowest band first): name -> (range, unit, neutral value).
 CYMBAL_BAND_KEYS = {
     'ring_length_bands': ((0.25, 4.0), 'x', 1.0),

@@ -317,6 +317,8 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
     hhFreeRing_ = b.tuning.cymbal.hhFreeRing;
     hhTipModesDb_ = b.tuning.cymbal.hhTipModesDb;
     hhMaxOpen_ = b.tuning.cymbal.hhMaxOpen * 0.01;
+    hhSplashWindowS_ = b.tuning.cymbal.hhSplashWindowMs * 1e-3;
+    hhSplashReopen_ = b.tuning.cymbal.hhSplashReopen * 0.01;
     {
         // HIT VARIATION's stream: two outputs of a copy of the render stream (the strike
         // phases are not touched), mixed with constants, as its state.
@@ -690,6 +692,7 @@ void FastEngine::prepare(double sampleRate)
         c.used = false;
     activeContacts_ = 0;
     hpZ0_ = hpZ1_ = 0.0;
+    splashUntil_ = -1.0; // the hi-hat's foot splash: nothing rings to splash after
     // Nothing rings: new output gains apply at once.
     gainRamp_ = false;
     if (gainPending_)
@@ -723,15 +726,16 @@ void FastEngine::process(float* left, float* right, int numSamples) noexcept
         processSpan(left, right, numSamples);
         return;
     }
-    // HI-HAT: the span up to the sample where the pedal fires FOOT, FOOT, the rest. The
-    // smoothed openness moves monotonically within a pedal segment, so it falls below
-    // footClosedBelow at most once in it, at a time solved for exactly.
+    // HI-HAT: the span up to the sample where the pedal fires FOOT (or SPLASH), the strike, the
+    // rest. The smoothed openness moves monotonically within a pedal segment, so it falls below
+    // footClosedBelow, or rises to the splash's reopen level, at most once in it, at a time
+    // solved for exactly.
     const HiHatData& h = bake_->hihat;
     int done = 0;
     while (done < numSamples)
     {
         int m = numSamples - done;
-        bool fire = false;
+        bool fire = false, splash = false;
         if (isPrepared() && hhFootSlot_ >= 0)
         {
             const double t = timeSeconds();
@@ -757,6 +761,31 @@ void FastEngine::process(float* left, float* right, int numSamples) noexcept
                     }
                 }
             }
+            // The foot splash: armed after a FOOT until its time + SPLASH WINDOW, it is struck where
+            // the smoothed openness reaches SPLASH REOPEN within that time (at once if it is there).
+            if (splashUntil_ >= 0.0)
+            {
+                if (t > splashUntil_)
+                    splashUntil_ = -1.0;
+                else
+                {
+                    double k = -1.0;
+                    if (o >= splashReopen_)
+                        k = 0.0;
+                    else if (s.target > splashReopen_)
+                    {
+                        const double tc = s.t0 + h.pedalSmoothS * std::log((s.o0 - s.target) / (splashReopen_ - s.target));
+                        if (tc <= splashUntil_)
+                            k = std::max(0.0, std::ceil((tc - t) * sr_ - 1e-9));
+                    }
+                    if (k >= 0.0 && k < static_cast<double>(m))
+                    {
+                        m = static_cast<int>(k);
+                        fire = false;
+                        splash = true;
+                    }
+                }
+            }
         }
         if (m > 0)
         {
@@ -765,6 +794,8 @@ void FastEngine::process(float* left, float* right, int numSamples) noexcept
         }
         if (fire)
             footStrike();
+        else if (splash)
+            splashStrike();
     }
     if (isPrepared() && pedalAt(timeSeconds()) >= h.footRearmAbove)
         footArmed_ = true;
@@ -1681,6 +1712,11 @@ void FastEngine::sumComponents(double t0, double t1) noexcept
                 if (bandEnd_[bs] <= bandStart_[bs])
                     continue;
                 double te0 = t0 - c.tStrike, te1 = t1 - c.tStrike;
+                if (c.hhSplash) // its envelope from its FOOT's time
+                {
+                    te0 += c.hhEnvT0;
+                    te1 += c.hhEnvT0;
+                }
                 if (c.envShift)
                 {
                     te0 = (te0 - static_cast<double>(c.envDelay[bs])) * static_cast<double>(c.envSpeed[bs]);
@@ -3202,6 +3238,8 @@ void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecayS
     hhRingFloor_ = c.hhRingFloor * 0.01;
     hhFreeRing_ = c.hhFreeRing; // FREE RING and TIP MODES from the next strike
     hhTipModesDb_ = c.hhTipModesDb;
+    hhSplashWindowS_ = c.hhSplashWindowMs * 1e-3; // SPLASH WINDOW and REOPEN from the next FOOT
+    hhSplashReopen_ = c.hhSplashReopen * 0.01;
     if (c.hhMaxOpen * 0.01 != hhMaxOpen_)
     {
         // MAX OPEN: the pedal moves to where it asks for at the new scale.
@@ -4143,9 +4181,11 @@ void FastEngine::setupHiHat()
     for (size_t s = 0; s < b.slots.size(); ++s)
     {
         const std::string& id = b.slots[s].id;
-        hhArt_[s] = id == "tip" ? 0 : id == "edge" ? 1 : id == "foot" ? 2 : -1;
+        hhArt_[s] = id == "tip" ? 0 : id == "edge" ? 1 : id == "foot" ? 2 : id == "splash" ? 3 : -1;
         if (id == "foot")
             hhFootSlot_ = static_cast<int>(s);
+        if (id == "splash" && ! h.splash.empty())
+            hhSplashSlot_ = static_cast<int>(s);
     }
     auto lnOf = [](const std::vector<double>& x) {
         std::vector<double> out(x.size());
@@ -4287,7 +4327,24 @@ double FastEngine::hiHatEnvelope(Component& c, int art, double o, double v) noex
                 constant[b] += share * (lc[b] - l[b]) * (kLn10 / 20.0);
         }
     };
-    if (art == 2)
+    if (art == 3)
+    {
+        // SPLASH: the splash knot nearest v, its own envelope (SPEAR's rise kept) and weights,
+        // moved from its velocity to v by the closed EDGE's level change per band, as an open
+        // knot is moved.
+        int best = h.splash[0];
+        for (const int k : h.splash)
+            if (std::fabs(h.knots[size_t(k)].velocity - v) < std::fabs(h.knots[size_t(best)].velocity - v))
+                best = k;
+        const HiHatKnot& knot = h.knots[size_t(best)];
+        addTerm(hhLnRaw_[size_t(best)], knot.frames, 1.0);
+        addWeights(knot.weights, 1.0);
+        hiHatClosedLevel(1, v, lv);
+        hiHatClosedLevel(1, knot.velocity, lk);
+        for (size_t b = 0; b < nb; ++b)
+            constant[b] += (lv[b] - lk[b]) * (kLn10 / 20.0);
+    }
+    else if (art == 2)
         closed(1, 1.0, 1.0, true); // FOOT: the closed EDGE's own rise
     else if (o <= 0.0)
         closed(art, 1.0, 1.0, false);
@@ -4548,6 +4605,23 @@ FastEngine::PedalStep FastEngine::hiHatPedalStep(Component& c, double t0, double
         }
     };
     const auto rateNow = [&](size_t b) { return std::max(hhRateNowRaw_[b], c.hhRingFloor * hhRateMedianNow_); };
+    if (c.hhSplash)
+    {
+        // SPLASH, in place of the choke and the opening rule: per band the extra rate
+        // max(rate(o), CHOKE_RATE (o_max - o) / o_max) - rate(1), never negative, o_max the highest
+        // openness since its strike. Closing chokes it as any open hit; resting part-way open it
+        // dies at least as fast as an open hit there; fully open it plays as captured.
+        c.hhOMax = std::max(c.hhOMax, openNow);
+        rates();
+        const double closing = h.chokeRate * (c.hhOMax - openNow) / std::max(c.hhOMax, 1e-6);
+        bool any = false;
+        for (size_t b = 0; b < nb; ++b)
+        {
+            c.hhExtra[b] = std::max(std::max(rateNow(b), closing) - c.hhRate0[b], 0.0);
+            any = any || c.hhExtra[b] > 0.0;
+        }
+        return any ? PedalStep::closing : PedalStep::none;
+    }
     if (c.hhOpened)
     {
         if (openNow < c.hhOpenRef - kHiHatOpenEps)
@@ -4636,7 +4710,21 @@ void FastEngine::setPedal(double openness, bool immediate) noexcept
     pedalCount_ = std::min(pedalCount_ + 1, kPedalSegments);
     pedal_[size_t(pedalHead_)] = PedalSegment { t, immediate ? target : now, target };
     if (immediate)
+    {
         footArmed_ = target >= bake_->hihat.footRearmAbove;
+        footTapLow_ = false;
+        return;
+    }
+    // The fast tap: armed, a CC under footClosedBelow and then a later CC back up before the
+    // smoothed openness got under it (a tap shorter than the smoothing, which it never reaches)
+    // fires FOOT at the later CC's sample. A FOOT the smoothed openness fires is unchanged.
+    if (footArmed_ && isPrepared() && hhFootSlot_ >= 0)
+    {
+        if (target < bake_->hihat.footClosedBelow)
+            footTapLow_ = true;
+        else if (footTapLow_)
+            footStrike();
+    }
 }
 
 // FOOT, fired by the pedal (process): its velocity from how fast the pedal closed, the
@@ -4648,10 +4736,32 @@ void FastEngine::footStrike() noexcept
     const double speed = std::max(0.0, (pedalAt(t - h.footWindowS) - pedalAt(t)) / h.footWindowS);
     const double v = std::min(std::max(speed / h.footFullSpeed, h.footMinVelocity), 1.0);
     footArmed_ = false;
+    footTapLow_ = false;
     ++footStrikes_;
     lastFootTime_ = t;
     lastFootVelocity_ = v;
     strike(hhFootSlot_, v, bake_->slots[size_t(hhFootSlot_)].position);
+    // The foot splash is armed until t + SPLASH WINDOW (the window and the reopen level as they
+    // are now).
+    if (hhSplashSlot_ >= 0)
+    {
+        splashUntil_ = t + hhSplashWindowS_;
+        splashFootTime_ = t;
+        splashVelocity_ = v;
+        splashReopen_ = hhSplashReopen_;
+    }
+}
+
+// The foot splash (process): one per FOOT, at the FOOT's velocity (HIT VARIATION applies as on
+// every strike); its envelope starts at the FOOT's time.
+void FastEngine::splashStrike() noexcept
+{
+    splashUntil_ = -1.0;
+    ++splashStrikes_;
+    lastSplashTime_ = timeSeconds();
+    splashFootNext_ = splashFootTime_;
+    strike(hhSplashSlot_, splashVelocity_, bake_->slots[size_t(hhSplashSlot_)].position);
+    splashFootNext_ = -1.0;
 }
 
 // A hi-hat strike (strike() on a hi-hat bake): the knots at the pedal's openness now and the
@@ -4779,9 +4889,12 @@ void FastEngine::strikeHiHat(int slotIndex, double velocity, double position) no
             u = u / static_cast<double>(comp.envSpeed[j]) + static_cast<double>(comp.envDelay[j]);
         comp.envWindow = std::max(comp.envWindow, u);
     }
-    comp.hhOpens = art != 2;
+    comp.hhOpens = art != 2; // TIP, EDGE and SPLASH ring on past their envelopes
     if (comp.hhOpens)
         comp.envWindow = kHiHatMaxRingS;
+    // SPLASH: its envelope from its FOOT's time (struck by the pedal), else from its own.
+    comp.hhSplash = art == 3;
+    comp.hhEnvT0 = comp.hhSplash && splashFootNext_ >= 0.0 ? std::max(strikeTime - splashFootNext_, 0.0) : 0.0;
 
     // Attack band gains, as on every preset (the hi-hat's articulations all take them).
     {
@@ -4818,11 +4931,15 @@ void FastEngine::strikeHiHat(int slotIndex, double velocity, double position) no
 
     // The pedal: a strike more open than the pedal later is damped further (the choke); a TIP or
     // EDGE strike less open than the pedal later opens up (HiHat.level_step).
-    comp.hhOpen = open;
+    // SPLASH is struck as fully open (its capture ends with the foot up), its rates at 1; its own
+    // choke follows the highest openness since its strike (hhOMax).
+    const double oStrike = comp.hhSplash ? 1.0 : open;
+    comp.hhOMax = open;
+    comp.hhOpen = oStrike;
     comp.hhOpened = false;
-    comp.hhOpenRef = open;
+    comp.hhOpenRef = oStrike;
     comp.hhRingFloor = comp.hhOpens ? hhRingFloor_ : 0.0;
-    comp.hhChoke = open > 0.0;
+    comp.hhChoke = oStrike > 0.0;
     comp.hhChokeT = strikeTime;
     comp.hhT1 = -1.0;
     comp.hhGain.fill(1.0);
@@ -4830,7 +4947,7 @@ void FastEngine::strikeHiHat(int slotIndex, double velocity, double position) no
     comp.hhExtra.fill(0.0);
     comp.hhLogRate.fill(0.0);
     if (comp.hhChoke || comp.hhOpens)
-        hiHatRate(open, comp.hhRate0.data(), comp.hhRingFloor);
+        hiHatRate(oStrike, comp.hhRate0.data(), comp.hhRingFloor);
     comp.hhRateRef = comp.hhRate0;
 #if CYMBALIS_TUNING
     onsetPeaks(comp, slotIndex);

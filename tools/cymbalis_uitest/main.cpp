@@ -122,8 +122,14 @@
 //   hihatopen    (on HI-HAT) click FREE RING's switch, TIP MODES' slider halfway along and MAX
 //                OPEN's a fifth of the way along                      -> the three moved
 //                (FREE RING on, TIP MODES above 4 dB from 0, MAX OPEN to 75-95 % from 100)
+//   hihatsplash  (on HI-HAT) click SPLASH WINDOW's slider a quarter of the way along and SPLASH
+//                REOPEN's at 0.4                                      -> the two moved
+//                (SPLASH WINDOW to 90-250 ms from 150, SPLASH REOPEN to 35-65 % from 25; the
+//                click's fraction is of the whole row, the slider's track a part of it: on the
+//                runner 0.25 gave 160 ms and 0.6 gave 67 %)
 //   nohihatvalues (on any preset but HI-HAT) look for TIP OPEN LEVEL, TIP OPEN TICK, RING FLOOR,
-//                FREE RING, TIP MODES and MAX OPEN down the list      -> none
+//                FREE RING, TIP MODES, MAX OPEN, SPLASH WINDOW and SPLASH REOPEN down the list
+//                                                                    -> none
 //
 //   opensize  (first, on a new instance) the editor's size and the session's editorWidth and
 //             editorHeight: the opening size for the primary display's user area
@@ -1685,7 +1691,7 @@ private:
             s.probe = [this] {
                 const std::pair<const char*, const char*> rows[] = {
                     { "STICK CLICK gain (0 = none)", "shown" },
-                    { "Kept onset (ring length acts after it): TIP, EDGE, FOOT", "shown" },
+                    { "Kept onset (ring length acts after it): TIP, EDGE, FOOT, SPLASH", "shown" },
                     { "VELOCITY SPREAD", "shown" },
                     { "TIP OPEN LEVEL (share of the closed tip/edge gap an open tip drops at full opening)", "shown" },
                     { "TIP OPEN TICK (the tip's stick click raised at full opening)", "shown" },
@@ -1693,10 +1699,12 @@ private:
                     { "FREE RING (the fully open hats as a single free cymbal)", "shown" },
                     { "TIP MODES (an open tip favours the modes a tip strike favours; 0 = off)", "shown" },
                     { "MAX OPEN (the openness the pedal reaches at CC 127)", "shown" },
+                    { "SPLASH WINDOW (after a FOOT, how long the pedal has to reopen for a splash)", "shown" },
+                    { "SPLASH REOPEN (the opening that plays the splash)", "shown" },
                     { "STICK CLICK bow weight", "none" },
                     { "POSITION SPREAD (0 edge, 0.5 bow, 1 bell)", "none" },
                     { "Bow brightness vs velocity (tau_ref): TIP", "none" },
-                    { "EDGE VOICE FROM BOW (0: the edge's own modes, 100: its long-ringing modes take the bow's): EDGE, FOOT",
+                    { "EDGE VOICE FROM BOW (0: the edge's own modes, 100: its long-ringing modes take the bow's): EDGE, FOOT, SPLASH",
                       "none" },
                 };
                 for (const auto& r : rows)
@@ -1773,10 +1781,37 @@ private:
                 return moved ? juce::String ("moved") : values;
             };
         }
+        else if (name == "hihatsplash")
+        {
+            // The foot splash's two values (docs/TUNING.md): SPLASH WINDOW and SPLASH REOPEN moved
+            // with the mouse; savetuning and loadtuning after it check they are saved and restored.
+            s.actions = { [this] { actionError = cymbalis::uitest::clickTuningSlider (*editor, "SPLASH WINDOW", 0.25f); },
+                          wait,
+                          [this] {
+                              if (actionError.isEmpty())
+                                  actionError = cymbalis::uitest::clickTuningSlider (*editor, "SPLASH REOPEN", 0.4f);
+                          },
+                          wait, wait };
+            s.key = "hi-hat splash values";
+            s.expected = "moved";
+            s.probe = [this] {
+                if (actionError.isNotEmpty())
+                    return actionError;
+                const auto c = currentTuning (sessionNow())["effective"]["cymbal"];
+                const auto& windowMs = c["hh_splash_window_ms"];
+                const auto& reopenPct = c["hh_splash_reopen"];
+                const auto values = "hh_splash_window_ms " + windowMs.toString() + ", hh_splash_reopen " + reopenPct.toString();
+                std::printf ("      %s\n", values.toRawUTF8());
+                const bool moved = ! windowMs.isVoid() && (double) windowMs >= 90.0 && (double) windowMs <= 250.0 && (double) windowMs != 150.0
+                                   && ! reopenPct.isVoid() && (double) reopenPct >= 35.0 && (double) reopenPct <= 65.0;
+                return moved ? juce::String ("moved") : values;
+            };
+        }
         else if (name == "nohihatvalues")
         {
             s.actions = { [this] {
-                             for (const char* row : { "TIP OPEN LEVEL", "TIP OPEN TICK", "RING FLOOR", "FREE RING", "TIP MODES", "MAX OPEN" })
+                             for (const char* row : { "TIP OPEN LEVEL", "TIP OPEN TICK", "RING FLOOR", "FREE RING", "TIP MODES", "MAX OPEN",
+                                                      "SPLASH WINDOW", "SPLASH REOPEN" })
                              {
                                  const auto got = cymbalis::uitest::tuningShows (*editor, row);
                                  std::printf ("      \"%s\": %s\n", row, got.toRawUTF8());

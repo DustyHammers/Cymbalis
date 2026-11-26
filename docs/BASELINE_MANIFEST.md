@@ -259,6 +259,7 @@ Built 2026-11-20 in the project session from Kris's SPEAR captures of a pair of 
 | `presets/hihat/data/hihat_envelopes.json` | `d78586a3de2d06f65bae5764e0d52269` |
 | `presets/hihat/data/hihat_weights.json` | `6f9f0a6e61d34fb535ce84647dcaa89d` |
 | `presets/hihat/data/hihat_weights_free.json` | `687ef98f22320a52a3c5b99b13df7dc2` |
+| `presets/hihat/data/hihat_splash.json` | `22d8b8c85f980b95eac37dd902358ac1` |
 
 ## Notes
 
@@ -268,3 +269,4 @@ Built 2026-11-20 in the project session from Kris's SPEAR captures of a pair of 
 - What the captures show: closed hits fade 20 dB in about 0.1 s in the upper bands, with a low body around 150-300 Hz; open hits ring 2-2.5 s (V4, V5) to 4-6 s (V6, V7) and lose the low body. SPEAR shows every strike rising over 20-40 ms (its analysis window), which sounds like the pedal closing the cymbals rather than a stick: the stick articulations replace that rise (`docs/hihat_reference.py`); the FOOT articulation keeps it.
 - `hihat_weights_free.json` (added 2026-11-21, Kris: "version C"): the fully open knot (V7) as a single free-ringing cymbal, its mode weights from the SPEAR partials lasting at least 0.4 s only, each partial to its nearest mode, no floor (237 modes above 0.05, against 510). The fully open capture still has the bottom cymbal in it: its level pulses at about 1 and 4 Hz and its partials are short-lived (about 7,200 tracks in 1.5 s); the long partials are the top cymbal ringing.
 - No photo: the plugin draws the wireframe (`docs/ui/wireframe_reference.py`, HI-HAT section).
+- `hihat_splash.json` (added 2026-11-25, Kris: the foot splash): three foot splash knots from Kris's SPEAR captures SplashV1-V3 of the same hats (the pedal pressed down quickly and let up, the foot up at the end). Band envelopes and mode weights as the other knots (10 ms frames, 22 bands, the same 683 modes); 961-963 frames (9.6 s). Velocity matched by attack level (first 20 ms) to the closed EDGE: V1 0.72, V2 0.76, V3 0.85 (Kris: the dynamics of this articulation are hard to vary, so the three play at similar levels). Openness 1.0. What the captures show: a wash from the start, peaking within 10-40 ms and staying within about 10 dB of the peak for 300 ms; the first 50 ms close to the closed EDGE's attack (the hats meeting); the ring an open-hat ring (band shape as the open knots, not the closed), longer and darker than the open knots (-40 dB at 5.4-6.6 s against 3.9 s for V7; centroid about 1.4 kHz after 1 s against 3-4 kHz). Read by the hi-hat bake only; no existing file changes.

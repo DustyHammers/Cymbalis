@@ -204,9 +204,9 @@ void readHiHat(const json::Value& h, const BakeData& b, HiHatData& out, std::vec
         HiHatKnot knot;
         knot.id = k.at("id").string();
         const std::string art = k.at("articulation").string();
-        if (art != "tip" && art != "edge")
-            throw BakeError("hihat knot " + knot.id + ": articulation must be tip or edge");
-        knot.articulation = art == "tip" ? 0 : 1;
+        if (art != "tip" && art != "edge" && art != "splash")
+            throw BakeError("hihat knot " + knot.id + ": articulation must be tip, edge or splash");
+        knot.articulation = art == "tip" ? 0 : art == "edge" ? 1 : 2;
         knot.openness = k.at("openness").number();
         knot.velocity = k.at("velocity").number();
         knot.frames = static_cast<int>(k.at("frames").number());
@@ -239,6 +239,13 @@ void readHiHat(const json::Value& h, const BakeData& b, HiHatData& out, std::vec
     for (size_t i = 0; i < out.knots.size(); ++i)
     {
         const auto& k = out.knots[i];
+        if (k.articulation == 2) // the foot splash (SPLASH): its own envelope, SPEAR's rise kept
+        {
+            if (k.raw.empty())
+                throw BakeError("hihat knot " + k.id + ": a splash knot needs its raw envelope");
+            out.splash.push_back(static_cast<int>(i));
+            continue;
+        }
         if (k.openness == 0.0)
         {
             int v = -1;
@@ -264,6 +271,8 @@ void readHiHat(const json::Value& h, const BakeData& b, HiHatData& out, std::vec
         if (out.knots[size_t(out.closed[1][v])].raw.empty())
             throw BakeError("hihat: the closed EDGE knots need their raw envelopes (FOOT)");
     std::sort(out.open.begin(), out.open.end(), [&](int x, int y) { return out.knots[size_t(x)].openness < out.knots[size_t(y)].openness; });
+    std::stable_sort(out.splash.begin(), out.splash.end(),
+                     [&](int x, int y) { return out.knots[size_t(x)].velocity < out.knots[size_t(y)].velocity; });
     if (out.open.empty())
         throw BakeError("hihat: no open EDGE knot");
     for (size_t i = 1; i < out.open.size(); ++i)
@@ -294,7 +303,7 @@ void readHiHat(const json::Value& h, const BakeData& b, HiHatData& out, std::vec
         !(out.footClosedBelow < out.footRearmAbove) || !(out.pedalSmoothS > 0.0) || !(std::fabs(out.endFadeS - out.frameS) < 1e-12))
         throw BakeError("hihat: frame length, choke rate, foot or pedal settings out of range (the end fade is one frame)");
     rep.push_back("hi-hat       " + std::to_string(out.knots.size()) + " knots (" + std::to_string(out.open.size()) +
-                  " open), up to " + std::to_string(out.maxFrames) + " frames of " + fmt("%.3f s", out.frameS) +
+                  " open, " + std::to_string(out.splash.size()) + " splash), up to " + std::to_string(out.maxFrames) + " frames of " + fmt("%.3f s", out.frameS) +
                   fmt(", choke %.4g/s", out.chokeRate));
 }
 
@@ -871,6 +880,7 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
             b.slots.push_back(std::move(slot));
         }
         if (b.hihat.present)
+        {
             for (const char* id : {"tip", "edge", "foot"})
             {
                 bool found = false;
@@ -879,6 +889,10 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
                 if (!found)
                     throw BakeError(std::string("hihat: the bake needs an entry with articulation id '") + id + "'");
             }
+            for (const auto& s : b.slots)
+                if (s.id == "splash" && b.hihat.splash.empty())
+                    throw BakeError("hihat: the splash entry needs the splash knots");
+        }
 
         // ---- RNG streams (stage 0: exact PCG64, uniform() and choice())
         const auto& rng = root.at("rng");
