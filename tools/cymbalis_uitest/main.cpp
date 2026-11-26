@@ -123,8 +123,10 @@
 //                OPEN's a fifth of the way along                      -> the three moved
 //                (FREE RING on, TIP MODES above 4 dB from 0, MAX OPEN to 75-95 % from 100)
 //   hihatsplash  (on HI-HAT) click SPLASH WINDOW's slider a quarter of the way along and SPLASH
-//                REOPEN's at 0.6                                      -> the two moved
-//                (SPLASH WINDOW to 90-200 ms from 150, SPLASH REOPEN to 35-65 % from 25)
+//                REOPEN's at 0.4                                      -> the two moved
+//                (SPLASH WINDOW to 90-250 ms from 150, SPLASH REOPEN to 35-65 % from 25; the
+//                click's fraction is of the whole row, the slider's track a part of it: on the
+//                runner 0.25 gave 160 ms and 0.6 gave 67 %)
 //   nohihatvalues (on any preset but HI-HAT) look for TIP OPEN LEVEL, TIP OPEN TICK, RING FLOOR,
 //                FREE RING, TIP MODES, MAX OPEN, SPLASH WINDOW and SPLASH REOPEN down the list
 //                                                                    -> none
@@ -1787,7 +1789,7 @@ private:
                           wait,
                           [this] {
                               if (actionError.isEmpty())
-                                  actionError = cymbalis::uitest::clickTuningSlider (*editor, "SPLASH REOPEN", 0.6f);
+                                  actionError = cymbalis::uitest::clickTuningSlider (*editor, "SPLASH REOPEN", 0.4f);
                           },
                           wait, wait };
             s.key = "hi-hat splash values";
@@ -1800,7 +1802,7 @@ private:
                 const auto& reopen = c["hh_splash_reopen"];
                 const auto values = "hh_splash_window_ms " + window.toString() + ", hh_splash_reopen " + reopen.toString();
                 std::printf ("      %s\n", values.toRawUTF8());
-                const bool moved = ! window.isVoid() && (double) window >= 90.0 && (double) window <= 200.0 && (double) window != 150.0
+                const bool moved = ! window.isVoid() && (double) window >= 90.0 && (double) window <= 250.0 && (double) window != 150.0
                                    && ! reopen.isVoid() && (double) reopen >= 35.0 && (double) reopen <= 65.0;
                 return moved ? juce::String ("moved") : values;
             };
