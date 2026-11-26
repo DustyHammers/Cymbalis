@@ -4,7 +4,9 @@ This document covers how to use dhpool, its rules, and its version. dhpool is pl
 
 ## Version
 
-**Version 1** (`dhpool::kVersion`), first in Cymbalis on branch `claude/mt-job-pool`, multi-threading step 2 (2026-11-25).
+**Version 2** (`dhpool::kVersion`, 2026-11-26): the self-test's prepare / release check now reads the thread count once it has settled, and requires the count after to be no higher than before ("Self-test"). The pool itself (`JobPool.h`, `JobPool.cpp`) is unchanged from version 1.
+
+Version 1 came first in Cymbalis, on branch `claude/mt-job-pool`, multi-threading step 2 (2026-11-25).
 
 A change that alters behaviour or the interface bumps `kVersion` and this line.
 
@@ -85,6 +87,6 @@ pool.run(count2, order2, &renderOther, this); // a second run in the same block
 - the results are bit-identical at every thread count, with flush to zero on and off. The workers start in the other mode, so only the hand-over gives them the caller's;
 - two runs per block with serial passes between them;
 - a workgroup hook change reaches every worker and never the calling thread, and every join has its leave;
-- prepare / release cycles leave no thread behind.
+- prepare / release cycles leave no thread behind: the process's thread count after 60 pools prepared and released is no higher than before. Both are read once the count has settled (two reads 20 ms apart agree, within 1 s), and the count after is read again for up to 2 s while it is above. On macOS a thread that `pthread_join` has just returned for can still be counted for a moment, so an exact comparison failed now and then (version 1).
 
 It exits with status 1 if any check fails. In Cymbalis, CI runs it, and a ThreadSanitizer build of it on Linux reports no data race (`docs/PORT_MAP.md`, "Multi-cymbal rendering (step 2)").

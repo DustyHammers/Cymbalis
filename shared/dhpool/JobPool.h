@@ -45,7 +45,7 @@
 namespace dhpool
 {
 
-constexpr int kVersion = 1; // README-pool.md, "Version"
+constexpr int kVersion = 2; // README-pool.md, "Version"
 
 class JobPool
 {
