@@ -49,6 +49,8 @@ const std::vector<CymbalKey>& cymbalKeys()
         { kHhRingFloorKey, &CymbalTuning::hhRingFloor },
         { kHhTipModesKey, &CymbalTuning::hhTipModesDb },
         { kHhMaxOpenKey, &CymbalTuning::hhMaxOpen },
+        { kHhSplashWindowKey, &CymbalTuning::hhSplashWindowMs },
+        { kHhSplashReopenKey, &CymbalTuning::hhSplashReopen },
         { "cascade_amount", &CymbalTuning::cascadeAmount },
         { "cascade_threshold_db", &CymbalTuning::cascadeThresholdDb },
         { "cascade_speed_ms", &CymbalTuning::cascadeSpeedMs },
@@ -556,6 +558,9 @@ Tuning parseTuningBlock(const json::Value& block, const BakeData& b, const Tunin
     if (! (t.cymbal.hhTipModesDb >= 0.0 && t.cymbal.hhTipModesDb <= kHhTipModesMax)
         || ! (t.cymbal.hhMaxOpen >= kHhMaxOpenMin && t.cymbal.hhMaxOpen <= kHhMaxOpenMax))
         throw std::runtime_error("tuning: hh_tip_modes_db must lie in 0 to 20 and hh_max_open in 75 to 100");
+    if (! (t.cymbal.hhSplashWindowMs >= kHhSplashWindowMin && t.cymbal.hhSplashWindowMs <= kHhSplashWindowMax)
+        || ! (t.cymbal.hhSplashReopen >= kHhSplashReopenMin && t.cymbal.hhSplashReopen <= kHhSplashReopenMax))
+        throw std::runtime_error("tuning: hh_splash_window_ms must lie in 50 to 400 and hh_splash_reopen in 5 to 80");
     for (int s = 0; s < t.numArticulations && s < kMaxArticulations; ++s)
     {
         const ArticulationTuning& a = t.articulations[size_t(s)];

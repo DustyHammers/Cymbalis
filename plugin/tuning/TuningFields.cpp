@@ -77,6 +77,8 @@ const std::vector<Field>& cymbalFields()
         { kHhRingFloorKey, "RING FLOOR (each band's decay rate at least this share of the median; 0 = off)", "%", Group::cymbal, Needs::hihat, 0.0, kHhRingFloorMax, 0, &C::hhRingFloor, false },
         { kHhTipModesKey, "TIP MODES (an open tip favours the modes a tip strike favours; 0 = off)", "dB", Group::cymbal, Needs::hihat, 0.0, kHhTipModesMax, 1, &C::hhTipModesDb, false },
         { kHhMaxOpenKey, "MAX OPEN (the openness the pedal reaches at CC 127)", "%", Group::cymbal, Needs::hihat, kHhMaxOpenMin, kHhMaxOpenMax, 0, &C::hhMaxOpen, false },
+        { kHhSplashWindowKey, "SPLASH WINDOW (after a FOOT, how long the pedal has to reopen for a splash)", "ms", Group::cymbal, Needs::hihat, kHhSplashWindowMin, kHhSplashWindowMax, 0, &C::hhSplashWindowMs, false },
+        { kHhSplashReopenKey, "SPLASH REOPEN (the opening that plays the splash)", "%", Group::cymbal, Needs::hihat, kHhSplashReopenMin, kHhSplashReopenMax, 0, &C::hhSplashReopen, false },
 
         { kHitPositionSpreadKey, "POSITION SPREAD (0 edge, 0.5 bow, 1 bell)", "", Group::hitVariation, Needs::positions, 0.0, kHitPositionSpreadMax, 3, &C::hitPositionSpread, false },
         { kHitVelocitySpreadKey, "VELOCITY SPREAD", "%", Group::hitVariation, Needs::always, 0.0, kHitVelocitySpreadMax, 1, &C::hitVelocitySpreadPct, false },
@@ -491,6 +493,9 @@ juce::String fromJson (const juce::String& text, const BakeData& b, const juce::
     if (! (t.cymbal.hhTipModesDb >= 0.0 && t.cymbal.hhTipModesDb <= kHhTipModesMax)
         || ! (t.cymbal.hhMaxOpen >= kHhMaxOpenMin && t.cymbal.hhMaxOpen <= kHhMaxOpenMax))
         return "The tuning file's hh_tip_modes_db must lie in 0 to 20 dB and hh_max_open in 75 to 100 %.";
+    if (! (t.cymbal.hhSplashWindowMs >= kHhSplashWindowMin && t.cymbal.hhSplashWindowMs <= kHhSplashWindowMax)
+        || ! (t.cymbal.hhSplashReopen >= kHhSplashReopenMin && t.cymbal.hhSplashReopen <= kHhSplashReopenMax))
+        return "The tuning file's hh_splash_window_ms must lie in 50 to 400 ms and hh_splash_reopen in 5 to 80 %.";
     for (size_t s = 0; s < b.slots.size(); ++s)
         for (double w : { t.articulations[s].stickBowWeight, t.articulations[s].stickBellWeight, t.articulations[s].stickEdgeWeight })
             if (! (w >= 0.0 && w <= kStickWeightMax))

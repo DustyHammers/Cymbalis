@@ -110,12 +110,12 @@ struct EdgeNpz
 struct HiHatKnot
 {
     std::string id;
-    int articulation = 0;         // 0 TIP, 1 EDGE
+    int articulation = 0;         // 0 TIP, 1 EDGE, 2 SPLASH (the foot splash)
     double openness = 0.0;        // 0 closed .. 1 fully open
     double velocity = 0.0;        // the velocity it was captured at
     int frames = 0;               // envelope frames (frameS each)
     std::vector<double> stick;    // bands x frames: the envelope with the strike fired at full level
-    std::vector<double> raw;      // bands x frames: SPEAR's own envelope (the closed EDGE knots: FOOT)
+    std::vector<double> raw;      // bands x frames: SPEAR's own envelope (the closed EDGE knots: FOOT; SPLASH)
     std::vector<double> weights;  // per mode, unit norm per band
     std::array<double, kExcitationBands> levelDb {}; // its level per band, first 100 ms after its peak
     // FREE RING (the fully open knot only; else empty): the knot as a single free cymbal, its
@@ -132,6 +132,7 @@ struct HiHatData
     int closed[2][3] = { { -1, -1, -1 }, { -1, -1, -1 } };
     double closedVelocity[3] = { 0.3, 0.6, 1.0 };
     std::vector<int> open;              // the open EDGE knots, openness ascending
+    std::vector<int> splash;            // the foot splash knots (SPLASH plays them), velocity ascending
     std::vector<double> rateOpenness;   // openness of each row of `rates`, ascending from 0
     std::vector<double> rates;          // rateOpenness x bands: each band's decay rate (amplitude, 1/s)
     double chokeRate = 6.91 / 0.3;      // the pedal choke's rate when fully closed (1/s)

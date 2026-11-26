@@ -8,7 +8,9 @@
 # for a change meant to differ only far below hearing, the bounds of check.cpp's --bound instead
 # of bit-identity (docs/PORT_MAP.md, "One silence rule: 140 dB below a full hit").
 #
-#   tools/cymbalis_identity/run.sh [--ref REF] [--build DIR] [--arch arm64|x86_64] [--time [--runs N] | --bound]
+#   tools/cymbalis_identity/run.sh [--ref REF] [--build DIR] [--arch arm64|x86_64] [--time [--runs N] | --bound | --splash]
+#
+# --splash: the hi-hat's foot splash and fast-tap FOOT against REF (check.cpp's --splash).
 #
 # On a Mac, --arch x86_64 checks the Intel slice (under Rosetta on Apple Silicon).
 set -euo pipefail
@@ -18,6 +20,7 @@ BUILD=build
 ARCH=""
 TIME=()
 BOUND=0
+SPLASH=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --ref) REF=$2; shift 2 ;;
@@ -26,7 +29,8 @@ while [ $# -gt 0 ]; do
     --time) TIME+=(--time); shift ;;
     --runs) TIME+=(--runs "$2"); shift 2 ;;
     --bound) BOUND=1; shift ;;
-    *) echo "usage: $0 [--ref REF] [--build DIR] [--arch arm64|x86_64] [--time [--runs N] | --bound]" >&2; exit 2 ;;
+    --splash) SPLASH=1; shift ;;
+    *) echo "usage: $0 [--ref REF] [--build DIR] [--arch arm64|x86_64] [--time [--runs N] | --bound | --splash]" >&2; exit 2 ;;
   esac
 done
 
@@ -68,7 +72,9 @@ for B in "$ROOT"/resources/presets/*.bake.json; do
 done
 echo "FastEngine of the working tree against $REF ($(git -C "$ROOT" rev-parse --short "$REF"))${ARCH:+, $ARCH}"
 # ${a[@]+"${a[@]}"}: an empty array under set -u in bash 3.2 (macOS).
-if [ "$BOUND" = 1 ]; then
+if [ "$SPLASH" = 1 ]; then
+  ${RUN[@]+"${RUN[@]}"} "$TMP/check" --splash "${BAKES[@]}"
+elif [ "$BOUND" = 1 ]; then
   ${RUN[@]+"${RUN[@]}"} "$TMP/check" --bound "${BAKES[@]}"
 elif [ ${#TIME[@]} -gt 0 ]; then
   ${RUN[@]+"${RUN[@]}"} "$TMP/check" "${TIME[@]}" "${BAKES[@]}"

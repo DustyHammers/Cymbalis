@@ -14,24 +14,29 @@ The bake has the format of tools/bake_preset.py, so the plugin's loader reads it
     knot's decay rate of its band (ln 1000 / rate); exc_norm the fully open knot's mode
     weights (the energy cascade's share weights); position weights 1; no drift; the pick
     vectors and LFO tables drawn as V19 draws them, from SEED;
-  * three entries: TIP (articulation tip, position 0.5, the BOW row), EDGE (edge, position
-    0.0, the EDGE row) and FOOT (foot, the pedal; no row), each with its stick click
-    (STICK_CLICK) and no contact, onset ramp, velocity table or NPZ data;
+  * four entries: TIP (articulation tip, position 0.5, the BOW row), EDGE (edge, position
+    0.0, the EDGE row), FOOT (foot, the pedal; no row) and SPLASH (splash, the pedal's foot
+    splash; no row), each with its stick click (STICK_CLICK; FOOT and SPLASH none) and no
+    contact, onset ramp, velocity table or NPZ data;
   * the "hihat" block: per knot its stick envelope, its raw envelope (the closed EDGE knots:
     FOOT plays them), its mode weights and its level per band (the fully open knot also its FREE
-    RING weights, from hihat_weights_free.json, and its smoothed stick envelope); the band decay rates at
+    RING weights, from hihat_weights_free.json, and its smoothed stick envelope); the foot splash
+    knots (articulation splash, from hihat_splash.json: their envelope as both stick and raw, as
+    FOOT keeps SPEAR's rise, their weights and level per band); the band decay rates at
     openness 0 (the closed EDGE V3) to 1; the choke rate, the FOOT rules, the pedal smoothing;
   * a tuning block: the output gain of every preset (-11 dB), HIT VARIATION on, and the hi-hat's
-    TIP OPEN LEVEL 60 %, TIP OPEN TICK +4 dB and RING FLOOR 100 %, and FREE RING off, TIP MODES 0 dB
-    and MAX OPEN 100 % (docs/TUNING.md).
+    TIP OPEN LEVEL 60 %, TIP OPEN TICK +4 dB and RING FLOOR 100 %, FREE RING off, TIP MODES 0 dB
+    and MAX OPEN 100 %, and SPLASH WINDOW 150 ms and SPLASH REOPEN 25 % (docs/TUNING.md).
 
-Level trims are measured afterwards with tools/cymbalis_trims and stored with
-tools/set_level_trims.py (docs/BUILDS.md); re-baking drops them.
+Level trims and skip threshold factors are measured afterwards with tools/cymbalis_trims and
+stored with tools/set_level_trims.py and tools/set_skip_thresholds.py (docs/BUILDS.md);
+re-baking drops them.
 
 Usage:
     python tools/bake_hihat.py --out resources/presets/hihat.bake.json
 """
 import argparse
+import json
 import os
 import platform
 import sys
@@ -54,7 +59,7 @@ TAU_REF_MS = 0.2               # unused: the hi-hat's strikes do not take the he
 PRESET_DIR = 'presets/hihat'
 SOURCES = ['presets/hihat/HiHat_A60.json', 'presets/hihat/data/hihat_envelopes.json',
            'presets/hihat/data/hihat_weights.json', 'docs/hihat_reference.py',
-           'presets/hihat/data/hihat_weights_free.json']
+           'presets/hihat/data/hihat_weights_free.json', 'presets/hihat/data/hihat_splash.json']
 # The stick click per articulation (Kris, 2026-11-20): gain, band (Hz), length and decay (ms).
 # The gains are set so that on a closed hit at velocity 1.0 the click's first-3 ms RMS is 3 dB
 # under the cymbal's own (mean power over 256 hits, measured with FastEngine; docs/PORT_MAP.md,
@@ -64,9 +69,11 @@ STICK_CLICK = {
     'tip': dict(stick_gain=0.1398, stick_bp_lo=1500.0, stick_bp_hi=16000.0, stick_len_ms=12.0, stick_decay_ms=1.2),
     'edge': dict(stick_gain=0.4189, stick_bp_lo=900.0, stick_bp_hi=12000.0, stick_len_ms=15.0, stick_decay_ms=2.5),
     'foot': dict(stick_gain=0.0),
+    'splash': dict(stick_gain=0.0),
 }
-# (entry name, articulation id, position): the BOW row plays TIP, the EDGE row EDGE; FOOT has no row.
-ENTRIES = [('TIP', 'tip', 0.5), ('EDGE', 'edge', 0.0), ('FOOT', 'foot', 0.0)]
+# (entry name, articulation id, position): the BOW row plays TIP, the EDGE row EDGE; FOOT and SPLASH
+# have no row (the pedal plays them).
+ENTRIES = [('TIP', 'tip', 0.5), ('EDGE', 'edge', 0.0), ('FOOT', 'foot', 0.0), ('SPLASH', 'splash', 0.0)]
 
 
 def effective(stick_gain):
@@ -160,6 +167,23 @@ def bake():
             # FREE RING (a Tuning window option): the fully open knot as a single free cymbal.
             **({'stick_free': enc(h.stick_free[kid]), 'weights_free': enc(h.w_free[kid])} if kid in h.w_free else {}),
         })
+    # The foot splash knots (Kris, 2026-11-25): their envelope as both stick and raw (the splash
+    # keeps SPEAR's rise, as FOOT does), their weights and their level per band (_lvl100).
+    splash = json.load(open(os.path.join(REPO, PRESET_DIR, 'data', 'hihat_splash.json')))
+    if splash.get('format') != 'cymbalis-hihat-splash-1' or splash['bands'] != nb or splash['n_modes'] != n:
+        raise BakeError('FAIL: hihat_splash.json: unknown format, or not the hi-hat\'s bands and modes')
+    for k in splash['knots']:
+        env = np.array(k['envelope'], dtype=np.float64).T     # bands x frames
+        w = np.array(k['weights'], dtype=np.float64)
+        if env.shape != (nb, int(k['frames'])) or w.shape != (n,):
+            raise BakeError(f'FAIL: hihat_splash.json knot {k["id"]}: envelope or weights of the wrong size')
+        knots.append({
+            'id': k['id'], 'capture': k['capture'], 'articulation': 'splash',
+            'openness': float(k['openness']), 'velocity': float(k['velocity']),
+            'frames': int(env.shape[1]),
+            'stick': enc(env), 'raw': enc(env), 'weights': enc(w),
+            'level_db': enc(ref.HiHat._lvl100(env)),
+        })
     hihat = {
         'format': 'cymbalis-hihat-1',
         'reference': 'docs/hihat_reference.py',
@@ -214,7 +238,8 @@ def bake():
         'tuning': {'format': 'cymbalis-tuning', 'version': 1, 'applied_by': 'tools/bake_hihat.py',
                    'cymbal': {'output_gain_db': -11.0, 'hit_variation': True, 'hh_tip_open_level': 60.0,
                               'hh_tip_open_tick_db': 4.0, 'hh_ring_floor': 100.0, 'hh_free_ring': False,
-                              'hh_tip_modes_db': 0.0, 'hh_max_open': 100.0}},
+                              'hh_tip_modes_db': 0.0, 'hh_max_open': 100.0, 'hh_splash_window_ms': 150.0,
+                              'hh_splash_reopen': 25.0}},
     }
 
 

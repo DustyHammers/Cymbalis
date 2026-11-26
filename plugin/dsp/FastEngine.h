@@ -155,6 +155,8 @@ public:
     // one's engine time and velocity.
     double pedalOpenness() const noexcept { return hihat_ ? pedalAt(timeSeconds()) : 0.0; }
     uint64_t footStrikes() const noexcept { return footStrikes_; }
+    uint64_t splashStrikes() const noexcept { return splashStrikes_; } // the foot splashes the pedal played
+    double lastSplashTime() const noexcept { return lastSplashTime_; }  // the last one's engine time (-1: none)
     double lastFootTime() const noexcept { return lastFootTime_; }
     double lastFootVelocity() const noexcept { return lastFootVelocity_; }
 
@@ -285,6 +287,12 @@ private:
         std::array<double, kExcitationBands> hhGain {}, hhGain1 {}, hhExtra {}, hhRate0 {}, hhLogRate {}, hhPeak {};
         std::array<double, kExcitationBands> hhRateRef {};
         double hhScale = 0.0, hhLevel = 0.0; // its peak level (with its calibration), its loudest band now
+        // SPLASH (the foot splash): struck as fully open (hhOpen 1, its rates at 1), it rings on as
+        // a TIP or EDGE strike does, but its own choke replaces their choke and opening rule
+        // (hiHatPedalStep): hhOMax is the highest smoothed openness since it was struck. Its
+        // envelope is read hhEnvT0 seconds ahead of its strike time (from its FOOT's time).
+        bool hhSplash = false;
+        double hhOMax = 0.0, hhEnvT0 = 0.0;
     };
 
     // A component of one mode whose onset ramp reaches 1 inside the current block.
@@ -523,6 +531,8 @@ private:
     // the pedal asked for before it.
     bool hhFreeRing_ = false;
     double hhTipModesDb_ = 0.0, hhMaxOpen_ = 1.0, pedalRaw_ = 0.0;
+    // SPLASH WINDOW (s) and SPLASH REOPEN (openness), from the tuning; taken at each FOOT.
+    double hhSplashWindowS_ = 0.15, hhSplashReopen_ = 0.25;
     Pcg64 hitRng_;
     int envBands_ = 0;                        // envelope bands: the NPZ data's, or the hi-hat's 22
     std::vector<double> bandVal0_, bandVal1_; // per band, scratch for one block
@@ -687,7 +697,7 @@ private:
     static constexpr double kHiHatOpenBlend = 0.1, kHiHatOpenAfterS = 0.03, kHiHatMaxRingS = 8.0;
     static constexpr double kHiHatOpenEps = 0.004, kHiHatStepMax = 50.0, kHiHatFloor = 1e-6;
     std::vector<int8_t> hhArt_;
-    int hhFootSlot_ = -1;
+    int hhFootSlot_ = -1, hhSplashSlot_ = -1;
     std::vector<std::vector<double>> hhLnStick_, hhLnRaw_, hhLnStickFree_; // FREE RING's: the knots that have it
     std::vector<double> hhWTip_, hhWEdge_, hhWMod_; // TIP MODES' scratch: closed TIP and EDGE weights at v, the result
     std::vector<double> hhLnRate_, hhLog_, hhExp_;
@@ -706,6 +716,16 @@ private:
     bool footArmed_ = false;
     uint64_t footStrikes_ = 0;
     double lastFootTime_ = -1.0, lastFootVelocity_ = 0.0;
+    // The foot splash: after a FOOT, armed until splashUntil_ (< 0: not armed), with the FOOT's
+    // time and velocity and the reopen level then; one SPLASH per FOOT (splashStrike). The next
+    // SPLASH strike's envelope starts at splashFootNext_ (< 0: at its own time, as when struck
+    // directly). footTapLow_: armed, a pedal CC has gone below footClosedBelow since the last FOOT
+    // (the fast tap: a later CC back up before the smoothed openness got there fires FOOT).
+    double splashUntil_ = -1.0, splashFootTime_ = 0.0, splashVelocity_ = 0.0, splashReopen_ = 0.25;
+    double splashFootNext_ = -1.0, lastSplashTime_ = -1.0;
+    bool footTapLow_ = false;
+    uint64_t splashStrikes_ = 0;
+    void splashStrike() noexcept;
 
     // Per-strike scratch (preallocated).
     std::vector<double> scratchPhase_, scratchVel_, scratchBellVel_, scratchPosW_, scratchPkT_;

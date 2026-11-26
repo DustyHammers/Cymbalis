@@ -141,6 +141,11 @@ struct CymbalTuning
     bool hhFreeRing = false;
     double hhTipModesDb = 0.0;
     double hhMaxOpen = 100.0;
+    // HI-HAT foot splash (docs/TUNING.md; Kris, 2026-11-25): after a FOOT, a SPLASH strike when
+    // the pedal's smoothed openness reaches SPLASH REOPEN (%, 5 .. 80) within SPLASH WINDOW (ms,
+    // 50 .. 400) of it. From the next FOOT on.
+    double hhSplashWindowMs = 150.0;
+    double hhSplashReopen = 25.0;
     // Energy cascade (FastEngine): while a band rings above the threshold, energy moves from
     // it into the bands above it. Amount 0: off. Bands are indices 0 .. 21 (as the band gains).
     double cascadeAmount = 0.0;        // 0 .. 1
@@ -212,6 +217,9 @@ constexpr const char* kHhFreeRingKey = "hh_free_ring";    // FREE RING, on / off
 constexpr const char* kHhTipModesKey = "hh_tip_modes_db"; // TIP MODES, dB
 constexpr const char* kHhMaxOpenKey = "hh_max_open";      // MAX OPEN, %
 constexpr double kHhTipModesMax = 20.0, kHhMaxOpenMin = 75.0, kHhMaxOpenMax = 100.0;
+constexpr const char* kHhSplashWindowKey = "hh_splash_window_ms"; // SPLASH WINDOW, ms
+constexpr const char* kHhSplashReopenKey = "hh_splash_reopen";    // SPLASH REOPEN, %
+constexpr double kHhSplashWindowMin = 50.0, kHhSplashWindowMax = 400.0, kHhSplashReopenMin = 5.0, kHhSplashReopenMax = 80.0;
 // The bake's per-mode stereo gains, written by tools/apply_tuning.py (BakeData::gainL/gainR).
 constexpr const char* kStereoKey = "stereo";
 constexpr const char* kRehitWeightsKey = "rehit_damp_weights"; // {articulation id: weight}

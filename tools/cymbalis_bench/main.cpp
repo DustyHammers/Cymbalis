@@ -189,7 +189,8 @@ int main(int argc, char** argv)
             const double p99 = blockTimes[std::min(blockTimes.size() - 1, blockTimes.size() * 99 / 100)];
             const double audio = static_cast<double>(total) / sr;
             const std::string strikeText =
-                std::to_string(strikes) + (engine.isHiHat() ? " + " + std::to_string(engine.footStrikes()) + " FOOT" : std::string());
+                std::to_string(strikes) + (engine.isHiHat() ? " + " + std::to_string(engine.footStrikes()) + " FOOT + " +
+                                                 std::to_string(engine.splashStrikes()) + " SPLASH" : std::string());
             std::printf("| %.0f Hz | %d | %d | %s | %.2f %% | %.0f | %.0f | %.0f | %.0f | %s |\n", sr,
                         engine.controlBlock(), block, strikeText.c_str(), 100.0 * engineSeconds / audio,
                         1e6 * strikeSeconds / double(strikes), 1e6 * p99, 1e6 * worstBlock, 1e6 * block / sr,

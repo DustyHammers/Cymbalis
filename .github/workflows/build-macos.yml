@@ -285,7 +285,8 @@ jobs:
       # three STICK CLICK weights must move; HIT VARIATION's switch must flip and its two spreads
       # move (NOVA); a tuning file saved and loaded back (through
       # stand-ins for the file panels) must hold and restore the tuning; on HI-HAT the panel
-      # shows the values that act on it and hides the others; on the TUNING page, STINE FLAT RIDE
+      # shows the values that act on it and hides the others, and the foot splash's SPLASH WINDOW
+      # and SPLASH REOPEN must move and be saved and loaded back; on the TUNING page, STINE FLAT RIDE
       # chosen in the CYMBAL box must show in the panel, a session saved on the page must reopen on
       # it (VST3), and the editor resized by the host must keep the panel's text size and fit it to
       # the page area (VST3: the AU host's resize does not reach the plugin's editor; both after the
@@ -296,12 +297,12 @@ jobs:
       # (tools/cymbalis_uitest).
       # 65 steps in each host took about 2.6 minutes per host on the runner (59 took 4.8 minutes in
       # all with EXTRA PAPER THIN 24"); 68 with the editor's sizes took under 8 minutes; 72 with STINE FLAT RIDE's took
-      # 6 minutes in all; 76 with the TUNING page's, within 10.
+      # 6 minutes in all; 76 with the TUNING page's, within 10; 77 with the splash's.
       - name: Editor mouse test (AU and VST3)
         timeout-minutes: 10
         run: |
           UITEST="build/CymbalisUiTest_artefacts/${BUILD_TYPE}/CymbalisUiTest.app/Contents/MacOS/CymbalisUiTest"
-          STEPS="opensize edge sticks channel drag reset none edgereset list stick preset shoulder swish raven paperthin konstan azcrash hihat blendhidden hihatplay hihatpedal hihatswing pedalchannel pedalcc konstan blendshown wheel arcs tuning wheeltuning voice raven voice swish voice profile paperthin voice ptprofile savetuning loadtuning azcrash voice azprofile savetuning loadtuning preset voice stine stinerows smokesession voice savetuning loadtuning nova noprofile nohihatvalues clickweights hitvariation savetuning loadtuning hihat hihattuning hihatvalues hihatopen savetuning loadtuning tuningpreset tuningclose tuning tuningclose dragsize tuning tuningresize savedpage savedsize"
+          STEPS="opensize edge sticks channel drag reset none edgereset list stick preset shoulder swish raven paperthin konstan azcrash hihat blendhidden hihatplay hihatpedal hihatswing pedalchannel pedalcc konstan blendshown wheel arcs tuning wheeltuning voice raven voice swish voice profile paperthin voice ptprofile savetuning loadtuning azcrash voice azprofile savetuning loadtuning preset voice stine stinerows smokesession voice savetuning loadtuning nova noprofile nohihatvalues clickweights hitvariation savetuning loadtuning hihat hihattuning hihatvalues hihatopen hihatsplash savetuning loadtuning tuningpreset tuningclose tuning tuningclose dragsize tuning tuningresize savedpage savedsize"
           echo "--- VST3 ---"
           "$UITEST" "$PWD/$VST3" $STEPS
           echo "--- AU ---"
