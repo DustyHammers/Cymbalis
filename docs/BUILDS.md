@@ -56,7 +56,7 @@ Since 2026-11-26 CI is lean while the presets are being developed (Kris: "we are
   - ad-hoc code signing;
   - pluginval and auval (native and Rosetta);
   - the two zips, packaged and uploaded as before.
-- **The test tools are still built every time** (`dhpool_selftest`, `CymbalisUiTest`, the bench), so a broken one is still a build error. They compile alongside the plugin and finish before its link, so they add well under a minute to the build (about 2.3 minutes in all with the compiler cache).
+- **The test tools are still built every time** (`dhpool_selftest`, `CymbalisUiTest`, the bench), so a broken one is still a build error. They compile alongside the plugin and finish before its link, so they add well under a minute to the build (2.3–2.8 minutes in all with the compiler cache).
 - **On request only, or on a `v*` release tag:**
   - the job pool self-test (dhpool);
   - the engine block times in dense playing (about 11 minutes);
@@ -67,7 +67,7 @@ Since 2026-11-26 CI is lean while the presets are being developed (Kris: "we are
   Their steps and timeouts are as they were; only when they run has changed (`if:` on each: a manual run with `full_tests`, or a `v*` tag).
 - **To run the full tests:** Actions → "Build macOS (VST3 + AU)" → Run workflow → pick the branch → tick "full tests".
 - **A release tag** (`v*`) runs everything, then publishes the release.
-- **Build time:** about BUILD_TIME minutes for the lean build, against about 46 minutes with everything.
+- **Build time:** about 6 minutes for the lean build (6 min 6 s in this change's own run: the build 2.8 minutes, the CPU benchmark 2.3, the rest under a minute), against about 46 minutes with everything.
 - **Before threads go on in the plugin** (step 3 of the kit plan), the dhpool self-test, the kit benchmark and the dense block times must run, and pass, on every pull request again. They are the multi-core checks the merge with Tympanis relies on. Tympanis needs the same change in its own workflow (done in the Tympanis session).
 
 ### The runner and Xcode
