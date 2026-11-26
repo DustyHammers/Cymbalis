@@ -236,17 +236,35 @@ void main()
 }
 )";
 
+// The felt, washer and wing nut on the bell (wire::CymbalHardware): lines in the cymbal's frame,
+// each end's radius, angle and height, projected with the cymbal's tilt and spin; each with its
+// colour and width.
+const char* const kHardwareVertex = R"(in vec3 aA;
+in vec3 aB;
+in vec4 aColour; // rgb, width in design units
+void main()
+{
+    vColour = aColour.rgb;
+    vec2 a = (project (aA.x, aA.y, aA.z) - uOrigin) * uPx, b = (project (aB.x, aB.y, aB.z) - uOrigin) * uPx;
+    gl_Position = quadCorner (a, b, 0.5 * aColour.w * uPx, 0.5 * aColour.w * uPx);
+}
+)";
+
 // A polygon on screen (design units), as a triangle fan: in one colour, or with uUseTexture the
-// background under it (the view's texture, its top row first).
+// texture under it (the view's background, its top row first; with uFlip a layer's, bottom row
+// first).
 const char* const kFillVertex = R"(in vec2 aPos;
 uniform vec2 uOrigin;
 uniform float uPx;
 uniform vec2 uViewPx;
+uniform float uFlip;
 out vec2 vUv;
 void main()
 {
     vec2 q = (aPos - uOrigin) * uPx;
     vUv = q / uViewPx;
+    if (uFlip > 0.5)
+        vUv.y = 1.0 - vUv.y;
     gl_Position = vec4 (q.x / uViewPx.x * 2.0 - 1.0, 1.0 - q.y / uViewPx.y * 2.0, 0.0, 1.0);
 }
 )";
@@ -292,13 +310,23 @@ void main()
 //==============================================================================
 struct CymbalView::Gpu
 {
-    std::unique_ptr<juce::OpenGLShaderProgram> mesh, surface, back, flash, flat, fill;
+    std::unique_ptr<juce::OpenGLShaderProgram> mesh, surface, back, flash, flat, fill, hardware;
     GLuint quadVao = 0, quadVbo = 0, flashVao = 0, flashVbo = 0;
     GLuint texture = 0;
     // The hi-hat's clutch and rod (flat: lines already on screen), and the polygons that hide
     // what is behind its top cymbal and its clutch and rod (fill).
     GLuint flatVao = 0, flatVbo = 0, flatIndex = 0, fillVao = 0, fillVbo = 0;
     int flatSegments = 0;
+    // The felt, washer and wing nut on the bell (every preset but the hi-hat): its lines, uploaded
+    // once per preset in the cymbal's frame (hardware: projected with the cymbal's tilt and spin);
+    // its silhouettes on screen (fill), made again only when the cymbal's tilt or spin changes.
+    GLuint bellVao = 0, bellVbo = 0, bellIndex = 0, bellFillVao = 0, bellFillVbo = 0;
+    int bellSegments = 0;
+    std::shared_ptr<const wire::CymbalHardware> bell;
+    std::array<double, 3> bellPose { 0.0, 0.0, 0.0 }; // the tilt and spin its silhouettes were made with
+    bool bellFansMade = false;
+    std::vector<float> bellFans;
+    std::vector<std::array<int, 2>> bellFanRanges;
     // A layer of lines: multisampled (as the view's own framebuffer), then resolved into a
     // texture, at the view's size. ok is false if the driver refuses it.
     struct Layer
@@ -601,16 +629,94 @@ struct CymbalView::Gpu
         glBindVertexArray (0);
     }
 
+    // The bell's hardware lines, once per preset: per quad corner, the corner, both ends (radius,
+    // angle, height in the cymbal's frame), the colour and width.
+    void uploadBell (std::shared_ptr<const wire::CymbalHardware> next)
+    {
+        bell = std::move (next);
+        bellFansMade = false;
+        bellSegments = 0;
+        if (bell == nullptr)
+            return;
+        constexpr float corners[4][2] = { { 0.0f, -1.0f }, { 0.0f, 1.0f }, { 1.0f, -1.0f }, { 1.0f, 1.0f } };
+        const auto polar = [] (double x, double y) { return std::array<float, 2> { (float) std::hypot (x, y), (float) std::atan2 (y, x) }; };
+        std::vector<float> quads;
+        quads.reserve (bell->lines.size() * 48);
+        for (const auto& l : bell->lines)
+        {
+            const auto a = polar (l.x0, l.y0), b = polar (l.x1, l.y1);
+            for (const auto& c : corners)
+                for (float v : { c[0], c[1], a[0], a[1], (float) l.z0, b[0], b[1], (float) l.z1, l.colour.r, l.colour.g, l.colour.b, l.width })
+                    quads.push_back (v);
+        }
+        glBindVertexArray (bellVao);
+        glBindBuffer (GL_ARRAY_BUFFER, bellVbo);
+        glBufferData (GL_ARRAY_BUFFER, (GLsizeiptr) (quads.size() * sizeof (float)), quads.data(), GL_STATIC_DRAW);
+        const auto stride = (GLsizei) (12 * sizeof (float));
+        glEnableVertexAttribArray (0);
+        glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, stride, nullptr);
+        glEnableVertexAttribArray (1);
+        glVertexAttribPointer (1, 3, GL_FLOAT, GL_FALSE, stride, (const void*) (2 * sizeof (float)));
+        glEnableVertexAttribArray (2);
+        glVertexAttribPointer (2, 3, GL_FLOAT, GL_FALSE, stride, (const void*) (5 * sizeof (float)));
+        glEnableVertexAttribArray (3);
+        glVertexAttribPointer (3, 4, GL_FLOAT, GL_FALSE, stride, (const void*) (8 * sizeof (float)));
+        bellSegments = (int) bell->lines.size();
+        uploadQuadIndices (bellIndex, bellSegments);
+        glBindVertexArray (0);
+    }
+
+    // The bell hardware's silhouettes on screen with the cymbal's frame, as triangle fans, when its
+    // tilt or spin changed since they were made.
+    void makeBellFans (const wire::Camera& cam, const wire::Frame& f)
+    {
+        const std::array<double, 3> pose { f.tiltX, f.tiltY, f.spinDeg };
+        if (bell == nullptr || (bellFansMade && pose == bellPose))
+            return;
+        bellFans.clear();
+        bellFanRanges.clear();
+        for (const auto& solid : bell->solids)
+        {
+            wire::hardwareSilhouette (cam, f, solid, hull);
+            if (hull.empty())
+                continue;
+            const int first = (int) bellFans.size() / 2;
+            double cx = 0.0, cy = 0.0;
+            for (const auto& q : hull)
+            {
+                cx += q[0];
+                cy += q[1];
+            }
+            const double n = (double) juce::jmax ((size_t) 1, hull.size());
+            bellFans.push_back ((float) (cx / n));
+            bellFans.push_back ((float) (cy / n));
+            for (size_t k = 0; k <= hull.size(); ++k)
+            {
+                bellFans.push_back (hull[k % hull.size()][0]);
+                bellFans.push_back (hull[k % hull.size()][1]);
+            }
+            bellFanRanges.push_back ({ first, (int) bellFans.size() / 2 - first });
+        }
+        glBindVertexArray (bellFillVao);
+        glBindBuffer (GL_ARRAY_BUFFER, bellFillVbo);
+        glBufferData (GL_ARRAY_BUFFER, (GLsizeiptr) (bellFans.size() * sizeof (float)), bellFans.data(), GL_DYNAMIC_DRAW);
+        glEnableVertexAttribArray (0);
+        glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+        glBindVertexArray (0);
+        bellPose = pose;
+        bellFansMade = true;
+    }
+
     void release()
     {
         layer.release();
         lowerLayer.release();
         for (auto& part : parts)
             part.release();
-        for (auto* vao : { &quadVao, &flashVao, &flatVao, &fillVao })
+        for (auto* vao : { &quadVao, &flashVao, &flatVao, &fillVao, &bellVao, &bellFillVao })
             if (*vao != 0)
                 glDeleteVertexArrays (1, vao);
-        for (auto* b : { &quadVbo, &flashVbo, &flatVbo, &flatIndex, &fillVbo })
+        for (auto* b : { &quadVbo, &flashVbo, &flatVbo, &flatIndex, &fillVbo, &bellVbo, &bellIndex, &bellFillVbo })
             if (*b != 0)
                 glDeleteBuffers (1, b);
         if (texture != 0)
@@ -621,6 +727,8 @@ struct CymbalView::Gpu
         flash.reset();
         flat.reset();
         fill.reset();
+        hardware.reset();
+        bell.reset();
     }
 };
 
@@ -732,6 +840,11 @@ void CymbalView::setPreset (int preset, const juce::String& loadError)
         const auto* shape = kPresets[(size_t) preset].shape;
         shownGeometry = shape != nullptr ? std::make_shared<const wire::Geometry> (*shape) : nullptr;
         shownLower = shape != nullptr && shape->lower != nullptr ? std::make_shared<const wire::Geometry> (*shape->lower) : nullptr;
+        // Every preset but the hi-hat (which keeps its clutch and rod): the felt, washer and wing
+        // nut on its bell top, at true size.
+        shownHardware = shownGeometry != nullptr && shownLower == nullptr
+                            ? std::make_shared<const wire::CymbalHardware> (wire::bellHardware (shape->R, shownGeometry->restHeight (0.0)))
+                            : nullptr;
         // On the hi-hat, its opening and wobble, for screen readers (and tools/cymbalis_uitest):
         // hiHatDescription, made when asked for.
         setTitle (shownLower != nullptr ? "HI-HAT" : "");
@@ -741,6 +854,7 @@ void CymbalView::setPreset (int preset, const juce::String& loadError)
         const juce::SpinLock::ScopedLockType sl (lock);
         pendingGeometry = shownGeometry;
         pendingLower = shownLower;
+        pendingHardware = shownHardware;
         numPendingHits = 0;
     }
     {
@@ -854,7 +968,9 @@ void CymbalView::newOpenGLContextCreated()
     g->flash = Gpu::build (context, kFlashVertex, kFlashFragment, { "aPos" });
     g->flat = Gpu::build (context, juce::String (kQuadGlsl) + kFlatVertex, kLineFragment, { "aCorner", "aA", "aB", "aColour" });
     g->fill = Gpu::build (context, kFillVertex, kFillFragment, { "aPos" });
-    if (g->mesh == nullptr || g->surface == nullptr || g->back == nullptr || g->flash == nullptr || g->flat == nullptr || g->fill == nullptr)
+    g->hardware = Gpu::build (context, juce::String (kProjectGlsl) + kQuadGlsl + kHardwareVertex, kLineFragment, { "aCorner", "aA", "aB", "aColour" });
+    if (g->mesh == nullptr || g->surface == nullptr || g->back == nullptr || g->flash == nullptr || g->flat == nullptr || g->fill == nullptr
+        || g->hardware == nullptr)
     {
         g->release();
         glFailed = true;
@@ -863,9 +979,9 @@ void CymbalView::newOpenGLContextCreated()
 
     for (auto& part : g->parts)
         part.create();
-    for (auto* vao : { &g->quadVao, &g->flashVao, &g->flatVao, &g->fillVao })
+    for (auto* vao : { &g->quadVao, &g->flashVao, &g->flatVao, &g->fillVao, &g->bellVao, &g->bellFillVao })
         glGenVertexArrays (1, vao);
-    for (auto* b : { &g->quadVbo, &g->flashVbo, &g->flatVbo, &g->flatIndex, &g->fillVbo })
+    for (auto* b : { &g->quadVbo, &g->flashVbo, &g->flatVbo, &g->flatIndex, &g->fillVbo, &g->bellVbo, &g->bellIndex, &g->bellFillVbo })
         glGenBuffers (1, b);
 
     const float unit[] = { 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f };
@@ -932,6 +1048,7 @@ void CymbalView::renderOpenGL()
     auto& top = g.parts[0];
     auto& bottom = g.parts[1];
     std::shared_ptr<const wire::Geometry> newGeometry, newLower;
+    std::shared_ptr<const wire::CymbalHardware> newHardware;
     bool geometryChanged = false;
     {
         const juce::SpinLock::ScopedLockType sl (lock);
@@ -939,6 +1056,7 @@ void CymbalView::renderOpenGL()
         {
             newGeometry = pendingGeometry;
             newLower = pendingLower;
+            newHardware = pendingHardware;
             geometryChanged = true; // also to none (a preset without a wireframe)
         }
         g.numHits = numPendingHits;
@@ -949,6 +1067,7 @@ void CymbalView::renderOpenGL()
     {
         top.upload (std::move (newGeometry));
         bottom.upload (std::move (newLower));
+        g.uploadBell (std::move (newHardware));
         g.lowerEvaluated = false;
         g.lowerDrawn = false;
         g.shownPose[0] = -1.0;
@@ -1047,6 +1166,11 @@ void CymbalView::renderOpenGL()
                 g.shownPose = pose;
             }
         }
+        // Every other preset: the felt, washer and wing nut on the bell; their silhouettes made
+        // again when the cymbal's tilt or spin changed.
+        const bool bellHardware = ! hiHat && g.bell != nullptr && g.bellSegments > 0;
+        if (bellHardware)
+            g.makeBellFans (geo.camera, top.frame);
 
         // The uniforms a cymbal's lines share: its frame (tilt, spin, lift, top and bottom on
         // screen) and its camera.
@@ -1101,6 +1225,51 @@ void CymbalView::renderOpenGL()
             segments (0, part.surfaceSegments);
         };
 
+        // The bell hardware's lines (max, over what is there), projected with the cymbal's frame.
+        const auto bellLines = [&] {
+            g.hardware->use();
+            common (*g.hardware, top);
+            glUniform1f (Gpu::at (*g.hardware, "uGlowGain"), 0.0f);
+            glEnable (GL_BLEND);
+            glBlendFunc (GL_ONE, GL_ONE);
+            glBlendEquation (GL_MAX);
+            glBindVertexArray (g.bellVao);
+            segments (0, g.bellSegments);
+        };
+        // The bell hardware's silhouettes: mode 0 multiplies what is there by `keep` (in the
+        // layer); mode 1 puts the view's background there; mode 2 lightens it with the lines'
+        // layer (max).
+        const auto bellFill = [&] (int mode, float keep) {
+            g.fill->use();
+            glUniform2f (Gpu::at (*g.fill, "uOrigin"), origin.x, origin.y);
+            glUniform1f (Gpu::at (*g.fill, "uPx"), px);
+            glUniform2f (Gpu::at (*g.fill, "uViewPx"), viewW, viewH);
+            glUniform3f (Gpu::at (*g.fill, "uColour"), keep, keep, keep);
+            glUniform1f (Gpu::at (*g.fill, "uUseTexture"), mode == 0 ? 0.0f : 1.0f);
+            glUniform1f (Gpu::at (*g.fill, "uFlip"), mode == 2 ? 1.0f : 0.0f);
+            glUniform1i (Gpu::at (*g.fill, "uTexture"), 0);
+            glActiveTexture (GL_TEXTURE0);
+            glBindTexture (GL_TEXTURE_2D, mode == 2 ? g.layer.texture : g.texture);
+            if (mode == 0)
+            {
+                glEnable (GL_BLEND);
+                glBlendFunc (GL_ZERO, GL_SRC_COLOR);
+                glBlendEquation (GL_FUNC_ADD);
+            }
+            else if (mode == 1)
+                glDisable (GL_BLEND);
+            else
+            {
+                glEnable (GL_BLEND);
+                glBlendFunc (GL_ONE, GL_ONE);
+                glBlendEquation (GL_MAX);
+            }
+            glBindVertexArray (g.bellFillVao);
+            for (const auto& range : g.bellFanRanges)
+                glDrawArrays (GL_TRIANGLE_FAN, range[0], range[1]);
+            glBlendFunc (GL_ONE, GL_ONE);
+        };
+
         // The lines' layer, as the reference draws it: the surface lines over one another in their
         // order, lightened (max) by the mesh; on the dented mesh, the surface lines over the mesh.
         // Then the layer lightens the background. (Without a layer, everything lightens the
@@ -1139,6 +1308,13 @@ void CymbalView::renderOpenGL()
                 glEnable (GL_BLEND);
                 drawMesh (top, 0.0f);
             }
+            // The felt, washer and wing nut, in the layer (as the hi-hat's clutch): their
+            // silhouettes keep 0.08 of the lines behind them, then their own lines over all.
+            if (bellHardware && layered)
+            {
+                bellFill (0, 0.08f);
+                bellLines();
+            }
         }
         else
         {
@@ -1165,6 +1341,7 @@ void CymbalView::renderOpenGL()
                 glUniform2f (Gpu::at (*g.fill, "uViewPx"), viewW, viewH);
                 glUniform3f (Gpu::at (*g.fill, "uColour"), keep, keep, keep);
                 glUniform1f (Gpu::at (*g.fill, "uUseTexture"), layered ? 0.0f : 1.0f);
+                glUniform1f (Gpu::at (*g.fill, "uFlip"), 0.0f);
                 glUniform1i (Gpu::at (*g.fill, "uTexture"), 0);
                 glActiveTexture (GL_TEXTURE0);
                 glBindTexture (GL_TEXTURE_2D, g.texture);
@@ -1235,6 +1412,22 @@ void CymbalView::renderOpenGL()
         glBlendEquation (GL_FUNC_ADD);
         if (! hiHat)
             drawMesh (top, kGlowPerUnit);
+
+        // The bell hardware hides the glow of the lines behind it too (the reference blooms the
+        // cymbal before the hardware clears it): inside its silhouettes the view shows the
+        // background lightened by the layer (its lines kept to 0.08 there, and the hardware's), as
+        // before the glow. Without a layer, the background there, then the hardware's lines.
+        if (bellHardware)
+        {
+            bellFill (1, 1.0f);
+            if (layered)
+                bellFill (2, 1.0f);
+            else
+                bellLines();
+            glEnable (GL_BLEND);
+            glBlendFunc (GL_ONE, GL_ONE);
+            glBlendEquation (GL_FUNC_ADD);
+        }
 
         // The flashes where the hits struck, added.
         const auto& f = top.frame;
@@ -1307,9 +1500,11 @@ void CymbalView::paint (juce::Graphics& g)
 }
 
 // The background, and the mesh and surface lines at rest lightening it (max), at `scale` pixels
-// per design unit. The hi-hat as in renderOpenGL, at its opening: the bottom cymbal, hidden inside
-// the top cymbal's outline, the top cymbal, the clutch and rod's silhouettes clearing the lines
-// behind them (to 0.08), and the clutch and rod lightening it all.
+// per design unit; on every preset but the hi-hat, the felt, washer and wing nut's silhouettes
+// clearing the lines behind them (to 0.08), and their lines lightening it all. The hi-hat as in
+// renderOpenGL, at its opening: the bottom cymbal, hidden inside the top cymbal's outline, the top
+// cymbal, the clutch and rod's silhouettes clearing the lines behind them (to 0.08), and the
+// clutch and rod lightening it all.
 juce::Image CymbalView::renderStill (float scale) const
 {
     const int w = juce::jmax (1, juce::roundToInt ((float) getWidth() * scale)), h = juce::jmax (1, juce::roundToInt ((float) getHeight() * scale));
@@ -1388,13 +1583,18 @@ juce::Image CymbalView::renderStill (float scale) const
             }
         }
     };
-    // A polygon in design units, filled black at `opacity` over the layer: what it hides keeps
-    // 1 - opacity of its light.
+    // A polygon in design units, filled black at `opacity` over the layer (and the surface lines'
+    // layer, where they have one of their own): what it hides keeps 1 - opacity of its light.
     const auto hide = [&] (const juce::Path& path, float opacity) {
-        juce::Graphics lg (layer);
-        lg.addTransform (juce::AffineTransform::translation ((float) -origin.x, (float) -origin.y).scaled (scale));
-        lg.setColour (juce::Colours::black.withAlpha (opacity));
-        lg.fillPath (path);
+        for (auto* lines : { &layer, &surfaceLayer })
+        {
+            if (! lines->isValid())
+                continue;
+            juce::Graphics lg (*lines);
+            lg.addTransform (juce::AffineTransform::translation ((float) -origin.x, (float) -origin.y).scaled (scale));
+            lg.setColour (juce::Colours::black.withAlpha (opacity));
+            lg.fillPath (path);
+        }
     };
     juce::Image hardware;
     if (hiHat)
@@ -1447,7 +1647,37 @@ juce::Image CymbalView::renderStill (float scale) const
         }
     }
     else
+    {
         drawCymbal (*shownGeometry, 0.0);
+        if (shownHardware != nullptr)
+        {
+            // The felt, washer and wing nut at rest: their silhouettes clear the lines behind
+            // them (to 0.08), and their lines lighten it all.
+            const auto& geo = *shownGeometry;
+            const wire::Frame atRest; // no tilt, spin or lift
+            std::vector<std::array<float, 2>> hull;
+            for (const auto& solid : shownHardware->solids)
+            {
+                wire::hardwareSilhouette (geo.camera, atRest, solid, hull);
+                juce::Path p;
+                for (size_t k = 0; k < hull.size(); ++k)
+                    k == 0 ? p.startNewSubPath (hull[k][0], hull[k][1]) : p.lineTo (hull[k][0], hull[k][1]);
+                p.closeSubPath();
+                hide (p, 0.92f);
+            }
+            hardware = blackLayer();
+            juce::Graphics hg (hardware);
+            hg.addTransform (juce::AffineTransform::translation ((float) -origin.x, (float) -origin.y).scaled (scale));
+            for (const auto& l : shownHardware->lines)
+            {
+                double ax = 0.0, ay = 0.0, bx = 0.0, by = 0.0;
+                wire::projectHardwarePoint (geo.camera, atRest, l.x0, l.y0, l.z0, ax, ay);
+                wire::projectHardwarePoint (geo.camera, atRest, l.x1, l.y1, l.z1, bx, by);
+                hg.setColour (toColour (l.colour));
+                hg.drawLine ((float) ax, (float) ay, (float) bx, (float) by, l.width);
+            }
+        }
+    }
 
     // Lighten: the brighter of the background and the lines, per channel.
     juce::Image::BitmapData out (image, juce::Image::BitmapData::readWrite);

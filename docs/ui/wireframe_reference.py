@@ -35,6 +35,8 @@ History:
   dark bronze (copper zone, copper_k 0.5), its grooves drawn in the band's colour; the bell, the
   inner bow and the outer band an even light gold (flat photo table); no zone-edge rings
   (edge_lines empty).
+- 2026-11-26, approved by Kris: the felt, washer and wing nut on top of the bell of every preset
+  but the hi-hat (bell_hardware), from the project session's mockups.
 """
 import math
 import numpy as np
@@ -1001,6 +1003,80 @@ def hihat_draw(openness=0.0, cx=787, cy=430, scale=270, max_gap_in=0.7):
     img = img * (1 - sil[..., None] / 255.0 * 0.92)
     img = np.maximum(img, lay)
     return img
+
+
+FELT = np.array([138, 140, 144], np.float32)       # BGR of #908C8A: the felt; its fibres at 0.8 (#73706E)
+WASHER = np.array([93, 93, 96], np.float32)        # #605D5D
+STEEL_NUT = np.array([168, 170, 174], np.float32)  # #AEAAA8: the wing nut, the clutch's steel
+HIGHLIGHT = np.array([212, 216, 222], np.float32)  # #DED8D4: the wings' highlights
+
+
+def bell_hardware(c, img):
+    """The felt, washer and wing nut on top of a cymbal's bell, at the centre (every preset but
+    the hi-hat, which keeps its clutch and rod): approved by Kris on 2026-11-26 from the project
+    session's mockups (1_felt_and_wing_nut_closeup.png, 2_felt_and_wing_nut_all_rides.png). Sizes in
+    inches, converted with the cymbal's radius R (true size). c is a drawn Cymbal or Cymbal2 at
+    rest, img its drawing (float BGR); returns img with the hardware: the hardware's silhouettes
+    clear the cymbal lines behind them (to 0.08), and its own lines are drawn over all, its back
+    lines included (as hihat_draw's clutch). The groundwork for the sizzle chain, which hooks in
+    under the wing nut."""
+    lay = np.zeros_like(img)
+    inch = 1.0 / c.c['R']; z0 = float(c.height(0.0))
+    f_r, f_h = 0.75 * inch, 0.55 * inch           # felt: 1.5" across, 0.55" tall
+    w_r, w_h = 0.62 * inch, 0.07 * inch           # washer: 1.24" across, 0.07" thick
+    b_r, b_h = 0.22 * inch, 0.42 * inch           # wing nut's boss: 0.44" across, 0.42" tall
+    zf1 = z0 + f_h; zw1 = zf1 + w_h; zb1 = zw1 + b_h
+    proj = c.project
+
+    def line3d(p, q, col, th=1):
+        a, b, _ = proj(np.array([p[0], q[0]]), np.array([p[1], q[1]]), np.array([p[2], q[2]]))
+        cv2.line(lay, (int(a[0] * 4), int(b[0] * 4)), (int(a[1] * 4), int(b[1] * 4)),
+                 tuple(float(v) for v in col), th, cv2.LINE_AA, shift=2)
+
+    def outline(X, y, Z, col, th=1):
+        px, py, _ = proj(X, np.full_like(X, y), Z)
+        cv2.polylines(lay, [np.stack([px * 4, py * 4], 1).astype(np.int32)], False,
+                      tuple(float(v) for v in col), th, cv2.LINE_AA, shift=2)
+
+    hh_draw_cyl(lay, proj, 0, 0, z0, zf1, f_r, FELT, n=64, rings=(z0 + 0.5 * f_h,), th=1)
+    # the felt's fibres: 70 short vertical strokes over its front half (y > 0 faces the camera),
+    # each from 5-30 % up the felt, 30-60 % of its height long, at a fixed seeded spread
+    rng = np.random.default_rng(4)
+    for a in np.linspace(0.05 * np.pi, 0.95 * np.pi, 70) + rng.uniform(-0.02, 0.02, 70):
+        zz = z0 + rng.uniform(0.05, 0.3) * f_h
+        line3d((f_r * math.cos(a), f_r * math.sin(a), zz), (f_r * math.cos(a), f_r * math.sin(a), zz + rng.uniform(0.3, 0.6) * f_h), FELT * 0.8)
+    hh_draw_cyl(lay, proj, 0, 0, zf1, zw1, w_r, WASHER, n=64, th=1)
+    hh_draw_cyl(lay, proj, 0, 0, zw1, zb1, b_r, STEEL_NUT, n=48, rings=(zw1 + 0.5 * b_h,), th=1)
+    # the wings: a rounded paddle each side along x, a plate 0.09" thick, its outline an ellipse
+    # 0.54" wide and 0.8" tall, centred 0.27" out from the boss's side and 0.5" above the washer,
+    # tilted 18 degrees outward; its back outline (y < 0) at 0.7, and highlights across the plate at
+    # its outermost and topmost points
+    wings = []
+    for s in (-1, 1):
+        t = np.linspace(-0.5 * np.pi, 1.5 * np.pi, 60)
+        xe = b_r + 0.27 * inch + 0.27 * inch * np.cos(t); ze = zw1 + 0.5 * inch + 0.4 * inch * np.sin(t)
+        tilt = math.radians(18); xr = b_r + (xe - b_r) * math.cos(tilt) + (ze - zw1) * math.sin(tilt) * 0.6
+        X = s * np.maximum(xr, 0.9 * b_r); Z = ze
+        outline(X, -0.045 * inch, Z, STEEL_NUT * 0.7); outline(X, +0.045 * inch, Z, STEEL_NUT)
+        for i in (int(np.argmax(np.abs(X))), int(np.argmax(Z))):
+            line3d((X[i], -0.045 * inch, Z[i]), (X[i], 0.045 * inch, Z[i]), HIGHLIGHT)
+        wings.append((X, Z))
+    # the silhouettes: the felt, washer and boss cylinders and each wing's convex hull clear the
+    # cymbal lines behind them
+    sil = np.zeros(img.shape[:2], np.uint8)
+    def fill_hull(px, py):
+        hull = cv2.convexHull(np.stack([px, py], 1).astype(np.float32) * 4).astype(np.int32)
+        cv2.fillPoly(sil, [hull], 255, cv2.LINE_AA, shift=2)
+    t2 = np.linspace(0, 2 * np.pi, 49)
+    for (za, zb_, r) in ((z0, zf1, f_r), (zf1, zw1, w_r), (zw1, zb1, b_r)):
+        pa = proj(r * np.cos(t2), r * np.sin(t2), np.full_like(t2, za))
+        pb = proj(r * np.cos(t2), r * np.sin(t2), np.full_like(t2, zb_))
+        fill_hull(np.concatenate([pa[0], pb[0]]), np.concatenate([pa[1], pb[1]]))
+    for (X, Z) in wings:
+        p = proj(np.concatenate([X, X]), np.concatenate([np.full_like(X, -0.045 * inch), np.full_like(X, 0.045 * inch)]), np.concatenate([Z, Z]))
+        fill_hull(p[0], p[1])
+    img = img * (1 - sil[..., None] / 255.0 * 0.92)
+    return np.maximum(img, lay)
 
 
 def hihat_pedal(openness=0.0, x0=58, y0=735, length=230):
