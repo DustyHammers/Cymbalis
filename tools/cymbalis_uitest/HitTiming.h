@@ -23,7 +23,8 @@
 // RAVEN, EXTRA PAPER THIN 24", KONSTAN CRASH 18" and CRASH 16", the heaviest cymbals to draw (their dented meshes), and HI-HAT (two
 // dented cymbals, its clutch and rod), at normal priority with 256-sample blocks. On HI-HAT the
 // notes are its own (42 and 46) and its pedal CC sweeps from closed to open and back every 2 s, so
-// the hats and the pedal drawing move as well.
+// the hats and the pedal drawing move as well. Then once more with HAMMERED THIN RIDE and its
+// sizzle chain on (docs/UI_SPEC.md section 11): the chain's beads drawn, moving with the sizzle.
 // For each case: processBlock's median and 99th percentile over all its runs, each run's
 // worst block (and the worst against the block's time budget), the audio thread's CPU time
 // per block, the CPU time of the rest of the process, the message thread's CPU time, and
@@ -67,6 +68,7 @@ private:
         bool realtime;
         bool checkAfter; // after the last hit, count the frames, paints and hit updates
         int preset = -1; // the preset selected (cymbalis::kPresets), or -1: the default
+        bool chain = false; // its sizzle chain on (its beads drawn moving with the sound)
     };
 
     void timerCallback() override;

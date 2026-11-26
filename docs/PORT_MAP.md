@@ -1651,3 +1651,60 @@ Per articulation (TIP, EDGE, FOOT, SPLASH): level, velocity curve, brightness vs
 - **The splash's captures outlast the strike's 8 s.** The captures are still 43–47 dB under their own peak at 8 s (9.6 s of data). A splash with the foot left up ends at `kHiHatMaxRingS` (8 s after its strike) with the 10 ms end fade, about 20 dB under its level at 2–3 s (−65 dB re full scale in the fully open gesture, so about −85 dB). This is as the spec gives it ("up to `kHiHatMaxRingS`"); a longer limit would be a change.
 - **The splash's join is a level rise, not a click** (2026-11-26). In the fully open gesture the splash is struck 87.2 ms after the stomp (38.3 ms after the FOOT). Over 5 ms windows high-passed at 1 kHz, the output steps up by 2.7 dB where the splash enters (−38.8 to −36.1 dB re full scale). The prototype's check asked for 2 dB. The splash alone enters at about the FOOT's level (−39.7 dB in its first 5 ms, then −40.0, −39.6, −41.0, −41.3 and −41.6: no onset peak), so two sounds of about equal level add up to about +2.7 dB. The FOOT alone already steps by up to 2.6 dB between 5 ms windows over the 30 ms before.
 - **The FOOT is still choked by its own close.** With a splash, the FOOT chick stays as it was, and the ring after it is the splash's.
+
+## Sizzle chain
+
+Added 2026-11-26. Kris approved the sound by ear on 2026-11-26, from the project session's prototype (renders "Sizzle_chain_STINE" and "Sizzle_chain_HAMMERED", last round). A bead chain resting on the ride, on STINE FLAT RIDE, HAMMERED THIN RIDE, SWISH, RAVEN and EXTRA PAPER THIN 24" only: switched on and off on the TUNING page (its SIZZLE CHAIN group), per preset, saved with the session (`chain_<preset id>`, 1 or 0; none: off), not a host parameter. On, the ride sizzles and is damped slightly; off, it plays bit for bit as without it. Its values are tuning values (`docs/TUNING.md`, "Sizzle chain"). Kris also chose one silver strand, beads moving with the same drive as the sound (`docs/UI_SPEC.md` section 11) and the switch in a group at the top of the TUNING page.
+
+### What the captures showed
+
+The project session measured Kris's SPEAR captures of two sizzle cymbals, a Spizz 22″ and a Wuhan 20″ (the captures never enter the repo):
+
+- **It keeps the top end alive.** Without a chain a ride's top (above 5 kHz) dies 20–30 dB under its low end by 2 s; with one it stays level with the low end through the decay.
+- **It follows plate displacement.** Bow and edge sizzle alike against displacement (within about 2 dB), not against low-band loudness (a 13 dB spread).
+- **It stops at a fixed plate movement**, whatever the velocity.
+- **It sounds on the cymbal's own resonances**, with a random flicker in time with the plate's swing.
+
+### The model (`plugin/dsp/SizzleChain.h/.cpp`, inside each cymbal's `FastEngine`)
+
+- **The drive, per strike.** Its displacement `disp_s(t)` is the root sum of squares of its modes under 1 kHz, each amplitude (the strike's coupling of the mode) weighted by 300 Hz / f, from the amplitudes and decay rates analytically (the onset ramps ignored). Its drive is `d_s(t) = W(position) · (v / 0.9)^VELOCITY EFFECT · disp_s(t) / disp_s(0.5 s)`: 0.5 s after the strike, its weight times its velocity factor. `W` is linear in dB in the strike's position between EDGE DRIVE (0.0), BOW DRIVE (0.5) and BELL DRIVE (1.0), whatever the row's name (STINE's CENTER rows are at 1.0); `v` is the velocity as the engine gets it. Each strike is kept as a record (up to 32; then the weakest is replaced) of its low modes' weighted squared amplitudes over its displacement² at 0.5 s and their decay per block; the weights are applied when the drive is summed, so new settings act on ringing strikes too.
+- **The total and the gate**, every 32 samples: `D = sqrt(Σ d_s²)`, `g = clamp((20 log10 D − STOPS AT) / 6 dB, 0, 1)`; linear across the 32 samples.
+- **The swing.** `u(t)` is the plate's displacement waveform from its 16 largest low modes (by the bake's coupling × 300 Hz / f), each strike adding its own amplitudes and phases scaled as its drive; over its own RMS, clipped to ±3. `r(t)` is white noise through a 2nd-order Butterworth low-pass at 25 Hz, scaled to mean 1 and standard deviation 0.7 and clipped at 0. The envelope is `env = D · g · max(0, 1 + SWING · u · r)`.
+- **The sizzle** rings on the preset's own modes from 3.5 to 16 kHz, a resonator each (STINE 397, HAMMERED THIN 297, SWISH 291, RAVEN 384, EXTRA PAPER THIN 395: all of them; 4 at a time in float SIMD). Each has `t60 = min(its chain-damped t60, 0.6 s)`, a fixed Rayleigh (σ = 1) weight and the engine's own left and right gains for the mode (with the stereo values), so the sizzle sits where the cymbal does. One white noise × `env`, the same for both channels, excites them all. Its own seeded generator (xorshift128+, the bake's `chain.seed`), so nothing else's draws move.
+- **Level and colour.** At `env = 1` each third-octave band's power (mono mean of L and R, before the output gain, which the sizzle then passes through as the cymbal does) is `C_b · ref_ms · SIZZLE LEVEL`. The per-mode gains are set analytically from each resonator's response to white noise; within a band the modes follow `C(f)` interpolated in dB and their weights. `C_b`, from the Spizz capture (approved level included): 4 kHz −12.1, 5 kHz −7.4, 6.3 kHz −8.1, 8 kHz −10.1, 10 kHz −12.2, 12.5 kHz −13.7, 16 kHz −17.3 dB; none below 3.5 kHz.
+- **`ref_ms`** is the preset's mean square of the output's 40–1000 Hz band (4th-order Butterworth, mono mean of L and R) over 0.3–1.0 s after a lone BOW strike at velocity 0.9 with the chain's damping on and HIT VARIATION off, before the output gain. `tools/cymbalis_trims --chain-ref` measures it in memory with the plugin's engine and `tools/set_chain_ref.py` stores it in the bake's `chain` block (with the seed, from `--init`; `docs/BUILDS.md`). Re-baking drops the block, as it drops the trims.
+- **Damping.** With the chain on, each new strike's modes take `t60 / (1 + DAMPING · (f / 4 kHz)^1.5)`: with 0.35, about −4 % below 1 kHz, −11 % at 2 kHz, −33 % at 5 kHz and −58 % at 10 kHz. Ringing strikes keep their decay, so switching never clicks.
+- **Switching.** The sizzle fades in or out over 50 ms; its drive is tracked whether the chain is on or off, so a ride already ringing sizzles at once. Off and faded, it adds nothing; its resonators are cleared then, or after 1.2 s with nothing going in.
+
+The defaults are the same on all five presets: SIZZLE LEVEL 0 dB, EDGE DRIVE +6 dB, BOW DRIVE 0 dB, BELL DRIVE −10 dB, VELOCITY EFFECT 1.00, STOPS AT −28 dB, SWING 1.20, DAMPING 0.35.
+
+### Cost
+
+On this repo's Linux machine (`cymbalis_bench`, 48 kHz, 256-sample blocks, all slots playing) the chain adds about 0.6 to 2 % of one core per cymbal (STINE 5.3 → 5.9 %, HAMMERED THIN 4.0 → 5.4 %, RAVEN 4.2 → 6.2 %, EXTRA PAPER THIN 4.8 → 6.3 %), far inside the 3× real-time rule. A strike's drive and swing are set up in `strike()` (a pass over its low modes): `strike()`'s time in dense playing is unchanged within the machine's noise (`--dense --chain`), so the single-strike spike is no worse. `cymbalis_bench --chain` (and `--dense --chain`) plays with it on; CI runs both on the five presets.
+
+### Checked (in memory, 2026-11-26)
+
+`tools/cymbalis_identity/run.sh` (bit for bit) and `run.sh --chain` (`check.cpp`'s `--chain`), no audio written:
+
+- **Chain off:** every preset bit for bit as `main`, the five with a chain block included (74 identical results with the default tuning and with the cascade and dampings on).
+- **Levels against the prototype** (sizzle alone: chain on minus chain on with the sizzle muted, which keeps the damping; mono mean, dB re full scale after the output gain, 0.3–0.8 s after a lone strike, HIT VARIATION off):
+
+  | Row | STINE 0.9 | STINE 0.5 | HAMMERED THIN 0.9 | HAMMERED THIN 0.5 |
+  |---|---|---|---|---|
+  | EDGE | −33.0 (−41) | −38.3 (−47) | −30.6 (−40) | −35.4 (−45) |
+  | BOW | −39.6 (−45) | −44.7 (−52) | −36.7 (−44) | −41.8 (−50) |
+  | BELL (STINE: CENTER) | −49.6 (−55) | −54.7 (−61) | −46.9 (−52) | −52.0 (−60) |
+
+  The prototype's in brackets. The plugin is 5 to 10 dB louder; see below.
+- **Order:** EDGE above BOW above BELL at both velocities, soft hits quieter, the gate closing and the sizzle gone (more than 100 dB down 0.6 s after it closes), on all five. The soft hit stops sooner on every row but STINE's EDGE (below).
+- **When the gate shuts** (BOW at 0.9 / 0.5): STINE 6.94 / 5.42 s (the task: about 5.8 s), HAMMERED THIN 4.23 / 3.43 s (about 4.5 s), SWISH 4.67 / 3.89 s, RAVEN 4.82 / 3.95 s, EXTRA PAPER THIN 5.91 / 4.69 s.
+- **Stereo:** the sizzle's L/R balance within 1 dB of the cymbal's own in the same band (3.5–16 kHz) on all five. Its L–R correlation is −0.06 to +0.07 on all five; the cymbal's own there is −0.30 to +0.23 depending on the row (BOW: within 0.1 on HAMMERED THIN, EXTRA PAPER THIN and RAVEN, not on STINE, 0.23 against −0.06, or SWISH, −0.12 against −0.01).
+- **Switching** at 1 s while a BOW hit rings: no sample-to-sample step in the fades larger than the sizzle's own before or after; after switching off and its 50 ms fade the left channel is bit for bit as the chain's damping alone and the right one within 2.1e-7 of it (−119 dB re the peak on STINE, the most: the right-channel high-pass's state still holds a trace of the sizzle, which dies with the filter's own response); before switching on, nothing changes; switched on, it sizzles at once at the level a chain on from the start has (within the swing's flicker, about 1 dB).
+
+### Things that differ from the task's expectations (reported; the formulas are as approved)
+
+- **The level is 5 to 10 dB above the prototype's table.** With SWING at 0 the plugin's STINE BOW at 0.9 is −43.4 dB, within 0.5 dB of what the calibration predicts (−43.9) and 1.6 dB from the prototype's −45. The swing adds about 4.5 dB: `max(0, 1 + SWING · u · r)` with SWING 1.2, `u` of RMS 1 and `r` of mean 1 and standard deviation 0.7 has a mean square of about 2.8, and the calibration sets the bands at `env = 1`. The prototype's table suggests its swing did not add power (or its `u` was scaled otherwise). SIZZLE LEVEL at about −4.5 dB brings the plugin to the table within about ±3 dB on BOW and BELL; normalising the swing factor's power would do the same without changing SIZZLE LEVEL. Neither is done: Kris decides by ear.
+- **EDGE is a further 1.5–2 dB above BOW** than the prototype's (+6 dB with EDGE DRIVE's default +6, against the table's +4 to +4.5), and the velocity effect is −5.1 dB from 0.9 to 0.5 (VELOCITY EFFECT 1.0: `20 log10 (0.5 / 0.9)`), against the table's −6 to −8.
+- **STINE's EDGE soft hit stops later than its hard one** (12.6 s against 11.8 s at 0.5 and 0.9). Its displacement curve, from its own modes' amplitudes, decays more slowly after 0.5 s than the hard hit's (a softer edge strike puts more of its energy in the long-ringing low modes), and with EDGE DRIVE's +6 dB the gate closes late, where that difference adds up. Every other row on all five stops sooner when soft.
+- **STINE's BOW stops at 6.9 s** at 0.9, against the task's "about 5.8 s"; HAMMERED THIN's at 4.2 s against "about 4.5 s".
+- **The correlation** (above): the sizzle has one stereo image, from fixed random weights spread over every mode in its band; the cymbal's own high band moves with the strike and rests on fewer, stronger modes.

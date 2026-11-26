@@ -909,6 +909,18 @@ void Content::refresh()
             pedal.setOpening (o);
         }
     }
+    // The sizzle chain (its presets, while it is on; UI_SPEC section 11): drawn on the cymbal, its
+    // beads lifted with the sound's chain envelope, smoothed here: a rise at once, a fall with a
+    // 60 ms release, at most 1.5.
+    {
+        const bool chainOn = processor.presetHasChain (preset) && processor.chainOn (preset);
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        const float target = chainOn ? juce::jlimit (0.0f, 1.5f, processor.chainEnvelope()) : 0.0f;
+        const float fall = chainEnvelope * (float) std::exp (-(now - chainReadMs) / 60.0);
+        chainEnvelope = std::max (target, fall < 1.0e-3f ? 0.0f : fall);
+        chainReadMs = now;
+        cymbalView->setChain (chainOn, chainEnvelope);
+    }
     const int cc = processor.pedalCc();
     if (cc != shownPedalCc)
     {

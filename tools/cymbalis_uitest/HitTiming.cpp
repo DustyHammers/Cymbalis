@@ -232,6 +232,7 @@ struct HitTiming::Result
 {
     Editor editor = Editor::none;
     int block = 0, preset = -1;
+    bool chain = false; // the sizzle chain on
     bool realtime = false, wasRealtime = false;
     std::vector<double> blockMs, blockCpuMs;      // the timed blocks
     double restOfProcess = 0.0, windowServer = -1.0; // % of one core
@@ -256,11 +257,13 @@ struct HitTiming::Result
 
 struct HitTiming::Run
 {
-    Run (Editor kind, int blockSize, bool rt, int preset) : editorKind (kind), block (blockSize), realtime (rt)
+    Run (Editor kind, int blockSize, bool rt, int preset, bool chain) : editorKind (kind), block (blockSize), realtime (rt)
     {
         processor.prepareToPlay (kRate, block);
         if (preset >= 0)
             processor.setPreset (preset);
+        if (preset >= 0 && chain)
+            processor.setChainOn (preset, true);
         // The notes of the rows the preset has, in row order (the default notes: BELL, BOW, EDGE,
         // BELL2 and BOW2 60, 62, 64, 61, 63; HI-HAT's BOW and EDGE 42, 46), and its pedal.
         const int shownPreset = preset >= 0 ? preset : 0;
@@ -277,6 +280,8 @@ struct HitTiming::Run
             other->prepareToPlay (kRate, block);
             if (preset >= 0)
                 other->setPreset (preset);
+            if (preset >= 0 && chain)
+                other->setChainOn (preset, true);
             shown = other.get();
         }
         shown->setEditorPage (kind == Editor::tuning || kind == Editor::tuningIdle ? 1 : 0); // the editor opens on that page
@@ -416,6 +421,11 @@ HitTiming::HitTiming (std::function<void (int)> f) : finished (std::move (f))
             if (cymbalis::kPresets[(size_t) p].shape == shape)
                 for (const auto e : { Editor::none, Editor::idle, Editor::hits })
                     steps.push_back ({ e, kBlocks[0], false, false, p });
+    // Once more with HAMMERED THIN RIDE and its sizzle chain on: its beads drawn, moving with it.
+    for (int p = 0; p < cymbalis::kNumPresets; ++p)
+        if (cymbalis::kPresets[(size_t) p].shape == &cymbalis::ui::kHammeredShape)
+            for (const auto e : { Editor::none, Editor::idle, Editor::hits })
+                steps.push_back ({ e, kBlocks[0], false, false, p, true });
     startTimer (50);
 }
 
@@ -432,7 +442,7 @@ void HitTiming::timerCallback()
         case 0: // the next run
         {
             const auto& s = steps[next];
-            run = std::make_unique<Run> (s.editor, s.block, s.realtime, s.preset);
+            run = std::make_unique<Run> (s.editor, s.block, s.realtime, s.preset, s.chain);
             phaseStartMs = now;
             phase = 1;
             return;
@@ -485,6 +495,7 @@ void HitTiming::timerCallback()
             r.editor = s.editor;
             r.block = s.block;
             r.preset = s.preset;
+            r.chain = s.chain;
             r.realtime = s.realtime;
             r.wasRealtime = run->wasRealtime;
             r.blockMs = run->blockMs;
@@ -588,11 +599,13 @@ void HitTiming::report()
         const auto& first = results[i];
         size_t end = i;
         while (end < results.size() && results[end].block == first.block && results[end].realtime == first.realtime
-               && results[end].preset == first.preset)
+               && results[end].preset == first.preset && results[end].chain == first.chain)
             ++end;
         const double budget = 1000.0 * first.block / kRate;
         std::printf ("\n  %saudio thread %s, %d-sample blocks (budget %.3f ms)\n",
-                     first.preset >= 0 ? (juce::String (cymbalis::kPresets[(size_t) first.preset].name) + " selected: ").toRawUTF8() : "",
+                     first.preset >= 0 ? (juce::String (cymbalis::kPresets[(size_t) first.preset].name)
+                                          + (first.chain ? " selected, sizzle chain on: " : " selected: ")).toRawUTF8()
+                                       : "",
                      ! first.realtime ? "at normal priority" : first.wasRealtime ? "real-time" : "real-time REFUSED (normal priority)",
                      first.block, budget);
         for (size_t j = i; j < end; ++j)

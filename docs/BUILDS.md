@@ -51,7 +51,7 @@ Since 2026-11-26 CI is lean while the presets are being developed (Kris: "we are
 
 - **Every push to `main`, every pull request, and a manual run without "full tests":**
   - checkout, Xcode, Ninja, the caches, configure and build;
-  - the CPU benchmark (about 2 minutes; the 3× real-time check in `CLAUDE.md`);
+  - the CPU benchmark (about 2 minutes, 3.5 with the sizzle chain's runs: the five presets with a chain, with it on, `--chain`; the 3× real-time check in `CLAUDE.md`);
   - the bundle checks: both architectures, minimum macOS 11.0, no AVX in the Intel slice, the JUCE splash screen off;
   - ad-hoc code signing;
   - pluginval and auval (native and Rosetta);
@@ -59,7 +59,7 @@ Since 2026-11-26 CI is lean while the presets are being developed (Kris: "we are
 - **The test tools are still built every time** (`dhpool_selftest`, `CymbalisUiTest`, the bench), so a broken one is still a build error. They compile alongside the plugin and finish before its link, so they add well under a minute to the build (2.3–2.8 minutes in all with the compiler cache).
 - **On request only, or on a `v*` release tag:**
   - the job pool self-test (dhpool);
-  - the engine block times in dense playing (about 11 minutes);
+  - the engine block times in dense playing (about 11 minutes; about 13 with the sizzle chain's cases, `--dense --chain`);
   - the kit benchmark (about 14 minutes);
   - the editor mouse test (about 7 minutes);
   - the hit display timing (about 9 minutes).
@@ -163,6 +163,16 @@ For every preset, archive included:
 build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/nova_ride.bake.json --skip-thresholds --json skip.json
 python tools/set_skip_thresholds.py resources/presets/nova_ride.bake.json skip.json
 ```
+
+The five presets with a **sizzle chain** (STINE FLAT RIDE, HAMMERED THIN RIDE, SWISH, RAVEN, EXTRA PAPER THIN 24"; `docs/PORT_MAP.md`, "Sizzle chain") carry a `chain` block: its random generator's seed and `ref_ms`, the reference level the sizzle is calibrated to (the output's 40–1000 Hz band 0.3–1.0 s after a lone BOW hit at velocity 0.9, with the chain's damping on, before the output gain). `--init` adds the block (the seed, from the preset id; `ref_ms` null: no sizzle until measured), the trims tool measures `ref_ms` with the plugin's engine, and the second step stores it:
+
+```
+python tools/set_chain_ref.py resources/presets/stine_flat_ride.bake.json --init
+build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/stine_flat_ride.bake.json --chain-ref --json chain.json
+python tools/set_chain_ref.py resources/presets/stine_flat_ride.bake.json chain.json
+```
+
+Measure it after the trims and the tuning block (it is measured with the BOW trim in place). Re-baking drops the block, as it drops the trims.
 
 A new preset gets its tuning block (the output gain below, and any velocity curve) before its trims are measured: the trims tool measures the reference, Nova, with its −11 dB, so a bake without it would come out 11 dB too quiet once the block is added (Raven, `docs/PORT_MAP.md`, "Raven"; Konstan, "Konstan Crash 18""; Paper Thin, "Extra Paper Thin Ride 24""; Crash 16, "Crash 16""; Stine, "Stine Flat Ride").
 

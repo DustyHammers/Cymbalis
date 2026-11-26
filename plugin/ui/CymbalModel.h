@@ -136,6 +136,10 @@ public:
     double slope (double r) const noexcept;
     // The smooth surface as drawn, zSign x height (r).
     double restHeight (double r) const noexcept { return zSign * height (r); }
+    // The surface at rest at radius r and angle theta, with the dented mesh's dents there (the
+    // same dents as its vertices; none on a smooth mesh): zSign x (height (r) + the dents). For
+    // drawing pieces that lie on the surface (the sizzle chain, ChainDrawing.h).
+    double surfaceHeight (double r, double theta) const noexcept;
     // The photo's brightness at r (the reference's lum(): the table smoothed, divided by its 98th
     // percentile over entries 5 .. 79, raised to shape.lumGamma, clipped to 0.3 .. 1.15); 1
     // without a table.
@@ -195,6 +199,13 @@ public:
 
 private:
     std::vector<double> px, py, pd; // PCHIP knots (r / R, z / R) and slopes
+    // The dented mesh's dents (centre x, y; axes a along and b across; rotation; depth, with
+    // Dents::depth), for surfaceHeight.
+    struct DentShape
+    {
+        double x, y, a, b, rot, depth;
+    };
+    std::vector<DentShape> dentShapes;
     std::array<double, 200> lumTable {};
     bool hasLum = false;
     // The dented mesh's dents and dent light factor at rest on the whole fine grid (radial i x

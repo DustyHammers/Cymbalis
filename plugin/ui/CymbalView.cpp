@@ -250,6 +250,68 @@ void main()
 }
 )";
 
+// The sizzle chain (wire::ChainDrawing): each bead's centre at rest in the cymbal's frame (radius,
+// angle, height) and its index; per frame only its lift up off the surface (uLifts). bead() gives
+// its centre on screen and its radius there (design units), as project().
+juce::String chainGlsl()
+{
+    return "uniform float uLifts[" + juce::String (wire::kMaxChainBeads) + "];\n" + R"(uniform float uBeadR; // the beads' radius, R
+vec3 bead (vec4 b)
+{
+    float phi = b.y + uSpin;
+    float X = b.x * cos (phi), Y = b.x * sin (phi);
+    float Z = b.z + uLifts[int (b.w + 0.5)] + uLift - 2.2 * (X * uTilt.x + Y * uTilt.y);
+    float yv = Y * uCam.x - Z * uCam.y, zv = Y * uCam.y + Z * uCam.x;
+    float k = uCam.z / (uCam.z - zv);
+    return vec3 (uCentre.xy + uCentre.z * vec2 (X, yv) * k, uCentre.z * uBeadR * k);
+}
+)";
+}
+// The chain's link wire: a line from each bead's centre to the next one's, 1 unit wide.
+const char* const kChainLinkVertex = R"(in vec4 aA;
+in vec4 aB;
+uniform vec3 uColour;
+void main()
+{
+    vColour = uColour;
+    gl_Position = quadCorner ((bead (aA).xy - uOrigin) * uPx, (bead (aB).xy - uOrigin) * uPx, 0.5 * uPx, 0.5 * uPx);
+}
+)";
+// A bead's outline: a circle at its radius, 1 unit wide, as line segments between the angles in
+// aAngles.
+const char* const kChainRingVertex = R"(in vec4 aBead;
+in vec2 aAngles;
+uniform vec3 uColour;
+void main()
+{
+    vColour = uColour;
+    vec3 c = bead (aBead);
+    vec2 a = c.xy + c.z * vec2 (cos (aAngles.x), sin (aAngles.x)), b = c.xy + c.z * vec2 (cos (aAngles.y), sin (aAngles.y));
+    gl_Position = quadCorner ((a - uOrigin) * uPx, (b - uOrigin) * uPx, 0.5 * uPx, 0.5 * uPx);
+}
+)";
+// A bead's disc (what hides the lines behind it: its radius + uPad) or its highlight dot, as
+// triangles: each point at aShape.zw bead radii from the centre plus aShape.y x (radius + uPad)
+// toward the angle aShape.x. Drawn as the fill polygons are (kFillFragment): in one colour, or the
+// texture under it.
+const char* const kChainFillVertex = R"(in vec4 aBead;
+in vec4 aShape;
+uniform float uPad;
+uniform vec2 uViewPx;
+uniform float uFlip;
+out vec2 vUv;
+void main()
+{
+    vec3 c = bead (aBead);
+    vec2 p = c.xy + c.z * aShape.zw + (c.z + uPad) * aShape.y * vec2 (cos (aShape.x), sin (aShape.x));
+    vec2 q = (p - uOrigin) * uPx;
+    vUv = q / uViewPx;
+    if (uFlip > 0.5)
+        vUv.y = 1.0 - vUv.y;
+    gl_Position = vec4 (q.x / uViewPx.x * 2.0 - 1.0, 1.0 - q.y / uViewPx.y * 2.0, 0.0, 1.0);
+}
+)";
+
 // A polygon on screen (design units), as a triangle fan: in one colour, or with uUseTexture the
 // texture under it (the view's background, its top row first; with uFlip a layer's, bottom row
 // first).
@@ -310,7 +372,7 @@ void main()
 //==============================================================================
 struct CymbalView::Gpu
 {
-    std::unique_ptr<juce::OpenGLShaderProgram> mesh, surface, back, flash, flat, fill, hardware;
+    std::unique_ptr<juce::OpenGLShaderProgram> mesh, surface, back, flash, flat, fill, hardware, chainLink, chainRing, chainFill;
     GLuint quadVao = 0, quadVbo = 0, flashVao = 0, flashVbo = 0;
     GLuint texture = 0;
     // The hi-hat's clutch and rod (flat: lines already on screen), and the polygons that hide
@@ -327,6 +389,15 @@ struct CymbalView::Gpu
     bool bellFansMade = false;
     std::vector<float> bellFans;
     std::vector<std::array<int, 2>> bellFanRanges;
+    // The sizzle chain while it is on (its presets): its links, its beads' outlines (quads) and
+    // its beads' discs and highlight dots (triangles), uploaded once per preset in the cymbal's
+    // frame; per frame only each bead's lift (lifts, from the envelope).
+    GLuint chainLinkVao = 0, chainLinkVbo = 0, chainLinkIndex = 0, chainRingVao = 0, chainRingVbo = 0, chainRingIndex = 0;
+    GLuint chainFillVao = 0, chainFillVbo = 0;
+    int chainLinks = 0, chainRingSegments = 0, chainDiscVertices = 0, chainDotVertices = 0;
+    std::shared_ptr<const wire::ChainDrawing> chain;
+    float chainEnvelope = 0.0f;
+    std::array<float, wire::kMaxChainBeads> lifts {};
     // A layer of lines: multisampled (as the view's own framebuffer), then resolved into a
     // texture, at the view's size. ok is false if the driver refuses it.
     struct Layer
@@ -707,16 +778,105 @@ struct CymbalView::Gpu
         bellFansMade = true;
     }
 
+    // The sizzle chain, once per preset (or none): per link quad corner, the corner and both
+    // beads (radius, angle, height, index); per outline quad corner, the corner, the bead and the
+    // segment's two angles; per disc and dot triangle point, the bead and its shape (angle, scale,
+    // offset: see kChainFillVertex), the discs first.
+    void uploadChain (std::shared_ptr<const wire::ChainDrawing> next)
+    {
+        chain = std::move (next);
+        chainLinks = chainRingSegments = chainDiscVertices = chainDotVertices = 0;
+        if (chain == nullptr || chain->beads.empty())
+            return;
+        constexpr float corners[4][2] = { { 0.0f, -1.0f }, { 0.0f, 1.0f }, { 1.0f, -1.0f }, { 1.0f, 1.0f } };
+        const auto& beads = chain->beads;
+        const auto beadOf = [&beads] (size_t k) {
+            return std::array<float, 4> { (float) beads[k].r, (float) beads[k].theta, (float) beads[k].z, (float) k };
+        };
+        std::vector<float> links;
+        for (size_t k = 0; k + 1 < beads.size(); ++k)
+            for (const auto& c : corners)
+            {
+                links.insert (links.end(), { c[0], c[1] });
+                for (size_t e : { k, k + 1 })
+                {
+                    const auto b = beadOf (e);
+                    links.insert (links.end(), b.begin(), b.end());
+                }
+            }
+        chainLinks = (int) beads.size() - 1;
+        glBindVertexArray (chainLinkVao);
+        glBindBuffer (GL_ARRAY_BUFFER, chainLinkVbo);
+        glBufferData (GL_ARRAY_BUFFER, (GLsizeiptr) (links.size() * sizeof (float)), links.data(), GL_STATIC_DRAW);
+        const auto linkStride = (GLsizei) (10 * sizeof (float));
+        glEnableVertexAttribArray (0);
+        glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, linkStride, nullptr);
+        glEnableVertexAttribArray (1);
+        glVertexAttribPointer (1, 4, GL_FLOAT, GL_FALSE, linkStride, (const void*) (2 * sizeof (float)));
+        glEnableVertexAttribArray (2);
+        glVertexAttribPointer (2, 4, GL_FLOAT, GL_FALSE, linkStride, (const void*) (6 * sizeof (float)));
+        uploadQuadIndices (chainLinkIndex, juce::jmax (1, chainLinks));
+
+        constexpr int ring = wire::kChainRingSegments;
+        const auto angle = [] (int s) { return (float) (2.0 * kPi * s / ring); };
+        std::vector<float> rings;
+        for (size_t k = 0; k < beads.size(); ++k)
+            for (int s = 0; s < ring; ++s)
+                for (const auto& c : corners)
+                {
+                    const auto b = beadOf (k);
+                    rings.insert (rings.end(), { c[0], c[1], b[0], b[1], b[2], b[3], angle (s), angle (s + 1) });
+                }
+        chainRingSegments = (int) beads.size() * ring;
+        glBindVertexArray (chainRingVao);
+        glBindBuffer (GL_ARRAY_BUFFER, chainRingVbo);
+        glBufferData (GL_ARRAY_BUFFER, (GLsizeiptr) (rings.size() * sizeof (float)), rings.data(), GL_STATIC_DRAW);
+        const auto ringStride = (GLsizei) (8 * sizeof (float));
+        glEnableVertexAttribArray (0);
+        glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, ringStride, nullptr);
+        glEnableVertexAttribArray (1);
+        glVertexAttribPointer (1, 4, GL_FLOAT, GL_FALSE, ringStride, (const void*) (2 * sizeof (float)));
+        glEnableVertexAttribArray (2);
+        glVertexAttribPointer (2, 2, GL_FLOAT, GL_FALSE, ringStride, (const void*) (6 * sizeof (float)));
+        uploadQuadIndices (chainRingIndex, chainRingSegments);
+
+        // Discs: a fan of `ring` triangles about each bead's centre; dots: 8 about the dot's.
+        std::vector<float> fills;
+        const auto fan = [&] (size_t k, int n, float scale, float off) {
+            const auto b = beadOf (k);
+            for (int s = 0; s < n; ++s)
+                for (const auto& [a, sc] : { std::pair<float, float> { 0.0f, 0.0f }, { (float) (2.0 * kPi * s / n), scale },
+                                             { (float) (2.0 * kPi * (s + 1) / n), scale } })
+                    fills.insert (fills.end(), { b[0], b[1], b[2], b[3], a, sc, off, off });
+        };
+        for (size_t k = 0; k < beads.size(); ++k)
+            fan (k, ring, 1.0f, 0.0f);
+        chainDiscVertices = (int) beads.size() * ring * 3;
+        for (size_t k = 0; k < beads.size(); ++k)
+            fan (k, 8, (float) wire::kChainDotScale, (float) -wire::kChainDotOffset);
+        chainDotVertices = (int) beads.size() * 8 * 3;
+        glBindVertexArray (chainFillVao);
+        glBindBuffer (GL_ARRAY_BUFFER, chainFillVbo);
+        glBufferData (GL_ARRAY_BUFFER, (GLsizeiptr) (fills.size() * sizeof (float)), fills.data(), GL_STATIC_DRAW);
+        const auto fillStride = (GLsizei) (8 * sizeof (float));
+        glEnableVertexAttribArray (0);
+        glVertexAttribPointer (0, 4, GL_FLOAT, GL_FALSE, fillStride, nullptr);
+        glEnableVertexAttribArray (1);
+        glVertexAttribPointer (1, 4, GL_FLOAT, GL_FALSE, fillStride, (const void*) (4 * sizeof (float)));
+        glBindVertexArray (0);
+    }
+
     void release()
     {
         layer.release();
         lowerLayer.release();
         for (auto& part : parts)
             part.release();
-        for (auto* vao : { &quadVao, &flashVao, &flatVao, &fillVao, &bellVao, &bellFillVao })
+        for (auto* vao : { &quadVao, &flashVao, &flatVao, &fillVao, &bellVao, &bellFillVao, &chainLinkVao, &chainRingVao, &chainFillVao })
             if (*vao != 0)
                 glDeleteVertexArrays (1, vao);
-        for (auto* b : { &quadVbo, &flashVbo, &flatVbo, &flatIndex, &fillVbo, &bellVbo, &bellIndex, &bellFillVbo })
+        for (auto* b : { &quadVbo, &flashVbo, &flatVbo, &flatIndex, &fillVbo, &bellVbo, &bellIndex, &bellFillVbo, &chainLinkVbo,
+                         &chainLinkIndex, &chainRingVbo, &chainRingIndex, &chainFillVbo })
             if (*b != 0)
                 glDeleteBuffers (1, b);
         if (texture != 0)
@@ -728,7 +888,11 @@ struct CymbalView::Gpu
         flat.reset();
         fill.reset();
         hardware.reset();
+        chainLink.reset();
+        chainRing.reset();
+        chainFill.reset();
         bell.reset();
+        chain.reset();
     }
 };
 
@@ -845,6 +1009,10 @@ void CymbalView::setPreset (int preset, const juce::String& loadError)
         shownHardware = shownGeometry != nullptr && shownLower == nullptr
                             ? std::make_shared<const wire::CymbalHardware> (wire::bellHardware (shape->R, shownGeometry->restHeight (0.0)))
                             : nullptr;
+        // The sizzle chain: built when it is first switched on (setChain), off until then.
+        shownChain = nullptr;
+        shownChainOn = false;
+        shownEnvelope = 0.0f;
         // On the hi-hat, its opening and wobble, for screen readers (and tools/cymbalis_uitest):
         // hiHatDescription, made when asked for.
         setTitle (shownLower != nullptr ? "HI-HAT" : "");
@@ -855,6 +1023,8 @@ void CymbalView::setPreset (int preset, const juce::String& loadError)
         pendingGeometry = shownGeometry;
         pendingLower = shownLower;
         pendingHardware = shownHardware;
+        pendingChain = shownChainOn ? shownChain : nullptr;
+        pendingEnvelope = shownEnvelope;
         numPendingHits = 0;
     }
     {
@@ -905,6 +1075,34 @@ void CymbalView::setHits (const wire::Hit* hits, int count)
     }
     if (glActive.load())
         context.triggerRepaint();
+}
+
+void CymbalView::setChain (bool on, float envelope)
+{
+    envelope = on ? juce::jlimit (0.0f, 1.5f, envelope) : 0.0f;
+    // Only on a cymbal with the felt and nut it hangs from (not the hi-hat, not without a wireframe).
+    on = on && shownHardware != nullptr && shownPreset >= 0 && kPresets[(size_t) shownPreset].shape != nullptr;
+    const bool switched = on != shownChainOn;
+    if (! switched && juce::exactlyEqual (envelope, 0.0f) && juce::exactlyEqual (shownEnvelope, 0.0f))
+        return; // at rest: nothing to draw again
+    if (on && shownChain == nullptr)
+        shownChain = std::make_shared<const wire::ChainDrawing> (wire::chainDrawing (*shownGeometry, kPresets[(size_t) shownPreset].shape->R));
+    shownChainOn = on;
+    shownEnvelope = envelope;
+    bool hitsMoving = false;
+    {
+        const juce::SpinLock::ScopedLockType sl (lock);
+        pendingChain = on ? shownChain : nullptr;
+        pendingEnvelope = envelope;
+        hitsMoving = numPendingHits > 0;
+    }
+    if (! glActive.load())
+    {
+        if (switched)
+            repaint(); // the still drawing, with or without the chain at rest
+    }
+    else if (! hitsMoving)
+        context.triggerRepaint(); // while hits move, their next frame (30 Hz) draws it
 }
 
 juce::String CymbalView::renderer() const
@@ -969,8 +1167,12 @@ void CymbalView::newOpenGLContextCreated()
     g->flat = Gpu::build (context, juce::String (kQuadGlsl) + kFlatVertex, kLineFragment, { "aCorner", "aA", "aB", "aColour" });
     g->fill = Gpu::build (context, kFillVertex, kFillFragment, { "aPos" });
     g->hardware = Gpu::build (context, juce::String (kProjectGlsl) + kQuadGlsl + kHardwareVertex, kLineFragment, { "aCorner", "aA", "aB", "aColour" });
+    g->chainLink = Gpu::build (context, juce::String (kProjectGlsl) + kQuadGlsl + chainGlsl() + kChainLinkVertex, kLineFragment, { "aCorner", "aA", "aB" });
+    g->chainRing = Gpu::build (context, juce::String (kProjectGlsl) + kQuadGlsl + chainGlsl() + kChainRingVertex, kLineFragment,
+                               { "aCorner", "aBead", "aAngles" });
+    g->chainFill = Gpu::build (context, juce::String (kProjectGlsl) + chainGlsl() + kChainFillVertex, kFillFragment, { "aBead", "aShape" });
     if (g->mesh == nullptr || g->surface == nullptr || g->back == nullptr || g->flash == nullptr || g->flat == nullptr || g->fill == nullptr
-        || g->hardware == nullptr)
+        || g->hardware == nullptr || g->chainLink == nullptr || g->chainRing == nullptr || g->chainFill == nullptr)
     {
         g->release();
         glFailed = true;
@@ -979,9 +1181,11 @@ void CymbalView::newOpenGLContextCreated()
 
     for (auto& part : g->parts)
         part.create();
-    for (auto* vao : { &g->quadVao, &g->flashVao, &g->flatVao, &g->fillVao, &g->bellVao, &g->bellFillVao })
+    for (auto* vao : { &g->quadVao, &g->flashVao, &g->flatVao, &g->fillVao, &g->bellVao, &g->bellFillVao, &g->chainLinkVao, &g->chainRingVao,
+                       &g->chainFillVao })
         glGenVertexArrays (1, vao);
-    for (auto* b : { &g->quadVbo, &g->flashVbo, &g->flatVbo, &g->flatIndex, &g->fillVbo, &g->bellVbo, &g->bellIndex, &g->bellFillVbo })
+    for (auto* b : { &g->quadVbo, &g->flashVbo, &g->flatVbo, &g->flatIndex, &g->fillVbo, &g->bellVbo, &g->bellIndex, &g->bellFillVbo,
+                     &g->chainLinkVbo, &g->chainLinkIndex, &g->chainRingVbo, &g->chainRingIndex, &g->chainFillVbo })
         glGenBuffers (1, b);
 
     const float unit[] = { 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f };
@@ -1049,9 +1253,16 @@ void CymbalView::renderOpenGL()
     auto& bottom = g.parts[1];
     std::shared_ptr<const wire::Geometry> newGeometry, newLower;
     std::shared_ptr<const wire::CymbalHardware> newHardware;
-    bool geometryChanged = false;
+    std::shared_ptr<const wire::ChainDrawing> newChain;
+    bool geometryChanged = false, chainChanged = false;
     {
         const juce::SpinLock::ScopedLockType sl (lock);
+        if (pendingChain != g.chain)
+        {
+            newChain = pendingChain;
+            chainChanged = true;
+        }
+        g.chainEnvelope = pendingEnvelope;
         if (pendingGeometry != top.geometry || pendingLower != bottom.geometry)
         {
             newGeometry = pendingGeometry;
@@ -1072,6 +1283,8 @@ void CymbalView::renderOpenGL()
         g.lowerDrawn = false;
         g.shownPose[0] = -1.0;
     }
+    if (chainChanged)
+        g.uploadChain (std::move (newChain));
 
     GLint viewport[4] = {}, target = 0;
     glGetIntegerv (GL_VIEWPORT, viewport);
@@ -1171,6 +1384,10 @@ void CymbalView::renderOpenGL()
         const bool bellHardware = ! hiHat && g.bell != nullptr && g.bellSegments > 0;
         if (bellHardware)
             g.makeBellFans (geo.camera, top.frame);
+        // The sizzle chain while it is on: each bead's lift this frame, from the envelope.
+        const bool chainShown = bellHardware && g.chain != nullptr && g.chainRingSegments > 0;
+        if (chainShown)
+            wire::chainLifts (*g.chain, (double) g.chainEnvelope, juce::Time::getMillisecondCounterHiRes() / 1000.0, g.lifts.data());
 
         // The uniforms a cymbal's lines share: its frame (tilt, spin, lift, top and bottom on
         // screen) and its camera.
@@ -1270,6 +1487,76 @@ void CymbalView::renderOpenGL()
             glBlendFunc (GL_ONE, GL_ONE);
         };
 
+        // The sizzle chain's uniforms: the frame's and the camera's, its beads' radius and lifts.
+        const auto chainCommon = [&] (const juce::OpenGLShaderProgram& p) {
+            common (p, top);
+            glUniform1f (Gpu::at (p, "uBeadR"), (float) g.chain->beadRadius);
+            glUniform1fv (Gpu::at (p, "uLifts"), (GLsizei) g.chain->beads.size(), g.lifts.data());
+        };
+        // Its link wire (max, over what is there).
+        const auto chainLinks = [&] {
+            g.chainLink->use();
+            chainCommon (*g.chainLink);
+            glUniform1f (Gpu::at (*g.chainLink, "uGlowGain"), 0.0f);
+            glUniform3f (Gpu::at (*g.chainLink, "uColour"), wire::chainColour::wire.r, wire::chainColour::wire.g, wire::chainColour::wire.b);
+            glEnable (GL_BLEND);
+            glBlendFunc (GL_ONE, GL_ONE);
+            glBlendEquation (GL_MAX);
+            glBindVertexArray (g.chainLinkVao);
+            segments (0, g.chainLinks);
+        };
+        // Its beads' discs, as bellFill's modes (0: what is there times `keep`, in the layer; 1:
+        // the view's background; 2: lightened by the lines' layer).
+        const auto chainDiscs = [&] (int mode, float keep) {
+            g.chainFill->use();
+            chainCommon (*g.chainFill);
+            glUniform1f (Gpu::at (*g.chainFill, "uPad"), 0.5f);
+            glUniform3f (Gpu::at (*g.chainFill, "uColour"), keep, keep, keep);
+            glUniform1f (Gpu::at (*g.chainFill, "uUseTexture"), mode == 0 ? 0.0f : 1.0f);
+            glUniform1f (Gpu::at (*g.chainFill, "uFlip"), mode == 2 ? 1.0f : 0.0f);
+            glUniform1i (Gpu::at (*g.chainFill, "uTexture"), 0);
+            glActiveTexture (GL_TEXTURE0);
+            glBindTexture (GL_TEXTURE_2D, mode == 2 ? g.layer.texture : g.texture);
+            if (mode == 0)
+            {
+                glEnable (GL_BLEND);
+                glBlendFunc (GL_ZERO, GL_SRC_COLOR);
+                glBlendEquation (GL_FUNC_ADD);
+            }
+            else if (mode == 1)
+                glDisable (GL_BLEND);
+            else
+            {
+                glEnable (GL_BLEND);
+                glBlendFunc (GL_ONE, GL_ONE);
+                glBlendEquation (GL_MAX);
+            }
+            glBindVertexArray (g.chainFillVao);
+            glDrawArrays (GL_TRIANGLES, 0, g.chainDiscVertices);
+            glBlendFunc (GL_ONE, GL_ONE);
+        };
+        // Its beads: their outlines and highlight dots (max, over what is there).
+        const auto chainBeads = [&] {
+            glEnable (GL_BLEND);
+            glBlendFunc (GL_ONE, GL_ONE);
+            glBlendEquation (GL_MAX);
+            g.chainRing->use();
+            chainCommon (*g.chainRing);
+            glUniform1f (Gpu::at (*g.chainRing, "uGlowGain"), 0.0f);
+            glUniform3f (Gpu::at (*g.chainRing, "uColour"), wire::chainColour::bead.r, wire::chainColour::bead.g, wire::chainColour::bead.b);
+            glBindVertexArray (g.chainRingVao);
+            segments (0, g.chainRingSegments);
+            g.chainFill->use();
+            chainCommon (*g.chainFill);
+            glUniform1f (Gpu::at (*g.chainFill, "uPad"), 0.0f);
+            glUniform3f (Gpu::at (*g.chainFill, "uColour"), wire::chainColour::highlight.r, wire::chainColour::highlight.g,
+                         wire::chainColour::highlight.b);
+            glUniform1f (Gpu::at (*g.chainFill, "uUseTexture"), 0.0f);
+            glUniform1f (Gpu::at (*g.chainFill, "uFlip"), 0.0f);
+            glBindVertexArray (g.chainFillVao);
+            glDrawArrays (GL_TRIANGLES, g.chainDiscVertices, g.chainDotVertices);
+        };
+
         // The lines' layer, as the reference draws it: the surface lines over one another in their
         // order, lightened (max) by the mesh; on the dented mesh, the surface lines over the mesh.
         // Then the layer lightens the background. (Without a layer, everything lightens the
@@ -1314,6 +1601,14 @@ void CymbalView::renderOpenGL()
             {
                 bellFill (0, 0.08f);
                 bellLines();
+            }
+            // The sizzle chain over them, in the layer too: its wire, then its beads, each hiding
+            // the lines behind it (to 0.08, the wire within it included), with its outline and dot.
+            if (chainShown && layered)
+            {
+                chainLinks();
+                chainDiscs (0, 0.08f);
+                chainBeads();
             }
         }
         else
@@ -1428,6 +1723,25 @@ void CymbalView::renderOpenGL()
             glBlendFunc (GL_ONE, GL_ONE);
             glBlendEquation (GL_FUNC_ADD);
         }
+        // The sizzle chain's beads hide the glow behind them too, as the hardware does. Without a
+        // layer, its wire, the background inside its beads, then their outlines and dots.
+        if (chainShown)
+        {
+            if (layered)
+            {
+                chainDiscs (1, 1.0f);
+                chainDiscs (2, 1.0f);
+            }
+            else
+            {
+                chainLinks();
+                chainDiscs (1, 1.0f);
+                chainBeads();
+            }
+            glEnable (GL_BLEND);
+            glBlendFunc (GL_ONE, GL_ONE);
+            glBlendEquation (GL_FUNC_ADD);
+        }
 
         // The flashes where the hits struck, added.
         const auto& f = top.frame;
@@ -1488,13 +1802,15 @@ void CymbalView::paint (juce::Graphics& g)
     if (shownGeometry == nullptr)
         return;
     const float opening = shownLower != nullptr ? shownOpening : 0.0f;
+    const bool chain = shownChainOn && shownChain != nullptr;
     if (! still.isValid() || std::abs (scale - stillScale) > 1.0e-3f * scale || stillGeometry != shownGeometry.get()
-        || ! juce::exactlyEqual (opening, stillOpening))
+        || ! juce::exactlyEqual (opening, stillOpening) || chain != stillChain)
     {
         still = renderStill (scale);
         stillScale = scale;
         stillGeometry = shownGeometry.get();
         stillOpening = opening;
+        stillChain = chain;
     }
     g.drawImageTransformed (still, juce::AffineTransform::scale (1.0f / scale));
 }
@@ -1675,6 +1991,32 @@ juce::Image CymbalView::renderStill (float scale) const
                 wire::projectHardwarePoint (geo.camera, atRest, l.x1, l.y1, l.z1, bx, by);
                 hg.setColour (toColour (l.colour));
                 hg.drawLine ((float) ax, (float) ay, (float) bx, (float) by, l.width);
+            }
+            // The sizzle chain at rest, while it is on: its wire, then each bead hiding the lines
+            // behind it (to 0.08; the wire within it too), its outline and its highlight dot.
+            if (shownChainOn && shownChain != nullptr)
+            {
+                const auto& chain = *shownChain;
+                std::vector<std::array<double, 3>> at (chain.beads.size());
+                for (size_t k = 0; k < chain.beads.size(); ++k)
+                    wire::projectBead (geo.camera, atRest, chain, k, 0.0, at[k][0], at[k][1], at[k][2]);
+                hg.setColour (toColour (wire::chainColour::wire));
+                for (size_t k = 0; k + 1 < at.size(); ++k)
+                    hg.drawLine ((float) at[k][0], (float) at[k][1], (float) at[k + 1][0], (float) at[k + 1][1], 1.0f);
+                for (const auto& b : at)
+                {
+                    juce::Path disc;
+                    disc.addEllipse ((float) (b[0] - b[2] - 0.5), (float) (b[1] - b[2] - 0.5), (float) (2.0 * b[2] + 1.0), (float) (2.0 * b[2] + 1.0));
+                    hide (disc, 0.92f);
+                    hg.setColour (juce::Colours::black.withAlpha (0.92f));
+                    hg.fillPath (disc);
+                    hg.setColour (toColour (wire::chainColour::bead));
+                    hg.drawEllipse ((float) (b[0] - b[2]), (float) (b[1] - b[2]), (float) (2.0 * b[2]), (float) (2.0 * b[2]), 1.0f);
+                    const double d = wire::kChainDotScale * b[2];
+                    hg.setColour (toColour (wire::chainColour::highlight));
+                    hg.fillEllipse ((float) (b[0] - wire::kChainDotOffset * b[2] - d), (float) (b[1] - wire::kChainDotOffset * b[2] - d),
+                                    (float) (2.0 * d), (float) (2.0 * d));
+                }
             }
         }
     }

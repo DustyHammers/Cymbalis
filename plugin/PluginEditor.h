@@ -306,6 +306,10 @@ private:
     int shownPreset = -1;
     int shownPedalCc = -1;
     float shownOpening = -1.0f; // the pedal's opening the hats and the pedal show
+    // The sizzle chain's envelope as the cymbal shows it (smoothed: a rise at once, a fall with a
+    // 60 ms release, at most 1.5), and when it was last read.
+    float chainEnvelope = 0.0f;
+    double chainReadMs = 0.0;
     juce::String shownError;
     int shownLearn = -1;
     double learnStartMs = 0.0;

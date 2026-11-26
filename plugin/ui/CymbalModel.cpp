@@ -460,6 +460,23 @@ void Geometry::buildMesh()
 // The hammering pressed into the mesh (the reference's Cymbal2): a fine grid, the dents
 // (_make_dents: a spiral, packed zones, or 'dimple'), the dent light factor at rest, and the
 // rings and spokes simplified once (_simplify_lines). Each segment is coloured from its two ends.
+double Geometry::surfaceHeight (double r, double theta) const noexcept
+{
+    // As the dented mesh's depths on its grid (buildDentedMesh), at any point.
+    double z = height (r);
+    const double x = r * std::cos (theta), y = r * std::sin (theta);
+    for (const auto& d : dentShapes)
+    {
+        const double dx = x - d.x, dy = y - d.y;
+        if (std::abs (dx) >= 3.0 * d.a || std::abs (dy) >= 3.0 * d.a)
+            continue;
+        const double cr = std::cos (d.rot), sr = std::sin (d.rot);
+        const double u = dx * cr + dy * sr, v = -dx * sr + dy * cr;
+        z -= d.depth * std::exp (-1.6 * ((u / d.a) * (u / d.a) + (v / d.b) * (v / d.b)));
+    }
+    return zSign * z;
+}
+
 void Geometry::buildDentedMesh()
 {
     const auto& D = shape.dents;
@@ -550,6 +567,9 @@ void Geometry::buildDentedMesh()
         ++added;
     }
     numDents = (int) dents.size();
+    dentShapes.reserve (dents.size());
+    for (const auto& d : dents)
+        dentShapes.push_back ({ d.x, d.y, d.a, d.b, d.rot, d.depth * D.depth });
 
     // Their depth on the grid: dz = -depth x dent_depth x exp (-1.6 q), q = (u/a)^2 + (v/b)^2 in
     // the dent's rotated frame, within 3 a of its centre in x and y (no lip).

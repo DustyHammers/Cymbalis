@@ -5,7 +5,8 @@
 // context's own thread: the area's part of the background as a texture, then the lines (the mesh
 // and the surface lines, combined in a layer of their own as the reference does), the hardware on
 // the bell (the felt, washer and wing nut, CymbalHardware.h; the hi-hat's clutch and rod), the glow
-// and the flashes. The static geometry is uploaded once per preset;
+// and the flashes; on the presets with a sizzle chain, the chain while it is on (ChainDrawing.h).
+// The static geometry is uploaded once per preset;
 // per frame only the mesh's heights, slopes and glow and a few uniforms change. New frames are
 // drawn only while a hit moves the cymbal (HitTracker asks for them at 30 Hz), and on a resize
 // or a preset change. JUCE's software renderer never draws the moving cymbal, and the message
@@ -14,6 +15,7 @@
 // Without OpenGL (no context, or its shaders fail) the cymbal is drawn at rest with JUCE's
 // drawing, once per preset or size: no motion, no glow. Hits then show only as the lit row.
 
+#include "ChainDrawing.h"
 #include "CymbalHardware.h"
 #include "CymbalModel.h"
 #include "UiAssets.h"
@@ -50,6 +52,13 @@ public:
 
     // The hits to show (message thread): with OpenGL, a new frame is drawn with them.
     void setHits (const wire::Hit* hits, int count);
+
+    // The sizzle chain (message thread; the editor calls it on its timer, on the presets with a
+    // chain): drawn while `on`, its beads lifted with `envelope`, the sound's chain envelope
+    // smoothed by the editor (0: at rest; at most 1.5). With OpenGL a new frame is drawn while the
+    // envelope is above 0 (unless hits are moving the cymbal: their frames show it), and once when
+    // it falls to 0 or the switch changes; the still drawing shows the chain at rest while on.
+    void setChain (bool on, float envelope);
 
     // Whether OpenGL draws the cymbal now. Its counts since it was made or reset (for
     // tools/cymbalis_uitest): the frames drawn and the render thread's time for them, the times
@@ -100,13 +109,19 @@ private:
     std::shared_ptr<const wire::Geometry> shownGeometry, shownLower;
     // The felt, washer and wing nut on the bell (every preset but the hi-hat), built with the geometry.
     std::shared_ptr<const wire::CymbalHardware> shownHardware;
+    // The sizzle chain, built for the preset the first time it is switched on; whether it is on
+    // and its envelope, as last given.
+    std::shared_ptr<const wire::ChainDrawing> shownChain;
+    bool shownChainOn = false;
+    float shownEnvelope = 0.0f;
     int shownPreset = -1;
     float shownOpening = 0.0f;
     juce::String error;
 
-    // The still drawing (no OpenGL), at the physical scale and opening it was made for.
+    // The still drawing (no OpenGL), at the physical scale, opening and chain it was made for.
     juce::Image still;
     float stillScale = 0.0f, stillOpening = -1.0f;
+    bool stillChain = false;
     const wire::Geometry* stillGeometry = nullptr;
 
     // OpenGL. The geometry and hits for the render thread, under `lock`.
@@ -117,6 +132,8 @@ private:
     juce::SpinLock lock;
     std::shared_ptr<const wire::Geometry> pendingGeometry, pendingLower;
     std::shared_ptr<const wire::CymbalHardware> pendingHardware;
+    std::shared_ptr<const wire::ChainDrawing> pendingChain; // none while the chain is off
+    float pendingEnvelope = 0.0f;
     std::array<wire::Hit, wire::kMaxHits> pendingHits {};
     int numPendingHits = 0;
     float pendingOpening = 0.0f;

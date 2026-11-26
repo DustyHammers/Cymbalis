@@ -20,7 +20,7 @@ The editor has two pages, **CYMBAL** and **TUNING**, chosen by the two tabs in i
 
 Until 2026-11-24 (approved by Kris that day, from the project session's mockups) the panel was a separate **Tuning window**: a click on the CYMBALIS title, at the editor's top left (within 6 units of its letters), opened it and a second click closed it. It was attached to the editor's window (on macOS a child window of it, in front of the editor and the host's windows, on the editor's Space, hidden while the host was in the background; elsewhere kept on top), opened 860 pixels wide below the MIDI CHANNEL box, right-aligned with it, and its close button hid it. Until 2026-11-20 the **TUNING** box under the CYMBAL box opened it (and Cmd-click on the logo opened it too).
 
-The panel has two parts, one below the other, each under a filled title band with a bronze rule:
+The panel has two parts, one below the other, each under a filled title band with a bronze rule (on STINE FLAT RIDE, HAMMERED THIN RIDE, SWISH, RAVEN and EXTRA PAPER THIN 24", the SIZZLE CHAIN group comes first, above them: "Sizzle chain" below):
 
 - **ARTICULATIONS** ("affects only this articulation"): each articulation's level and velocity curve, and the band rows (excitation gain, onset delay and speed) of the articulation chosen in its **Articulation** box. A value here changes only the strikes of that articulation.
 - **WHOLE CYMBAL** ("affects every articulation"): the values of the preset as a whole, by group. Some of them act only on strikes of some articulations, such as the edge wander (edge strikes) or the build-up weights (strikes at one place). Their labels name those articulations, for example "Bow brightness vs velocity (tau_ref): BOW, CENTER" on STINE FLAT RIDE.
@@ -451,6 +451,33 @@ A new strike first damps what is already ringing, then adds its own energy. It i
 
 With amount 0 nothing is computed and every preset plays exactly as before (a damping already running when the amount is set to 0 completes). In the panel it is the **RE-HIT DAMPING** group of the whole-cymbal part, with one weight row per articulation.
 
+### Sizzle chain
+
+Added 2026-11-26 (Kris; `docs/PORT_MAP.md`, "Sizzle chain"). A bead chain resting on the ride, on STINE FLAT RIDE, HAMMERED THIN RIDE, SWISH, RAVEN and EXTRA PAPER THIN 24" only (their bakes have a `chain` block). In the panel it is the **SIZZLE CHAIN** group at the top, above ARTICULATIONS, on those five presets only; its header, drawn like the part headers, reads "STINE, HAMMERED THIN, SWISH, RAVEN and EXTRA PAPER THIN only" and has **CHAIN** with an **OFF | ON** pair of boxes at its right (`docs/UI_SPEC.md` section 6).
+
+- **The switch** (CHAIN OFF | ON) is session state, not a tuning value and not a host parameter (no automation): it acts at once (the sizzle fades in or out over 50 ms; the damping applies from the next strike), each preset keeps its own, and it is saved with the session as `chain_<preset id>` (1 or 0; a session without it: off). No tuning file holds it, RESET ALL leaves it, and **MODIFIED** does not count it. Off, the cymbal plays bit for bit as without the chain.
+- **The eight values** are tuning values (the bake's tuning block, tuning files, the session's tuning, `tools/apply_tuning.py`), acting from the next block; the same defaults on all five presets:
+
+| Key | Shown as | Default | Range |
+|---|---|---|---|
+| `chain_level_db` | SIZZLE LEVEL | 0.0 dB | −20 to +12 dB |
+| `chain_edge_db` | EDGE DRIVE | +6.0 dB | −30 to +12 dB |
+| `chain_bow_db` | BOW DRIVE | 0.0 dB | −30 to +12 dB |
+| `chain_bell_db` | BELL DRIVE | −10.0 dB | −30 to +12 dB |
+| `chain_velocity` | VELOCITY EFFECT (0 = none) | 1.00 | 0 to 2 |
+| `chain_stop_db` | STOPS AT (below a full hit) | −28 dB | −50 to −10 dB |
+| `chain_swing` | SWING (with the cymbal's motion) | 1.20 | 0 to 3 |
+| `chain_damping` | DAMPING (mostly high frequencies) | 0.35 | 0 to 1 |
+
+  - **SIZZLE LEVEL** adds to every band of the sizzle.
+  - **EDGE, BOW and BELL DRIVE** weigh a strike's drive by where it lands: at positions 0.0, 0.5 and 1.0, linear in dB between them (so the blend knobs fall in between; STINE's CENTER rows are at 1.0).
+  - **VELOCITY EFFECT:** the drive × (velocity / 0.9) to this power.
+  - **STOPS AT:** the gate closes over the 6 dB under this, in dB below a full hit's drive 0.5 s after it (BOW at 0.9 stops about 4.2 s after the hit on HAMMERED THIN RIDE and 6.9 s on STINE FLAT RIDE).
+  - **SWING:** how much the sizzle follows the plate's motion (0: a steady sizzle).
+  - **DAMPING:** with the chain on, every mode's t60 / (1 + this × (f / 4 kHz)^1.5), from the next strike.
+
+  The values live in one small struct with its own keys (`plugin/dsp/ChainSettings.h`), apart from the TUNING page's code, so that they can move as they are to the combined kit plugin.
+
 ### Meters
 
 - **Output, after the Volume and Pan knobs:** the peak (held for 1.5 s) and the RMS over about 300 ms, in dBFS. **CLIP** lights when a sample reaches 0 dBFS; click it to reset it.
@@ -462,7 +489,7 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
 
 ## Tuning files
 
-**SAVE...** writes the current preset's tuning to a file (default name `<preset>.tuning.json`). **LOAD...** reads one. A file for another preset is refused with a message. So is a file for another bake format, an unknown value, band gains that are not 22 numbers from −24 to +12 dB, or a ring length, edge capture curve, wander rate or `tau_ref_ms` that is not above 0, an `edge_voice_from_bow` outside 0–100 %, a stick click weight outside 0–1, a `hit_position_spread` outside 0–0.15, a `hit_velocity_spread_pct` outside 0–15 %, or a `hh_tip_open_level` outside 0–100 %, `hh_tip_open_tick_db` outside 0–12 dB, `hh_ring_floor` outside 0–200 %, `hh_tip_modes_db` outside 0–20 dB, `hh_max_open` outside 75–100 %, `hh_splash_window_ms` outside 50–400 ms or `hh_splash_reopen` outside 5–80 %. Cymbalis also saves each preset's tuning (if it differs from the bake) in its session state, and restores it with the session. A session without tuning, such as one saved by Cymbalis before it had the Tuning window, loads with every preset at its bake's values.
+**SAVE...** writes the current preset's tuning to a file (default name `<preset>.tuning.json`). **LOAD...** reads one. A file for another preset is refused with a message. So is a file for another bake format, an unknown value, band gains that are not 22 numbers from −24 to +12 dB, or a ring length, edge capture curve, wander rate or `tau_ref_ms` that is not above 0, an `edge_voice_from_bow` outside 0–100 %, a stick click weight outside 0–1, a `hit_position_spread` outside 0–0.15, a `hit_velocity_spread_pct` outside 0–15 %, or a `hh_tip_open_level` outside 0–100 %, `hh_tip_open_tick_db` outside 0–12 dB, `hh_ring_floor` outside 0–200 %, `hh_tip_modes_db` outside 0–20 dB, `hh_max_open` outside 75–100 %, `hh_splash_window_ms` outside 50–400 ms or `hh_splash_reopen` outside 5–80 %, a `chain_` value outside its range (above) or on a preset without a sizzle chain. Cymbalis also saves each preset's tuning (if it differs from the bake) in its session state, and restores it with the session. A session without tuning, such as one saved by Cymbalis before it had the Tuning window, loads with every preset at its bake's values.
 
 ```json
 {
@@ -493,6 +520,7 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
 - `edge_voice_from_bow` is always written for the presets with NPZ edge data, even when it is the bake's. So a file without it is from before EDGE VOICE FROM BOW and was tuned without it: it loads as 0 %, on the TUNING page, from a session and in `tools/apply_tuning.py`.
 - `hit_variation` (true or false), `hit_position_spread` and `hit_velocity_spread_pct` are written when they differ from the bake. A file without them, such as one from before HIT VARIATION, keeps the bake's values, on the TUNING page, from a session and in `tools/apply_tuning.py`.
 - `hh_tip_open_level`, `hh_tip_open_tick_db`, `hh_ring_floor`, `hh_free_ring` (true or false), `hh_tip_modes_db`, `hh_max_open`, `hh_splash_window_ms` and `hh_splash_reopen` (HI-HAT only) are written when they differ from the bake. A file without them, such as one from before them, keeps the bake's values (60 %, +4 dB, 100 %, off, 0 dB, 100 %, 150 ms, 25 %), on the TUNING page, from a session and in `tools/apply_tuning.py`, which refuses them for any other preset.
+- `chain_level_db`, `chain_edge_db`, `chain_bow_db`, `chain_bell_db`, `chain_velocity`, `chain_stop_db`, `chain_swing` and `chain_damping` (the five presets with a sizzle chain only) are written when they differ from the bake. A file without them keeps the bake's values (0 dB, +6 dB, 0 dB, −10 dB, 1.0, −28 dB, 1.2, 0.35), on the TUNING page, from a session and in `tools/apply_tuning.py`, which refuses them for any other preset. The chain's switch is not in tuning files (session state).
 - `effective` is a full copy of every value for reference; nothing reads it.
 - `entry` names the bake entry (slot) of an articulation.
 - `preset` is the preset id (`nova_ride`, `stine_flat_ride`, `hammered_thin_ride`, `swish`, `raven`, `konstan`); `bake_format_version` is the bake's `format_version`.
@@ -517,6 +545,7 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
    - **Every other value that differs from the bake's own** (the cymbal values and the velocity curves) goes into the bake's top-level `tuning` block: `{"format": "cymbalis-tuning", "version": 1, "applied_utc", "source", "cymbal": {...}, "articulations": {id: {"vel_0.6_db", "vel_0.3_db"}}}`. A per-band cymbal value is stored there as its 22 numbers.
    - **EDGE VOICE FROM BOW** goes into the tuning block like the other cymbal values (0 %, the neutral value, drops out). On a bake with NPZ edge data, a file without it gives 0 %.
    - **TIP OPEN LEVEL**, **TIP OPEN TICK**, **RING FLOOR**, **FREE RING**, **TIP MODES**, **MAX OPEN**, **SPLASH WINDOW** and **SPLASH REOPEN** go into the tuning block like the other cymbal values (0 %, 0 dB, 100 %, off, 0 dB, 100 %, 150 ms and 25 %, the values of a bake without them, drop out). They are refused for any bake but the hi-hat's, whose tuning block starts at 60 %, +4 dB, 100 %, off, 0 dB, 100 %, 150 ms and 25 % (`tools/bake_hihat.py`).
+   - The **sizzle chain's** eight values go into the tuning block like the other cymbal values (their defaults, the values of a bake without them, drop out). They are refused for a bake without a `chain` block.
    - A value equal to the bake's own drops out of the block, so applying the same file twice gives the same bake. Nothing else in the bake changes.
 3. Rebuild the plugin. Its bake loader (`plugin/dsp/Bake.cpp`, `Tuning.cpp`) applies the block (`applyTuning`):
    - the parameters;

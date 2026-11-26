@@ -351,7 +351,8 @@ jobs:
       # the TUNING page with the hits and idle (the cymbal hidden must draw nothing), each three
       # times, with the message thread's CPU, then once more with HAMMERED THIN RIDE selected, and once each with
       # SWISH, RAVEN, EXTRA PAPER THIN 24", KONSTAN CRASH 18" and CRASH 16" (their dented meshes) and HI-HAT (two dented cymbals,
-      # the clutch and rod, the pedal CC moving the hats and the pedal drawing);
+      # the clutch and rod, the pedal CC moving the hats and the pedal drawing), and HAMMERED THIN RIDE
+      # with its sizzle chain on (the beads drawn, moving with the sizzle);
       # the CPU used besides; the editor's paint calls and the cymbal's OpenGL frames; and
       # once, that nothing is drawn after every hit is older than 6 s.
       # Printed to the log and the job summary only. With the TUNING page's two cases (hits, and
