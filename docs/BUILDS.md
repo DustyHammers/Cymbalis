@@ -64,7 +64,7 @@ Since 2026-11-26 CI is lean while the presets are being developed (Kris: "we are
   - the kit benchmark (about 14 minutes);
   - the editor mouse test (about 7 minutes);
   - the hit display timing (about 9 minutes);
-  - the sizzle chain off, its full set (840 cases, about 8 minutes), in a job of its own (`chain-off-full`) on its own runner alongside the build job, which it would otherwise take past its 60-minute limit.
+  - the sizzle chain off, its full set (960 cases, about 10 minutes), in a job of its own (`chain-off-full`) on its own runner alongside the build job, which it would otherwise take past its 60-minute limit.
 
   Their steps and timeouts are as they were; only when they run has changed (`if:` on each: a manual run with `full_tests`, or a `v*` tag).
 - **To run the full tests:** Actions → "Build macOS (VST3 + AU)" → Run workflow → pick the branch → tick "full tests".
