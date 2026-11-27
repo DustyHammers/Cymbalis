@@ -221,7 +221,7 @@ void Camera::project (double X, double Y, double Z, double& sx, double& sy) cons
 
 
 
-Rgb bronze (double shade, double ytl, Metal metal, double factor, double dent, double glow) noexcept
+Rgb bronze (double shade, double ytl, Metal metal, double factor, double dent, double glow, double roseK) noexcept
 {
     const double light = std::clamp (((shade - 0.86) / 0.14) * 0.8 + 0.2 * ytl, 0.0, 1.0);
     const double base = std::pow (0.25 + 0.75 * light, 1.4);
@@ -240,9 +240,13 @@ Rgb bronze (double shade, double ytl, Metal metal, double factor, double dent, d
         return (float) (c + (hot - c) * glow);
     };
     using namespace colour;
-    return { channel (roseDark.r, roseLight.r, colour::lathe.r, colour::gold.r, colour::copper.r, hot.r),
-             channel (roseDark.g, roseLight.g, colour::lathe.g, colour::gold.g, colour::copper.g, hot.g),
-             channel (roseDark.b, roseLight.b, colour::lathe.b, colour::gold.b, colour::copper.b, hot.b) };
+    // The rose bronze's two ends scaled by the shape's roseK (1 but on NOVA RIDE), as floats like
+    // the colours themselves: with roseK 1 they are the colours exactly.
+    const auto rose = [roseK] (Rgb c) { return Rgb { (float) (c.r * roseK), (float) (c.g * roseK), (float) (c.b * roseK) }; };
+    const Rgb dark = rose (roseDark), bright = rose (roseLight);
+    return { channel (dark.r, bright.r, colour::lathe.r, colour::gold.r, colour::copper.r, hot.r),
+             channel (dark.g, bright.g, colour::lathe.g, colour::gold.g, colour::copper.g, hot.g),
+             channel (dark.b, bright.b, colour::lathe.b, colour::gold.b, colour::copper.b, hot.b) };
 }
 
 Rgb lineDent (Rgb c, double f) noexcept
@@ -1229,12 +1233,12 @@ Rgb segmentColour (const Geometry& g, const Frame& f, int k, double shadeA, doub
     const float* m = g.segmentMetal.data() + 4 * k;
     if (g.perVertexColour)
     {
-        const auto ca = bronze (shadeA, ytlA, (Metal) (int) m[0], m[1], g.vertexDent[a], f.glow[a]);
-        const auto cb = bronze (shadeB, ytlB, (Metal) (int) m[2], m[3], g.vertexDent[b], f.glow[b]);
+        const auto ca = bronze (shadeA, ytlA, (Metal) (int) m[0], m[1], g.vertexDent[a], f.glow[a], g.shape.roseK);
+        const auto cb = bronze (shadeB, ytlB, (Metal) (int) m[2], m[3], g.vertexDent[b], f.glow[b], g.shape.roseK);
         return { 0.5f * (ca.r + cb.r), 0.5f * (ca.g + cb.g), 0.5f * (ca.b + cb.b) };
     }
     return bronze (0.5 * (shadeA + shadeB), 0.5 * (ytlA + ytlB), (Metal) (int) m[0], m[1], 0.5 * (g.vertexDent[a] + g.vertexDent[b]),
-                   0.5 * (f.glow[a] + f.glow[b]));
+                   0.5 * (f.glow[a] + f.glow[b]), g.shape.roseK);
 }
 
 void projectSurface (const SurfaceVertex& v, const Frame& f, const Camera& cam, double& sx, double& sy) noexcept
@@ -1244,10 +1248,10 @@ void projectSurface (const SurfaceVertex& v, const Frame& f, const Camera& cam, 
     cam.project (X, Y, v.z + f.lift - 2.2 * (X * f.tiltX + Y * f.tiltY), sx, sy);
 }
 
-Rgb surfaceColour (const SurfaceVertex& v, double ytl) noexcept
+Rgb surfaceColour (const SurfaceVertex& v, double ytl, double roseK) noexcept
 {
     const auto scaled = [] (Rgb c, double k) { return Rgb { (float) (c.r * k), (float) (c.g * k), (float) (c.b * k) }; };
-    const auto surfaceBronze = [&] { return bronze (0.9, ytl, (Metal) (int) v.metal, v.factor); };
+    const auto surfaceBronze = [&] { return bronze (0.9, ytl, (Metal) (int) v.metal, v.factor, 1.0, 0.0, roseK); };
     switch ((SurfaceKind) (int) v.kind)
     {
         case SurfaceKind::hammer: return scaled (surfaceBronze(), v.param);

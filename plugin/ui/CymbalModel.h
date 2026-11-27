@@ -81,8 +81,9 @@ enum class Metal : std::uint8_t
 // shade (the normal against the light) and ytl (1 at the cymbal's top on screen, 0 at its
 // bottom); its metal, `factor` being lum(r) x the zone's strength for gold, lum(r) for tint and
 // copperK for copper (min (COPPER x copperK x (0.95 + 0.55 light), 1), replaces the bronze); the dent light factor
-// `dent` (1: no dent); and the glow g that mixes it toward HOT.
-Rgb bronze (double shade, double ytl, Metal metal, double factor, double dent = 1.0, double glow = 0.0) noexcept;
+// `dent` (1: no dent); the glow g that mixes it toward HOT; and the shape's roseK (CymbalShape::roseK),
+// which scales ROSE_DARK and ROSE_LIGHT wherever they are used.
+Rgb bronze (double shade, double ytl, Metal metal, double factor, double dent = 1.0, double glow = 0.0, double roseK = 1.0) noexcept;
 
 enum class Zone : std::uint8_t
 {
@@ -294,8 +295,9 @@ void projectVertex (const Geometry& g, const Frame& f, const Camera& cam, int ve
 Rgb segmentColour (const Geometry& g, const Frame& f, int k, double shadeA, double ytlA, double shadeB, double ytlB) noexcept;
 // Screen position of a surface vertex, with the frame's tilt and spin.
 void projectSurface (const SurfaceVertex& v, const Frame& f, const Camera& cam, double& sx, double& sy) noexcept;
-// The colour of a surface vertex at ytl.
-Rgb surfaceColour (const SurfaceVertex& v, double ytl) noexcept;
+// The colour of a surface vertex at ytl, on a shape whose rose bronze is scaled by roseK
+// (CymbalShape::roseK).
+Rgb surfaceColour (const SurfaceVertex& v, double ytl, double roseK) noexcept;
 
 //==============================================================================
 // The hi-hat (the reference's hihat_draw, UI_SPEC section 11): its top cymbal rises with the
