@@ -200,6 +200,19 @@ struct BakeData
     int formatVersion = 0;
     double sampleRate = 0.0;
     int numModes = 0;
+    // Modes added to the preset's own bank by a step after the bake (tools/apply_nova_edge_v2.py:
+    // NOVA RIDE's edge-only modes, docs/PORT_MAP.md, "NOVA RIDE edge v2"), by index, ascending;
+    // empty when there are none. The bake lists them ("added_modes"); they are inserted at their
+    // frequency. Their seeded values (pick_l / pick_r, lfo_rate_hz / lfo_phase) are taken as baked;
+    // the preset's own modes, in their order, are checked against the streams drawn for their
+    // count (numOwnModes), and they draw the strike phases they drew before the modes were added.
+    std::vector<int> addedModes;
+    int numOwnModes = 0;
+    // Modes whose stereo picks (pick_l / pick_r) are baked rather than seeded, by index, ascending
+    // ("baked_picks"; NOVA RIDE's edge v2 stereo): the loader takes their picks as baked and checks
+    // every other own mode's against the seed; lfo_rate_hz / lfo_phase stay seeded for every own mode.
+    // Listed apart from addedModes (an added mode can be in both).
+    std::vector<int> bakedPicks;
 
     double log1000 = 0.0;          // np.log(1000.0)
     double twoPi = 0.0;            // 2.*np.pi

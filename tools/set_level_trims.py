@@ -18,6 +18,9 @@ must give it vel_0.6_db and vel_0.3_db of -DB (tools/apply_tuning.py, applied fi
 its strikes at velocity 0.6 and below play exactly as with the measured trim and the extra
 level comes in between 0.6 and 1.0. --boost-reason records why. EXTRA PAPER THIN 24"'s
 EDGE (docs/PORT_MAP.md, "Extra Paper Thin Ride 24"").
+
+--keep SLOT leaves SLOT's trim as the bake has it (repeatable): NOVA RIDE's EDGE, which edge v2
+sets (tools/apply_nova_edge_v2.py; not re-measured).
 """
 import argparse
 import json
@@ -35,6 +38,7 @@ def main():
     ap.add_argument('--boost', action='append', default=[], metavar='SLOT=DB',
                     help='raise SLOT\'s trim by DB; its velocity curve must be -DB at 0.6 and 0.3')
     ap.add_argument('--boost-reason', default='', help='why the boost (recorded in level_trim)')
+    ap.add_argument('--keep', action='append', default=[], metavar='SLOT', help='leave SLOT\'s trim as it is')
     args = ap.parse_args()
     boosts = {}
     for b in args.boost:
@@ -64,7 +68,12 @@ def main():
                              'apply the tuning file first')
     if sorted(names) != sorted(trims['slots']):
         raise SystemExit(f'the trims are for slots {sorted(trims["slots"])}, the bake has {sorted(names)}')
+    for name in args.keep:
+        if name not in names:
+            raise SystemExit(f'--keep {name}: the bake has no such slot')
     for s in bake['slots']:
+        if s['name'] in args.keep:
+            continue
         t = trims['slots'][s['name']]
         if float(t['position']) != float(s['position']):
             raise SystemExit(f'slot {s["name"]}: trim measured at position {t["position"]}, bake has {s["position"]}')

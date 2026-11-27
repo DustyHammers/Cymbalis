@@ -505,6 +505,29 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
         v->resize(n);
     rng_ = b.renderStream; // the strike-phase sequence starts from this preset's seed
     aheadDone_ = 0;
+    if (! b.addedModes.empty())
+    {
+        // Added modes (Bake.h): the own modes draw first, in their order, from rng_; the added
+        // ones after them from addRng_: two outputs of a copy of the render stream after the two
+        // hitRng_ takes, mixed with constants of its own.
+        ownModes_ = b.numOwnModes;
+        isAdded_.assign(n, 0);
+        for (int k : b.addedModes)
+            isAdded_[size_t(k)] = 1;
+        drawIdx_.clear();
+        for (int k = 0; k < n_; ++k)
+            if (isAdded_[size_t(k)] == 0)
+                drawIdx_.push_back(k);
+        for (int k : b.addedModes)
+            drawIdx_.push_back(k);
+        Pcg64 g = b.renderStream;
+        g.nextU64();
+        g.nextU64();
+        const uint64_t hi = g.nextU64() ^ 0x4144444544204D4FULL, lo = g.nextU64() ^ 0xC2B2AE3D27D4EB4FULL;
+        addRng_ = Pcg64(Pcg64::make128(hi, lo), Pcg64::make128(0x9E6C63D0676A9A99ULL, 0x2545F4914F6CDD1DULL | 1u));
+        for (auto* v : {&drawPhase_, &drawSin_, &drawCos_})
+            v->resize(n);
+    }
 }
 
 // About 2.8 ms between control points at every supported rate. With NPZ edge data (a band
@@ -824,7 +847,7 @@ void FastEngine::processSpan(float* left, float* right, int numSamples) noexcept
         return;
     }
     sampleNow_ = static_cast<int64_t>(clock_);
-    if (aheadDone_ < n_ || !(rng_ == aheadFrom_))
+    if (aheadDone_ < n_ || !(rng_ == aheadFrom_) || (! drawIdx_.empty() && !(addRng_ == aheadAddFrom_)))
         drawPhasesAhead((n_ + 3) / 4);
     int pos = 0;
     while (pos < numSamples)
@@ -3037,7 +3060,7 @@ void FastEngine::bandBlock() noexcept
         }
         else
         {
-            const double phi = rng_.uniform(0.0, twoPi);
+            const double phi = isAdded_.empty() || isAdded_[k] == 0 ? rng_.uniform(0.0, twoPi) : addRng_.uniform(0.0, twoPi);
             const double m = std::sqrt(add) / d;
             dr = m * std::cos(phi);
             di = m * std::sin(phi);
@@ -3451,6 +3474,35 @@ bool FastEngine::isSilent() const noexcept
 // if rng_ has moved since) and evaluates their cos and sin, as strike() would.
 void FastEngine::drawPhasesAhead(int count) noexcept
 {
+    if (! drawIdx_.empty())
+    {
+        // With added modes: in draw order (the own modes, then the added ones), each phase to
+        // its mode.
+        if (!(rng_ == aheadFrom_) || !(addRng_ == aheadAddFrom_) || aheadDone_ == 0)
+        {
+            aheadFrom_ = rng_;
+            aheadRng_ = rng_;
+            aheadAddFrom_ = addRng_;
+            aheadAddRng_ = addRng_;
+            aheadDone_ = 0;
+        }
+        const BakeData& b = *bake_;
+        const double range = b.phaseHigh - b.phaseLow;
+        const int end = std::min(n_, aheadDone_ + count);
+        for (int i = aheadDone_; i < end; ++i)
+            drawPhase_[size_t(i)] = (i < ownModes_ ? aheadRng_ : aheadAddRng_).uniform(b.phaseLow, range);
+        vecmath::sinCosArray(drawPhase_.data() + aheadDone_, drawSin_.data() + aheadDone_, drawCos_.data() + aheadDone_,
+                             end - aheadDone_);
+        for (int i = aheadDone_; i < end; ++i)
+        {
+            const size_t k = size_t(drawIdx_[size_t(i)]);
+            scratchPhase_[k] = drawPhase_[size_t(i)];
+            phaseSin_[k] = drawSin_[size_t(i)];
+            phaseCos_[k] = drawCos_[size_t(i)];
+        }
+        aheadDone_ = end;
+        return;
+    }
     if (!(rng_ == aheadFrom_) || aheadDone_ == 0)
     {
         aheadFrom_ = rng_;
@@ -3465,6 +3517,12 @@ void FastEngine::drawPhasesAhead(int count) noexcept
     vecmath::sinCosArray(scratchPhase_.data() + aheadDone_, phaseSin_.data() + aheadDone_,
                          phaseCos_.data() + aheadDone_, end - aheadDone_);
     aheadDone_ = end;
+}
+
+double FastEngine::drawPhase(int draw) noexcept
+{
+    const BakeData& b = *bake_;
+    return (draw < ownModes_ ? rng_ : addRng_).uniform(b.phaseLow, b.phaseHigh - b.phaseLow);
 }
 
 // HIT VARIATION (docs/TUNING.md): this strike's position p moves to p + U(-s, s), mirrored at
@@ -3519,6 +3577,8 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     const double range = b.phaseHigh - b.phaseLow;
     drawPhasesAhead(n_); // the rest of them, if they are still the next in the sequence
     rng_ = aheadRng_;
+    if (! drawIdx_.empty())
+        addRng_ = aheadAddRng_;
     aheadDone_ = 0;
     CYM_PROF_END(strikePhases);
 
@@ -3614,8 +3674,12 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
         CYM_PROF_BEGIN(strikeNpz);
         npzCoupling(velocity, scratchBellVel_.data());
         npzLevel = numpyScalarPower(velocity, b.edgeNpz.levelVelGainPower);
-        for (size_t i = 0; i < n; ++i)
-            scratchPhase_[i] = rng_.uniform(b.phaseLow, range);
+        if (drawIdx_.empty())
+            for (size_t i = 0; i < n; ++i)
+                scratchPhase_[i] = rng_.uniform(b.phaseLow, range);
+        else // the own modes from rng_, then the added ones from addRng_ (drawPhasesAhead)
+            for (int d = 0; d < n_; ++d)
+                scratchPhase_[size_t(drawIdx_[size_t(d)])] = drawPhase(d);
         vecmath::sinCosArray(scratchPhase_.data(), phaseSin_.data(), phaseCos_.data(), n_);
         CYM_PROF_END(strikeNpz);
     }
