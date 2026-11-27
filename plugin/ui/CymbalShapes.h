@@ -264,6 +264,11 @@ struct CymbalShape
     // carries the clutch and rod; `lower` is its bottom cymbal, drawn under it and hidden where
     // the top cymbal is in front of it. nullptr for a single cymbal.
     const CymbalShape* lower = nullptr;
+    // 2026-11-27 (NOVA RIDE): the rose bronze's two ends (colour::roseDark and roseLight) scaled by
+    // roseK (rose_k) wherever they are used: the mesh and hammering, the rose share of the gold, tint
+    // and lathe colours, the dent highlight (wire::bronze, and the shaders' uRoseK). 1: every other
+    // preset.
+    double roseK = 1.0;
 };
 
 // NOVA RIDE (2026-10-28): a bell like Raven's (its edge at 2.2"), a longer, shallower bow down to
@@ -285,6 +290,7 @@ inline constexpr CymbalShape kNovaShape = [] {
     s.goldStep = 0.006;
     s.photoLum = &kNovaPhotoLum;
     s.bellLine = false;
+    s.roseK = 0.62; // 2026-11-27: a darker rose bronze, #452E24 to #8A6D5D
     return s;
 }();
 

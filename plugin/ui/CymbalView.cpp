@@ -29,11 +29,15 @@ juce::String bronzeGlsl()
     using namespace wire::colour;
     return "const vec3 kDark = " + vec3Of (roseDark) + ", kLight = " + vec3Of (roseLight) + ", kLathe = " + vec3Of (lathe)
            + ", kGold = " + vec3Of (gold) + ", kCopper = " + vec3Of (copper) + ", kHot = " + vec3Of (hot) + ";\n"
-           + R"(// metal: 0 plain, 1 lathe, 2 gold, 3 tint, 4 copper (wire::Metal); dent: the dent light factor
+           + R"(// The rose bronze's two ends scaled by the cymbal's roseK (CymbalShape::roseK; 1 but on NOVA RIDE):
+// kDark + (kLight - kDark) p and kLight x 1.15 times uRoseK, the same as both ends times uRoseK, so
+// that with uRoseK 1 every other preset's arithmetic is as before, times an exact 1.
+uniform float uRoseK;
+// metal: 0 plain, 1 lathe, 2 gold, 3 tint, 4 copper (wire::Metal); dent: the dent light factor
 vec3 bronze (float shade, float ytl, float metal, float factor, float dent, float glow)
 {
     float light = clamp (((shade - 0.86) / 0.14) * 0.8 + 0.2 * ytl, 0.0, 1.0);
-    vec3 c = kDark + (kLight - kDark) * pow (0.25 + 0.75 * light, 1.4);
+    vec3 c = (kDark + (kLight - kDark) * pow (0.25 + 0.75 * light, 1.4)) * uRoseK;
     if (metal > 3.5)
         c = min (kCopper * factor * (0.95 + 0.55 * light), vec3 (1.0));
     else if (metal > 2.5)
@@ -42,7 +46,7 @@ vec3 bronze (float shade, float ytl, float metal, float factor, float dent, floa
         c = c * 0.25 + kGold * (0.42 + 0.48 * light) * factor;
     else if (metal > 0.5)
         c = c * 0.55 + kLathe * (0.30 + 0.35 * light);
-    c = dent > 1.0 ? c + (kLight * 1.15 - c) * min (dent - 1.0, 1.0) : c * dent;
+    c = dent > 1.0 ? c + (kLight * 1.15 * uRoseK - c) * min (dent - 1.0, 1.0) : c * dent;
     return c + (kHot - c) * glow;
 }
 )";
@@ -1198,6 +1202,7 @@ void CymbalView::renderOpenGL()
             glUniform1i (Gpu::at (*g.mesh, "uStatic"), 1);
             glUniform1i (Gpu::at (*g.mesh, "uState"), 2);
             glUniform1f (Gpu::at (*g.mesh, "uPerVertex"), part.geometry->perVertexColour ? 1.0f : 0.0f);
+            glUniform1f (Gpu::at (*g.mesh, "uRoseK"), (float) part.geometry->shape.roseK);
             glActiveTexture (GL_TEXTURE1);
             glBindTexture (GL_TEXTURE_2D, part.staticTexture);
             glActiveTexture (GL_TEXTURE2);
@@ -1221,6 +1226,7 @@ void CymbalView::renderOpenGL()
             g.surface->use();
             common (*g.surface, part);
             glUniform1f (Gpu::at (*g.surface, "uGlowGain"), 0.0f);
+            glUniform1f (Gpu::at (*g.surface, "uRoseK"), (float) part.geometry->shape.roseK);
             glBindVertexArray (part.surfaceVao);
             segments (0, part.surfaceSegments);
         };
@@ -1575,7 +1581,7 @@ juce::Image CymbalView::renderStill (float scale) const
                     double sx = 0.0, sy = 0.0;
                     wire::projectSurface (geo.surface[k + e], f, cam, sx, sy);
                     p[e] = { (float) (sx - origin.x), (float) (sy - origin.y) };
-                    c[e] = wire::surfaceColour (geo.surface[k + e], ytl (sy - origin.y));
+                    c[e] = wire::surfaceColour (geo.surface[k + e], ytl (sy - origin.y), geo.shape.roseK);
                 }
                 const double dent = 0.5 * (geo.surface[k].dent + geo.surface[k + 1].dent);
                 lg.setColour (toColour (wire::lineDent ({ 0.5f * (c[0].r + c[1].r), 0.5f * (c[0].g + c[1].g), 0.5f * (c[0].b + c[1].b) }, dent)));

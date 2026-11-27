@@ -37,6 +37,9 @@ History:
   (edge_lines empty).
 - 2026-11-26, approved by Kris: the felt, washer and wing nut on top of the bell of every preset
   but the hi-hat (bell_hardware), from the project session's mockups.
+- 2026-11-27, approved from the project session's mockups ("Darker 2"): NOVA RIDE's rose bronze
+  darker, both ends scaled by rose_k 0.62 (#452E24 to #8A6D5D) wherever they are used; rose_k is
+  1.0 on every other preset.
 """
 import math
 import numpy as np
@@ -81,7 +84,9 @@ CYMBALS = {
                  # (Kris 2026-10-28: one large lathed area that includes the bell, out to 3.55"; a small
                  # unlathed ring 3.55-3.73"; a small lathed ring 3.73-3.97"; then the hammered bow.)
                  lathe=[], fine_lathe=[], gold=[(0.025, 0.355), (0.373, 0.397), (0.958, 1.0)],
-                 gold_step=0.006, photo_lum=NOVA_PHOTO_LUM, bell_line=False),
+                 gold_step=0.006, photo_lum=NOVA_PHOTO_LUM, bell_line=False,
+                 # (2026-11-27, "Darker 2": the rose bronze's two ends scaled by rose_k, #452E24 to #8A6D5D.)
+                 rose_k=0.62),
     # (Kris: the bell is the darker centre, about 4" across; the bright lathed disc around it, to 4",
     # is the bow's lathed inner zone.)
     'hammered': dict(title='HAMMERED THIN RIDE', R=10.0, bell=0.19, hammer='dimple', hammer_zone=(0.43, 0.92),
@@ -194,11 +199,18 @@ CYMBALS = {
 
 ROSE_DARK = np.array([58, 74, 112], np.float32)     # BGR: deep rose bronze
 ROSE_LIGHT = np.array([150, 176, 222], np.float32)  # BGR: light rose gold (top, under the spotlight)
+# A cymbal's rose_k (default 1.0; NOVA RIDE 0.62) scales both, wherever they are used (rose()).
 LATHE = np.array([110, 160, 205], np.float32)       # BGR: lathed bright bronze
 GOLD = np.array([140, 200, 236], np.float32)        # BGR: pale gold of a deep-lathed bell
 COPPER = np.array([66, 110, 196], np.float32)       # BGR: hammered copper patina (SWISH)
 HOT = np.array([215, 238, 255], np.float32)         # warm white for the lit pattern
 ARC_T = np.linspace(0, 1, 6)
+
+
+def rose(c):
+    """The rose bronze's two ends for a cymbal's CYMBALS entry: ROSE_DARK and ROSE_LIGHT x rose_k."""
+    k = c.get('rose_k', 1.0)
+    return ROSE_DARK * k, ROSE_LIGHT * k
 
 MODES = [(m, n, z) for m in range(0, 7) for n, z in enumerate(jn_zeros(m, 3))]
 MOT = {'edge': (0.025, 1.3, 1.4, 0.15), 'bow': (0.006, 0.5, 2.0, 0.0), 'bell': (0.002, 0.3, 2.6, 0.0)}
@@ -393,11 +405,12 @@ class Cymbal:
         nx_ = -(dzr * np.cos(TT) - dzt * np.sin(TT)); ny_ = -(dzr * np.sin(TT) + dzt * np.cos(TT))
         nn = np.sqrt(nx_ ** 2 + ny_ ** 2 + 1); LGT = np.array([0.0, -0.55, 0.83])
         shade = np.clip((ny_ * LGT[1] + LGT[2]) / nn, 0, 1)
+        rose_dark, rose_light = rose(self.c)
 
         def colour(rr, sh, yy, gg=0.0):
             ytl = 1 - (yy - ytop) / max(ybot - ytop, 1)
             light = np.clip(((sh - 0.86) / 0.14) * 0.8 + 0.2 * ytl, 0, 1)
-            c = ROSE_DARK + (ROSE_LIGHT - ROSE_DARK) * (0.25 + 0.75 * light) ** 1.4
+            c = rose_dark + (rose_light - rose_dark) * (0.25 + 0.75 * light) ** 1.4
             if any(z[0] <= rr <= z[1] for z in self.c.get('tint', [])):
                 c = c * 0.15 + GOLD * (0.62 + 0.38 * light) * self.lum(rr)      # lighter gold metal
             elif self.in_gold(rr):
@@ -806,7 +819,8 @@ class Cymbal2:
         dshade = shade_of(Z) - shade_s                  # what the dents add: lit and shadowed walls
         ytl = 1 - (sy - ytop) / max(ybot - ytop, 1)
         light = np.clip(((shade_s - 0.86) / 0.14) * 0.8 + 0.2 * ytl + self.dent_light * dshade, 0, 1)
-        C = ROSE_DARK + (ROSE_LIGHT - ROSE_DARK) * ((0.25 + 0.75 * light) ** 1.4)[..., None]
+        rose_dark, rose_light = rose(self.c)
+        C = rose_dark + (rose_light - rose_dark) * ((0.25 + 0.75 * light) ** 1.4)[..., None]
         Cl = C * 0.55 + LATHE * (0.30 + 0.35 * light)[..., None]
         C = np.where(self.lathe_mask[..., None], Cl, C)
         Cg = C * 0.25 + GOLD * ((0.42 + 0.48 * light) * self.lumR)[..., None]
@@ -816,7 +830,7 @@ class Cymbal2:
         C = np.where(self.copper_mask[..., None], Cc, C)
         # dent walls: shadowed sides fade, lit sides brighten toward the highlight
         f = np.clip(1 + self.dent_contrast * dshade, 0.25, 1.9)[..., None]
-        C = np.where(f > 1, C + (ROSE_LIGHT * 1.15 - C) * np.clip(f - 1, 0, 1), C * f)
+        C = np.where(f > 1, C + (rose_light * 1.15 - C) * np.clip(f - 1, 0, 1), C * f)
         C = C + (HOT - C) * g[..., None]
         P = np.stack([sx * 4, sy * 4], -1).astype(np.int32)
         layer = np.zeros_like(img)
@@ -856,7 +870,7 @@ class Cymbal2:
                 elif kind == 'E':
                     c = GOLD * (0.55 + 0.40 * yt[q]) * inten; th = 2
                 else:
-                    lt = np.clip(0.2 * yt[q], 0, 1); base_c = ROSE_DARK + (ROSE_LIGHT - ROSE_DARK) * (0.25 + 0.75 * lt) ** 1.4
+                    lt = np.clip(0.2 * yt[q], 0, 1); base_c = rose_dark + (rose_light - rose_dark) * (0.25 + 0.75 * lt) ** 1.4
                     c = (base_c * 0.55 + LATHE * (0.30 + 0.35 * lt)) * (0.30 + 0.25 * yt[q]); th = 1
                 c = c + (HOT * 0.95 - c) * min(fq - 1, 1) if fq > 1 else c * fq     # the dent walls, as the mesh
                 cv2.line(layer, (int(px[q] * 4), int(py[q] * 4)), (int(px[q + 1] * 4), int(py[q + 1] * 4)),
