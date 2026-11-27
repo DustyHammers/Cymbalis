@@ -1709,3 +1709,70 @@ On this repo's Linux machine (`cymbalis_bench`, 48 kHz, 256-sample blocks, all s
 - **STINE's EDGE soft hit stops later than its hard one** (12.6 s against 11.8 s at 0.5 and 0.9). Its displacement curve, from its own modes' amplitudes, decays more slowly after 0.5 s than the hard hit's (a softer edge strike puts more of its energy in the long-ringing low modes), and with EDGE DRIVE's +6 dB the gate closes late, where that difference adds up. Every other row on all five stops sooner when soft.
 - **STINE's BOW stops at 6.9 s** at 0.9, against the task's "about 5.8 s"; HAMMERED THIN's at 4.2 s against "about 4.5 s".
 - **The correlation** (above): the sizzle has one stereo image, from fixed random weights spread over every mode in its band; the cymbal's own high band moves with the strike and rests on fewer, stronger modes.
+
+### Off is off: the guarantee and its checks (2026-11-27)
+
+Kris heard HAMMERED THIN's edge change after switching the chain on and off: top end dropping out, and faint sizzle in the tails. The project session found nothing: Kris's renders after switching off matched the never-on hit within 0.3 dB from 500 Hz up; engine renders were bit-identical after a silence or with the chain toggled without strikes, 52 dB under the signal within 0.7 s for fast EDGE 8ths through the switch-off and 100–180 dB down after that. The only difference heard, the attack's first 20 ms, is the fresh random mode phases every strike draws. This section settles it in code and in bits, and `cymbalis_chain_off` keeps it checked.
+
+**The audit.** Every place the chain writes outside itself, or reads state that also shapes the cymbal's sound:
+
+| Where | With the chain off | Why it can't change the output, or how it can |
+|---|---|---|
+| `strike()`: the strike's `epsK` (the damping) | not applied: `epsK = eps`, as without a chain | applied only `if (chain_.on())`, read once at the strike |
+| `chainRate_` | written at every strike | the chain's own scratch, read only by its drive |
+| `chain_.strike` (drive records, swing) | takes every strike, on or off | reads the strike's coupling and decay rates; writes only the chain's state |
+| `mergeComponents` | a strike made after switching off can merge with one made while on: the merged decay is the energy-weighted mean of a damped and an undamped one | **the merge leak** (case D). Only while all 24 component slots are full. The pair merged is chosen by `eps`, settled, pending and age, none of which the chain touches, so the same pairs merge as with a chain never on; only the mean differs |
+| `isSilent()` → `chain_.isSilent()` | off and faded, or nothing resonating: true, so silence is the components' alone | case G: the same block as a chain never on |
+| `applyDecay` → `chain_.setDecay`; `prepare` → `chain_.prepare`; `setTuning`'s stereo gains → `chain_.setGains` | the chain's own copies (its resonators' t60 and gains) | chain-private |
+| Random draws | the chain draws from its own xorshift128+ (the bake's seed) | the engine's phase stream and HIT VARIATION's are never touched (A, B, C bit-identical with HIT VARIATION on) |
+| LF and MF build-up | fed by velocity and position only | the damping can't reach them |
+| `process()`: `chain_.process` before the right-channel high-pass | off and faded, it adds nothing (its swing phasors still turn) | A, C. **During the 50 ms fade-out** it adds the fading sizzle, of the strikes ringing and of any new strike (the fade window) |
+| Right-channel high-pass | its state keeps a trace of the sizzle after the fade | dies away as any ring the filter has seen (−90 dB re the strike's peak at most one block after the fade) |
+| The processor's per-block `setChain` | sets the flag only | processor A |
+| Preset switching | a new cymbal: a new `FastEngine` with a fresh chain, off unless that preset's switch is on | E1, E2 (the old cymbal fades out over 30 ms with its own state, as before) |
+| Session save and restore | `chain_<preset>` attributes; the chain's values in the tuning state | F1–F3 |
+| The chain's values changed (`setSettings`) | its damping factors, drive weights and resonator gains: its own; the damping acts only at strikes made while on | C, engine and processor |
+| The 140 dB rule and `skip_threshold` | unchanged; strikes made while on fall under it sooner (their own ring) | a new strike can lift old modes back over the line, carrying their (damped) difference at 100–130 dB under the signal |
+| Energy cascade, loud-band and re-hit damping | off (amount 0) on all five presets | switched on, they would couple the energies of strikes made while on to new strikes as merges do; not covered by the cases |
+
+**The guarantee.**
+
+1. **Off, never struck while on:** with the chain off, the engine plays bit for bit as one whose chain was never on, whatever was switched before, provided no strike was made while it was on, **and none within the 50 ms fade-out after switching off.** A strike in those 50 ms still gets the fading sizzle (the fade window, below).
+2. **Strikes made while on** keep their damping, and their sizzle its 50 ms fade and resonator ring-out (at most 1.2 s), until they fall silent. Nothing else differs: once they are silent, everything is bit for bit as with the chain never on. The one exception is the right-channel high-pass's memory of the last ring, which the silence test doesn't include and which differs between any two engines with different pasts; 2 s after the silence nothing of it is left.
+3. **Strikes after the switch:** a strike made after switching off sounds exactly as with the chain never on, apart from what it adds to the ring of the strikes still sounding from before, **as long as fewer than 24 strikes ring.** With the pool full, the engine merges two ringing strikes, and a merge of a strike made after the switch with one made while on passes part of the damping on.
+   - **Size** (case D, the full set): the difference stands at most 16.8 dB over what the strikes made while on leave by themselves (STINE and EXTRA PAPER THIN 16.8, HAMMERED THIN 16.3, RAVEN 11.2, SWISH 2.1).
+   - **Level:** 2 s after the switch the difference is 36 to 55 dB under the playing (EXTRA PAPER THIN −36, STINE −41, SWISH −47, RAVEN −54, HAMMERED THIN −55), and falling.
+   - **Audible?** Very unlikely: it is a small change in the decay of partials that are sounding anyway, 36 dB or more under them.
+
+**The fade window.** A strike made one sample after switching off gets the fading sizzle at its onset:
+- up to −3.0 dB re the strike's own peak on HAMMERED THIN, −1.5 dB on RAVEN, −3.3 dB on STINE, −5.0 dB on EXTRA PAPER THIN;
+- **+5.9 dB on SWISH:** a strike's sizzle at its onset can exceed the strike itself, as with the chain on;
+- it fades with the switch and is gone 50 ms after it (the left channel bit for bit from there).
+
+**The cases** (`tools/cymbalis_identity/ChainOff.cpp`, built as `CymbalisChainOff`, in memory). Each case renders an engine or a processor switched as it says against the same playing on one whose chain is never on, in lockstep, sample by sample. The playing: EDGE, BOW and BELL (STINE: CENTER) at velocities 0.3–1.0, with flams and rolls.
+
+| Case | What | Result (full set: 5 presets × 44.1, 48, 96 kHz × 64, 512 samples × HIT VARIATION on, off) |
+|---|---|---|
+| A | the chain toggled 25 times at random samples while nothing rings; the playing from the end of the last fade-out; silence; toggled again; the playing again (engine; and the processor, the switch toggled between blocks of random sizes, other presets' switches too) | bit-identical throughout, all 120 |
+| B | the playing for 3 s with the chain on; off; until both engines report silence (STINE 91.8 s, EXTRA PAPER THIN 73.4 s, the others 27–28 s), 2 s more; the playing | bit-identical from the first strike after the silence, all 60 |
+| C | the chain's eight values changed while off, each to both ends of its range, during the playing (engine; and the processor through `setTuning`) | bit-identical, all 120 |
+| D | the playing for 24 s, the chain on for its first 4 s | the leak at most 16.8 dB over the ring-out alone (checked: at most 25 dB, where the difference is above −120 dBFS), all 60 |
+| E | chain on for X and played; to another chain preset and back (E1), or to NOVA RIDE (no chain), played, and back (E2); chain off; the playing | bit-identical from the switch on, all 120 |
+| F | saved with the chain on, restored into a new processor, switched off (F1); on, played, saved and restored into the same processor while it rings, off, silence (F2); on, played, off, saved, restored into a new processor (F3); the playing | bit-identical (F2 from the first strike after the silence), all 180 |
+| G | after B's second playing, the block at which each engine reports silence | the same block, all 60 |
+| Fade window | on, then off one sample before an EDGE strike at 1.0 | its fading sizzle as above; the left channel bit-identical and the right within −90 dB from the fade's end, all 60 |
+
+840 cases in all (14 per configuration). The full set takes 7.6 minutes on 4 cores of the Linux build machine (1,800 s of CPU: 1,090 s engine, 710 s processor); the reduced set (STINE FLAT RIDE and HAMMERED THIN RIDE, 48 kHz, 512 samples, HIT VARIATION on, 28 cases) about 30 s. CI runs the reduced set on every run and the full set in a job of its own with `full_tests` (`docs/BUILDS.md`). Preset switches in the processor cases go through `prepareToPlay`, which builds the new cymbal at once (the audio thread's 30 ms crossfade from the old one is not exercised; once the old one has faded it holds nothing of the new one's).
+
+**The task's 0.5 dB criterion for case D** (the difference never rising at a strike made after the switch by more than 0.5 dB, over the 20 ms from the strike against the 20 ms before) **fails on all five presets.**
+- **How often:** 9 to 60 of the 152 strikes after the switch rise by more (worst +25.9 dB on SWISH).
+- **All at merges:** a profile build that counts merges found every one of those rises at a strike where the pool merged (STINE 28 of 28, HAMMERED THIN 43 of 43).
+- **Without merges** (strikes 1.2 s apart, the pool never full), the only rises are 100–130 dB under the signal: the 140 dB rule lifting old modes back over the line.
+- **Why it isn't the gate:** the rise is measured against the difference just before, which can itself be tiny, so it detects a merge rather than measuring a level. The program reports it; the checked gate is the leak over the ring-out alone.
+
+**Fixes considered (not applied: they change the sound; Kris decides):**
+- **The merge leak.** "Never merge a strike made while on with one made after" was tried locally: it is worse. 2–8 s after the switch the difference rose to −21 to −28 dB on STINE (from −41 to −48), because the strikes after the switch then merge with other partners than with a chain never on. A merge only approximates the two strikes it joins, so any change of partners shows. An exact guarantee would need merges that never join strikes from either side of a switch, with the chain on or never on: a change to how every preset merges when its pool is full. Not proposed; the leak as measured is proposed to stand.
+- **The fade window.** During the fade-out, feed the resonators with the envelope as it was at the switch, decaying, so that a strike made after switching off adds nothing to the fading sizzle. Its drive would still be recorded, for a switch back on. This would change only strikes made within 50 ms after switching off.
+- **The high-pass's memory:** not the chain's; no change.
+
+Nothing in the plugin changed in this task: the chain off is bit for bit as `main` on every preset (`tools/cymbalis_identity/run.sh`).

@@ -52,17 +52,19 @@ Since 2026-11-26 CI is lean while the presets are being developed (Kris: "we are
 - **Every push to `main`, every pull request, and a manual run without "full tests":**
   - checkout, Xcode, Ninja, the caches, configure and build;
   - the CPU benchmark (about 2 minutes, 3.5 with the sizzle chain's runs: the five presets with a chain, with it on, `--chain`; the 3× real-time check in `CLAUDE.md`);
+  - the sizzle chain off, its reduced set (`CymbalisChainOff`, about 30 s; `docs/PORT_MAP.md`, "Sizzle chain", "Off is off");
   - the bundle checks: both architectures, minimum macOS 11.0, no AVX in the Intel slice, the JUCE splash screen off;
   - ad-hoc code signing;
   - pluginval and auval (native and Rosetta);
   - the two zips, packaged and uploaded as before.
-- **The test tools are still built every time** (`dhpool_selftest`, `CymbalisUiTest`, the bench), so a broken one is still a build error. They compile alongside the plugin and finish before its link, so they add well under a minute to the build (2.3–2.8 minutes in all with the compiler cache).
+- **The test tools are still built every time** (`dhpool_selftest`, `CymbalisUiTest`, the bench, `CymbalisChainOff`), so a broken one is still a build error. They compile alongside the plugin and finish before its link, so they add well under a minute to the build (2.3–2.8 minutes in all with the compiler cache).
 - **On request only, or on a `v*` release tag:**
   - the job pool self-test (dhpool);
   - the engine block times in dense playing (about 11 minutes; about 13 with the sizzle chain's cases, `--dense --chain`);
   - the kit benchmark (about 14 minutes);
   - the editor mouse test (about 7 minutes);
-  - the hit display timing (about 9 minutes).
+  - the hit display timing (about 9 minutes);
+  - the sizzle chain off, its full set (840 cases, about 8 minutes), in a job of its own (`chain-off-full`) on its own runner alongside the build job, which it would otherwise take past its 60-minute limit.
 
   Their steps and timeouts are as they were; only when they run has changed (`if:` on each: a manual run with `full_tests`, or a `v*` tag).
 - **To run the full tests:** Actions → "Build macOS (VST3 + AU)" → Run workflow → pick the branch → tick "full tests".

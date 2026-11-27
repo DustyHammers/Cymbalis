@@ -100,7 +100,7 @@ jobs:
       - name: Build
         run: |
           set -o pipefail
-          if ! cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU CymbalisUiTest cymbalis_bench cymbalis_bench_profile cymbalis_trims dhpool_selftest --parallel 2>&1 | tee build.log; then
+          if ! cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU CymbalisUiTest cymbalis_bench cymbalis_bench_profile cymbalis_trims dhpool_selftest CymbalisChainOff --parallel 2>&1 | tee build.log; then
             .github/scripts/annotate_errors.sh build.log Build
             exit 1
           fi
@@ -115,6 +115,20 @@ jobs:
         if: (github.event_name == 'workflow_dispatch' && inputs.full_tests) || startsWith(github.ref, 'refs/tags/v')
         timeout-minutes: 5
         run: build/shared/dhpool/dhpool_selftest
+
+      # The sizzle chain cannot change the sound once it is off (tools/cymbalis_identity/ChainOff.cpp;
+      # docs/PORT_MAP.md, "Sizzle chain", "Off is off"): its reduced set, STINE FLAT RIDE and
+      # HAMMERED THIN RIDE at 48 kHz, 512-sample blocks, HIT VARIATION on, each case against the
+      # same playing with the chain never on, sample by sample, in memory (about 30 s). Every run;
+      # the full set runs in the chain-off-full job below with full_tests. Printed to the log and
+      # the job summary; a failed case fails the job.
+      - name: Sizzle chain off (reduced set)
+        timeout-minutes: 5
+        run: |
+          OFF="build/CymbalisChainOff_artefacts/${BUILD_TYPE}/CymbalisChainOff"
+          "$OFF" | tee chainoff.txt
+          test "${PIPESTATUS[0]}" -eq 0
+          { echo "### Sizzle chain off (reduced set)"; echo; cat chainoff.txt; } >> "$GITHUB_STEP_SUMMARY"
 
       # CPU cost of the real-time engine on this runner (Apple Silicon), every slot playing (on
       # HI-HAT with the pedal moving: cymbalis_bench), then the five presets with a sizzle chain
@@ -390,3 +404,59 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.zip
+
+  # The sizzle chain off, its full set (tools/cymbalis_identity/ChainOff.cpp; docs/PORT_MAP.md,
+  # "Sizzle chain", "Off is off"): the five presets with a chain, 44.1, 48 and 96 kHz, 64- and
+  # 512-sample blocks, HIT VARIATION on and off, 840 cases on the runner's cores (about 8 minutes
+  # of the run; 7.6 minutes on 4 cores of the Linux build machine). A job of its own, on its own
+  # runner, alongside the build job: there it would take the 60-minute job past its limit with
+  # the other long tests. arm64 only (the tool's cases do not depend on the slice). On request
+  # (full_tests) or on a v* tag, as the long tests. Printed to the log and the job summary.
+  chain-off-full:
+    if: (github.event_name == 'workflow_dispatch' && inputs.full_tests) || startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      XCODE_VERSION: '16.4'
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode ${{ env.XCODE_VERSION }}
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app"
+          xcodebuild -version
+
+      - name: Install Ninja
+        run: brew list ninja >/dev/null 2>&1 || brew install ninja
+
+      - name: Cache JUCE source
+        uses: actions/cache@v4
+        with:
+          path: .deps
+          key: deps-${{ runner.os }}-xcode${{ env.XCODE_VERSION }}-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Compiler cache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-${{ env.BUILD_TYPE }}-chainoff
+
+      - name: Configure and build (arm64)
+        run: |
+          set -o pipefail
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DFETCHCONTENT_BASE_DIR="${GITHUB_WORKSPACE}/.deps" \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache 2>&1 | tee configure.log
+          cmake --build build --target CymbalisChainOff --parallel 2>&1 | tee build.log
+
+      - name: Sizzle chain off (full set)
+        timeout-minutes: 20
+        run: |
+          OFF="build/CymbalisChainOff_artefacts/${BUILD_TYPE}/CymbalisChainOff"
+          "$OFF" --full --quiet | tee chainoff.txt
+          test "${PIPESTATUS[0]}" -eq 0
+          { echo "### Sizzle chain off (full set)"; echo; cat chainoff.txt; } >> "$GITHUB_STEP_SUMMARY"
