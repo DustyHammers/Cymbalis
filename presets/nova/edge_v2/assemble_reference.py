@@ -5,7 +5,8 @@
 Starts from the shipped nova_ride.bake.json and changes nothing but:
   * the 34 added modes, inserted at their frequency into every per-mode array (nova_edge_v2_modes.json);
   * the edge NPZ block and the per-mode edge peak times (nova_edge_v2_npz.json);
-  * every slot's edge parameters and flags, the EDGE level trim, two tuning values (nova_edge_v2_settings.json).
+  * every slot's edge parameters and flags, the EDGE level trim, two tuning values (nova_edge_v2_settings.json);
+  * the stereo picks of the modes in nova_edge_v2_picks.json.
 The real build step belongs in tools/ (Claude Code); this file only documents the approved result exactly.
 """
 import sys, os, json, struct
@@ -84,6 +85,13 @@ b['edge_npz'] = dict(velocities=arr(Z['velocities']), velw=arr(Z['velw']), envel
 b['tuning'].setdefault('cymbal', {}).update(St['tuning_cymbal'])
 for art, v in St['tuning_articulations'].items():
     b['tuning'].setdefault('articulations', {}).setdefault(art, {}).update(v)
+pk_path = os.path.join(d, 'nova_edge_v2_picks.json')
+if os.path.exists(pk_path):                 # the edge's own modes placed in the cymbal's stereo field (2026-11-27)
+    P = json.load(open(pk_path))
+    L = get(sh['pick_l']); R = get(sh['pick_r'])
+    for m in P['modes']:
+        L[m['index']] = m['pick_l']; R[m['index']] = m['pick_r']
+    sh['pick_l'] = arr(L); sh['pick_r'] = arr(R)
 b['n_modes'] = n1
 b['rng']['render_phase_uniform']['per_strike'] = n1
 json.dump(b, open(out_p, 'w'))
