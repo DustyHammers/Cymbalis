@@ -12,7 +12,9 @@
 //  - The swing: u(t), the plate's displacement waveform from its kSwingModes largest low modes
 //    (weighted 300 Hz / f), over its own RMS and clipped to +-3; r(t), white noise through a
 //    2nd-order 25 Hz low-pass, mean 1 and standard deviation 0.7, clipped at 0; the envelope
-//    env = D g max(0, 1 + SWING u r).
+//    env = D g max(0, 1 + SWING u r) / sqrt(E[max(0, 1 + SWING u r)^2]): the swing factor of mean
+//    square 1, so that the bands' power at D g = 1 is their calibration whatever SWING is (the
+//    drawing's envelope, envelope(), takes the factor as it is).
 //  - The sizzle: one white noise x env, the same for both channels, into a resonator on each of
 //    the preset's modes from 3.5 to 16 kHz (t60 the mode's chain-damped t60, at most 0.6 s), each
 //    with a fixed Rayleigh weight and the engine's own left and right gains for the mode, scaled
@@ -93,6 +95,7 @@ private:
     double sr_ = 0.0;
     double refMs_ = 0.0;
     ChainSettings settings_;
+    double swingNorm_ = 1.0, swingNormFor_ = 0.0; // 1 / the swing factor's RMS, for SWING swingNormFor_
     bool on_ = false;
     double fade_ = 0.0, fadeStep_ = 0.0;
     std::vector<double> freq_, damp_, excNorm_;

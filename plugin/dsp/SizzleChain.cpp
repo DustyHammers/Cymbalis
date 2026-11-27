@@ -53,6 +53,39 @@ int bandOf (double f) noexcept
     return std::clamp ((int) std::lround (3.0 * std::log2 (f / 1000.0)), kFirstBand, kLastBand);
 }
 
+// The swing factor's mean square, E[max(0, 1 + SWING u r)^2], for u of the swing's statistics
+// (unit RMS, clipped to +-3; Gaussian here) and r = max(0, 1 + 0.7 z) (z Gaussian), independent.
+// The bands are calibrated at env = D g = 1 (Kris's C_b were measured on real sizzle, its flicker
+// included), so the sound divides the factor by the root of this and the swing changes the
+// flicker but not the level. For u: E[max(0, 1 + a u)^2] in closed form over the Gaussian, with
+// the mass beyond +-3 at +-3; for r: Simpson's rule over z (with the mass of r = 0 apart).
+double swingMeanSquare (double swing) noexcept
+{
+    if (! (swing > 0.0))
+        return 1.0;
+    const auto phi = [] (double x) { return 0.3989422804014327 * std::exp (-0.5 * x * x); };
+    const auto cdf = [] (double x) { return 0.5 * std::erfc (-x * 0.7071067811865476); };
+    const double tail = cdf (-3.0), phi3 = phi (3.0), cdf3 = cdf (3.0);
+    const auto overU = [&] (double a) {
+        if (a <= 0.0)
+            return 1.0;
+        const double c = std::max (-3.0, -1.0 / a), pc = phi (c), lo = 1.0 - 3.0 * a, hi = 1.0 + 3.0 * a;
+        return (1.0 + a * a) * (cdf3 - cdf (c)) + 2.0 * a * (pc - phi3) + a * a * (c * pc - 3.0 * phi3)
+               + tail * (hi * hi + (lo > 0.0 ? lo * lo : 0.0));
+    };
+    const double z0 = -1.0 / 0.7, z1 = 8.0; // r = 0 below z0
+    constexpr int steps = 600;              // even
+    const double h = (z1 - z0) / steps;
+    double sum = 0.0;
+    for (int i = 0; i <= steps; ++i)
+    {
+        const double z = z0 + h * i;
+        const double w = i == 0 || i == steps ? 1.0 : (i % 2 == 1 ? 4.0 : 2.0);
+        sum += w * phi (z) * overU (swing * (1.0 + 0.7 * z));
+    }
+    return cdf (z0) + sum * h / 3.0;
+}
+
 std::uint64_t splitMix (std::uint64_t& x) noexcept
 {
     std::uint64_t z = (x += 0x9e3779b97f4a7c15ULL);
@@ -204,6 +237,11 @@ void SizzleChain::setSettings (const ChainSettings& s) noexcept
     settings_ = s;
     if (! built_)
         return;
+    if (s.chainSwing != swingNormFor_)
+    {
+        swingNormFor_ = s.chainSwing;
+        swingNorm_ = s.chainSwing > 0.0 ? 1.0 / std::sqrt (swingMeanSquare (s.chainSwing)) : 1.0;
+    }
     for (int k = 0; k < n_; ++k)
         damp_[(size_t) k] = 1.0 + s.chainDamping * std::pow (freq_[(size_t) k] / 4000.0, 1.5);
     computeWeights();
@@ -438,9 +476,9 @@ void SizzleChain::process (float* left, float* right, int n) noexcept
             const double t = (double) (done + i + 1) / kBlock;
             const double dg = env0_ + (env1_ - env0_) * t;
             const double e = dg * std::max (0.0, 1.0 + s.chainSwing * u * r);
-            envSum += e;
+            envSum += e; // the drawing's envelope: the swing as it is
             ++envCount;
-            x[i] = (float) (nextUniform() * e);
+            x[i] = (float) (nextUniform() * e * swingNorm_); // the sound's: its swing of mean square 1
             // The fade, to 1 when on and to 0 when off, 50 ms.
             fade_ = on_ ? std::min (1.0, fade_ + fadeStep_) : std::max (0.0, fade_ - fadeStep_);
             fd[i] = (float) fade_;

@@ -474,7 +474,7 @@ Added 2026-11-26 (Kris; `docs/PORT_MAP.md`, "Sizzle chain"). A bead chain restin
   - **EDGE, BOW and BELL DRIVE** weigh a strike's drive by where it lands: at positions 0.0, 0.5 and 1.0, linear in dB between them (so the blend knobs fall in between; STINE's CENTER rows are at 1.0).
   - **VELOCITY EFFECT:** the drive × (velocity / 0.9) to this power.
   - **STOPS AT:** the gate closes over the 6 dB under this, in dB below a full hit's drive 0.5 s after it (BOW at 0.9 stops about 4.2 s after the hit on HAMMERED THIN RIDE and 6.9 s on STINE FLAT RIDE).
-  - **SWING:** how much the sizzle follows the plate's motion (0: a steady sizzle).
+  - **SWING:** how much the sizzle follows the plate's motion (0: a steady sizzle). It changes the flicker, not the level: the swing is scaled to keep the sizzle's power (`docs/PORT_MAP.md`, "Sizzle chain").
   - **DAMPING:** with the chain on, every mode's t60 / (1 + this × (f / 4 kHz)^1.5), from the next strike.
 
   The values live in one small struct with its own keys (`plugin/dsp/ChainSettings.h`), apart from the TUNING page's code, so that they can move as they are to the combined kit plugin.
