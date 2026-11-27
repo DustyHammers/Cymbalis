@@ -179,6 +179,23 @@ double SizzleChain::strikeWeight (double position, double velocity) const noexce
     return w * w; // the strike's d^2 at 0.5 s
 }
 
+void SizzleChain::setOn (bool on) noexcept
+{
+    if (on == on_)
+        return;
+    on_ = on;
+    frozen_ = false;
+    if (on || ! built_)
+        return;
+    // Off: the envelope from here to the fade's end is D g at the switch, its value for the next
+    // sample (the current block's line; at a block's end, the line's end): what is struck from
+    // here on is tracked for a switch back on but does not reach the fading sizzle.
+    const int done = kBlock - blockLeft_;
+    const double t = blockLeft_ > 0 ? std::min (1.0, (double) (done + 1) / kBlock) : 1.0;
+    frozenEnv_ = env0_ + (env1_ - env0_) * t;
+    frozen_ = true;
+}
+
 void SizzleChain::prepare (double sampleRate, const double* negLambda, const double* gainL, const double* gainR) noexcept
 {
     if (! built_)
@@ -225,6 +242,7 @@ void SizzleChain::prepare (double sampleRate, const double* negLambda, const dou
     resonating_ = false;
     quietBlocks_ = 0;
     fade_ = on_ ? 1.0 : 0.0;
+    frozen_ = false;
     blockLeft_ = 0;
     env0_ = env1_ = 0.0;
     driveNow_ = gateNow_ = 0.0;
@@ -466,6 +484,16 @@ void SizzleChain::process (float* left, float* right, int n) noexcept
             }
             if (! active)
                 continue;
+            if (frozen_)
+            {
+                // Fading out: the envelope frozen at the switch (no swing: its mean square is 1).
+                envSum += frozenEnv_;
+                ++envCount;
+                x[i] = (float) (nextUniform() * frozenEnv_);
+                fade_ = std::max (0.0, fade_ - fadeStep_);
+                fd[i] = (float) fade_;
+                continue;
+            }
             const double u = std::clamp (sum * invRms, -3.0, 3.0);
             // r(t): the low-passed noise, mean 1, standard deviation 0.7, clipped at 0.
             const double noise = nextUniform();

@@ -23,7 +23,10 @@
 //    tools/cymbalis_trims --chain-ref) x SIZZLE LEVEL.
 //  - The damping: with the chain on, a strike's modes take t60 / (1 + DAMPING (f / 4 kHz) ^ 1.5)
 //    (FastEngine applies dampingFactor() to each new strike's decay; ringing strikes keep theirs).
-//  - Switching: the sizzle fades in or out over 50 ms; the drive is tracked on or off.
+//  - Switching: the sizzle fades in or out over 50 ms; the drive is tracked on or off. Switched
+//    off, the envelope freezes for the fade at the drive and gate it had at the switch (D g, the
+//    envelope's RMS, the swing having a mean square of 1), so strikes made in the fade add nothing
+//    to the sizzle; at the fade's end the resonators are cleared (no ring-out). (Kris, 2026-11-27.)
 //
 // Allocates only in build(); everything else is real-time safe.
 
@@ -63,9 +66,10 @@ public:
     void setDecay (const double* negLambda) noexcept;           // the ring lengths changed
     void setGains (const double* gainL, const double* gainR) noexcept; // the stereo gains changed
 
-    // On: the sizzle fades in over 50 ms (the drive is always tracked) and new strikes are damped;
-    // off: it fades out.
-    void setOn (bool on) noexcept { on_ = on; }
+    // On: the sizzle fades in over 50 ms (the drive is always tracked); off: it fades out over
+    // 50 ms with its envelope frozen at the switch (D g then), so nothing struck in the fade
+    // reaches it. FastEngine damps the strikes made while on (dampingFactor()).
+    void setOn (bool on) noexcept;
     bool on() const noexcept { return on_; }
     // Each mode's t60 divisor with the chain on, 1 + DAMPING (f / 4 kHz) ^ 1.5 (numModes values).
     const double* dampingFactor() const noexcept { return damp_.data(); }
@@ -98,6 +102,8 @@ private:
     double swingNorm_ = 1.0, swingNormFor_ = 0.0; // 1 / the swing factor's RMS, for SWING swingNormFor_
     bool on_ = false;
     double fade_ = 0.0, fadeStep_ = 0.0;
+    bool frozen_ = false;    // fading out with the envelope frozen at the switch
+    double frozenEnv_ = 0.0; // D g at the switch
     std::vector<double> freq_, damp_, excNorm_;
     // The drive: the low modes (index, 300 Hz / f), and per tracked strike each low mode's
     // (weighted amplitude)^2 / its displacement^2 at 0.5 s, decaying, its decay over one block,
