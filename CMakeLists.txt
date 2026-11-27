@@ -213,6 +213,39 @@ target_link_libraries(CymbalisSnapshot
 )
 
 # ---------------------------------------------------------------------------
+# cymbalis_chain_off: the sizzle chain cannot change the sound once it is off, its engine and
+# its processor paths against a chain never on, sample by sample (tools/cymbalis_identity/
+# ChainOff.cpp; docs/PORT_MAP.md, "Sizzle chain"). In memory; CI runs its reduced set on every
+# pull request and its full set with full_tests. The processor is compiled in (with the tuning
+# code, which the cases use), as for CymbalisSnapshot.
+# ---------------------------------------------------------------------------
+if(CYMBALIS_WITH_TUNING)
+    juce_add_console_app(CymbalisChainOff PRODUCT_NAME "cymbalis_chain_off")
+    target_sources(CymbalisChainOff PRIVATE tools/cymbalis_identity/ChainOff.cpp ${CYMBALIS_PLUGIN_SOURCES})
+    target_include_directories(CymbalisChainOff PRIVATE ${CYMBALIS_INCLUDE_DIRS})
+    target_compile_definitions(CymbalisChainOff PRIVATE
+        JucePlugin_Name="Cymbalis"
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+    )
+    if(APPLE)
+        target_compile_options(CymbalisChainOff PRIVATE -Xarch_x86_64 -msse4.1)
+    endif()
+    target_link_libraries(CymbalisChainOff
+        PRIVATE
+            CymbalisBinaryData
+            cymbalis_fast
+            juce::juce_audio_utils
+            juce::juce_audio_processors
+            juce::juce_dsp
+            juce::juce_opengl
+        PUBLIC
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags
+    )
+endif()
+
+# ---------------------------------------------------------------------------
 # CymbalisUiTest (macOS): hosts the built AU or VST3 with JUCE's hosting code,
 # posts real mouse events to its editor window and checks the result in the
 # plugin's saved state. CI runs it on both formats.
