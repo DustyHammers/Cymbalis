@@ -24,6 +24,19 @@
 //       0.8 on each row: how long until each engine is silent (isSilent). Exit status 1 if any
 //       bound is broken.
 //
+//   check --nova-edge-v2 REF_NOVA_BAKE.json NOVA_BAKE.json
+//       NOVA RIDE edge v2 (docs/PORT_MAP.md, "NOVA RIDE edge v2"), REF's engine on REF's NOVA bake
+//       against the working tree's on the edge v2 bake: NOVA's BOW, BELL, BELL2 and BOW2 (lone
+//       strikes at 0.3, 0.6, 0.9 and 1.0, BOW2 at the bow end of BLEND POSITION, and the four
+//       rows in turn for 11 s, at 44.1 kHz / 128 and 96 kHz / 64, HIT VARIATION off and on),
+//       bit for bit with the bake's edge NPZ block taken out (the added modes alone), and with
+//       it as reported (the NPZ block gives NOVA the NPZ presets' engine structure); the new
+//       EDGE at 0.35, 0.65, 0.8, 0.95 and 1.0: its level (mono mean, RMS of 0.05-0.55 s after a
+//       lone strike, HIT VARIATION as baked) against the approved renders (within 1.5 dB), its
+//       L/R balance (within 0.5 dB of centre) and L-R correlation over the first 2 s (within
+//       BOW's, BELL's and BOW2's at the same velocities), and the share of 50 Hz in the 2-8 kHz
+//       envelope's modulation over 0.5-2.5 s (at most 1.5 %). Exit status 1 if one fails.
+//
 //   check --splash BAKE.json ...
 //       The HI-HAT's foot splash and fast-tap FOOT (docs/PORT_MAP.md, "Hi-hat"), in memory, the
 //       working tree against REF: every other preset bit for bit (the identity sequences above);
@@ -1016,12 +1029,328 @@ int timing(const std::vector<std::string>& bakes, std::vector<double> rates, int
     }
     return 0;
 }
+
+// --nova-edge-v2 ------------------------------------------------------------------------------
+// NOVA RIDE edge v2 (docs/PORT_MAP.md, "NOVA RIDE edge v2"): REF's engine on REF's NOVA bake
+// against the working tree's on its NOVA bake (2304 modes, the edge NPZ block).
+
+// Lone strike from a fresh engine: `seconds` at `sr` in `block`-sample blocks, interleaved L R.
+template <class E>
+std::vector<float> lone(const std::shared_ptr<const cymbalis::BakeData>& b, int slot, double v, double pos, double sr,
+                        double seconds, int block)
+{
+    E e(b);
+    e.prepare(sr);
+    std::vector<Hit> hits {{0, slot, v, pos}};
+    std::vector<float> L, R;
+    render(e, hits, int64_t(seconds * sr), block, L, R);
+    std::vector<float> out(2 * L.size());
+    for (size_t i = 0; i < L.size(); ++i)
+    {
+        out[2 * i] = L[i];
+        out[2 * i + 1] = R[i];
+    }
+    return out;
+}
+
+// 4th-order Butterworth band-pass (two high-pass and two low-pass RBJ biquads), in double.
+std::vector<double> bandPass(const std::vector<double>& x, double sr, double lo, double hi)
+{
+    struct Bq
+    {
+        double b0, b1, b2, a1, a2, z1 = 0.0, z2 = 0.0;
+        double run(double v)
+        {
+            const double y = b0 * v + z1;
+            z1 = b1 * v - a1 * y + z2;
+            z2 = b2 * v - a2 * y;
+            return y;
+        }
+    };
+    auto make = [sr](bool high, double f, double q) {
+        const double w = 2.0 * 3.14159265358979323846 * f / sr, c = std::cos(w), al = std::sin(w) / (2.0 * q), a0 = 1.0 + al;
+        const double k = high ? (1.0 + c) / 2.0 : (1.0 - c) / 2.0;
+        return Bq {k / a0, (high ? -2.0 * k : 2.0 * k) / a0, k / a0, -2.0 * c / a0, (1.0 - al) / a0};
+    };
+    Bq f[4] = {make(true, lo, 0.5412), make(true, lo, 1.3066), make(false, hi, 0.5412), make(false, hi, 1.3066)};
+    std::vector<double> y(x.size());
+    for (size_t i = 0; i < x.size(); ++i)
+    {
+        double v = x[i];
+        for (auto& q : f)
+            v = q.run(v);
+        y[i] = v;
+    }
+    return y;
+}
+
+// The share of 50 Hz in the modulation of the 2-8 kHz band's envelope over 0.5-2.5 s (the 20 ms
+// frame-decay restart's sawtooth): the band's power in 1 ms frames, over its own 100 ms moving
+// average, minus 1; its spectrum (Hann window, 0.5 Hz bins); the power within 1 Hz of 50 Hz as a
+// share of the power from 1 to 450 Hz.
+double share50Hz(const std::vector<float>& st, double sr)
+{
+    std::vector<double> mono(st.size() / 2);
+    for (size_t i = 0; i < mono.size(); ++i)
+        mono[i] = 0.5 * (double(st[2 * i]) + st[2 * i + 1]);
+    const auto y = bandPass(mono, sr, 2000.0, 8000.0);
+    const double fr = sr / 1000.0;
+    std::vector<double> p;
+    for (int k = 0;; ++k)
+    {
+        const size_t a = size_t(std::lround(k * fr)), b = size_t(std::lround((k + 1) * fr));
+        if (b > y.size())
+            break;
+        double s2 = 0.0;
+        for (size_t i = a; i < b; ++i)
+            s2 += y[i] * y[i];
+        p.push_back(s2 / double(b - a));
+    }
+    const int i0 = 500, i1 = 2500, half = 50; // 1 kHz frames; the moving average +-50 ms
+    if (int(p.size()) < i1 + half)
+        return -1.0;
+    std::vector<double> m;
+    for (int i = i0; i < i1; ++i)
+    {
+        double t = 0.0;
+        for (int j = i - half; j <= i + half; ++j)
+            t += p[size_t(j)];
+        t /= double(2 * half + 1);
+        m.push_back(t > 0.0 ? p[size_t(i)] / t - 1.0 : 0.0);
+    }
+    const size_t N = m.size();
+    double total = 0.0, at50 = 0.0;
+    for (size_t k = 2; k <= 900; ++k) // 0.5 Hz bins: 1-450 Hz
+    {
+        double re = 0.0, im = 0.0;
+        for (size_t i = 0; i < N; ++i)
+        {
+            const double w = 0.5 - 0.5 * std::cos(2.0 * 3.14159265358979323846 * double(i) / double(N - 1));
+            const double ph = -2.0 * 3.14159265358979323846 * double(k) * double(i) / double(N);
+            re += w * m[i] * std::cos(ph);
+            im += w * m[i] * std::sin(ph);
+        }
+        const double pw = re * re + im * im;
+        total += pw;
+        if (k >= 98 && k <= 102)
+            at50 += pw;
+    }
+    return total > 0.0 ? at50 / total : 0.0;
+}
+
+int novaEdgeV2(const std::string& refPath, const std::string& path)
+{
+    bool ok = true;
+    auto fail = [&](const std::string& what) {
+        std::printf("  FAILED: %s\n", what.c_str());
+        ok = false;
+    };
+    const auto refBake = cymbalis::loadBake(refPath);
+    const auto bake = cymbalis::loadBake(path);
+    std::printf("NOVA RIDE edge v2: REF's engine on %s (%d modes) against the working tree's on %s (%d modes, %zu added)\n\n",
+                refPath.c_str(), refBake->numModes, path.c_str(), bake->numModes, bake->addedModes.size());
+    if (bake->addedModes.empty() || !bake->edgeNpz.present)
+        fail("the bake has no added modes or no edge NPZ block");
+    // The same bake without its edge NPZ block: the added modes alone (the NPZ block changes the
+    // engine's structure for every strike: no decay on the shared oscillator, the control block
+    // dividing the 20 ms frame).
+    auto noNpz = std::make_shared<cymbalis::BakeData>(*bake);
+    noNpz->edgeNpz = cymbalis::EdgeNpz {};
+    const char* rows[] = {"BOW", "BELL", "BELL2", "BOW2"};
+
+    // 1. NOVA's BOW, BELL, BELL2 and BOW2.
+    struct Cmp
+    {
+        double peak = 0.0, diff = 0.0;
+        size_t differing = 0;
+        void add(const std::vector<float>& a, const std::vector<float>& b)
+        {
+            for (size_t i = 0; i < a.size(); ++i)
+            {
+                peak = std::max(peak, double(std::fabs(a[i])));
+                diff = std::max(diff, std::fabs(double(a[i]) - b[i]));
+                differing += std::memcmp(&a[i], &b[i], 4) != 0;
+            }
+        }
+        std::string text() const
+        {
+            if (differing == 0)
+                return "bit-identical";
+            char buf[96];
+            std::snprintf(buf, sizeof(buf), "%zu samples differ, largest |diff| %.1f dB re the peak", differing,
+                          20.0 * std::log10(diff / peak));
+            return buf;
+        }
+    };
+    std::printf("| Rows | Rate / block | HIT VARIATION | Added modes alone (no NPZ block) | The edge v2 bake |\n|---|---|---|---|---|\n");
+    double worstFull = 0.0;
+    for (const auto& [sr, block] : std::vector<std::pair<double, int>> {{44100.0, 128}, {96000.0, 64}})
+        for (bool hv : {false, true})
+        {
+            auto withHv = [hv](const std::shared_ptr<const cymbalis::BakeData>& b) {
+                auto c = std::make_shared<cymbalis::BakeData>(*b);
+                c->tuning.cymbal.hitVariation = hv;
+                return std::shared_ptr<const cymbalis::BakeData>(c);
+            };
+            const auto r = withHv(refBake), a = withHv(noNpz), f = withHv(bake);
+            Cmp loneA, loneF;
+            for (const char* row : rows)
+                for (double v : {0.3, 0.6, 0.9, 1.0})
+                {
+                    const int slot = r->slotIndex(row);
+                    const double pos = r->slots[size_t(slot)].position;
+                    const auto ref = lone<cymbalis::FastEngineRef>(r, slot, v, pos, sr, 6.0, block);
+                    loneA.add(ref, lone<cymbalis::FastEngine>(a, slot, v, pos, sr, 6.0, block));
+                    loneF.add(ref, lone<cymbalis::FastEngine>(f, slot, v, pos, sr, 6.0, block));
+                }
+            // BOW2 with BLEND POSITION 2 at the bow (position 0.5 - 0.5 x 0, SlotTable.h).
+            {
+                const int slot = r->slotIndex("BOW2");
+                const auto ref = lone<cymbalis::FastEngineRef>(r, slot, 0.8, 0.5, sr, 6.0, block);
+                loneA.add(ref, lone<cymbalis::FastEngine>(a, slot, 0.8, 0.5, sr, 6.0, block));
+                loneF.add(ref, lone<cymbalis::FastEngine>(f, slot, 0.8, 0.5, sr, 6.0, block));
+            }
+            // The four rows in turn: a strike every 24 ms for 5 s, velocities cycling, then 0.4 s
+            // apart at their positions, 11 s (the identity sequence without EDGE).
+            Cmp seqA, seqF;
+            {
+                std::vector<Hit> hits;
+                int k = 0;
+                for (; k * 0.024 < 5.0; ++k)
+                {
+                    const int slot = r->slotIndex(rows[k % 4]);
+                    hits.push_back({int64_t(std::floor(k * 0.024 * sr)), slot, kVelocities[k % 7], r->slots[size_t(slot)].position});
+                }
+                for (int j = 0; j < 8; ++j, ++k)
+                {
+                    const int slot = r->slotIndex(rows[k % 4]);
+                    hits.push_back({int64_t((6.5 + 0.4 * j) * sr), slot, kVelocities[k % 7], r->slots[size_t(slot)].position});
+                }
+                const int64_t total = int64_t(11.0 * sr);
+                auto run = [&](auto& e) {
+                    e.prepare(sr);
+                    std::vector<float> L, R;
+                    render(e, hits, total, block, L, R);
+                    std::vector<float> out(2 * L.size());
+                    for (size_t i = 0; i < L.size(); ++i)
+                    {
+                        out[2 * i] = L[i];
+                        out[2 * i + 1] = R[i];
+                    }
+                    return out;
+                };
+                cymbalis::FastEngineRef er(r);
+                cymbalis::FastEngine ea(a), ef(f);
+                const auto ref = run(er);
+                seqA.add(ref, run(ea));
+                seqF.add(ref, run(ef));
+            }
+            std::printf("| lone strikes at 0.3, 0.6, 0.9, 1.0; BOW2 at the bow end of BLEND POSITION | %.1f kHz / %d | %s | %s | %s |\n",
+                        sr / 1000.0, block, hv ? "on" : "off", loneA.text().c_str(), loneF.text().c_str());
+            std::printf("| the four rows in turn, 11 s | %.1f kHz / %d | %s | %s | %s |\n", sr / 1000.0, block, hv ? "on" : "off",
+                        seqA.text().c_str(), seqF.text().c_str());
+            if (loneA.differing != 0 || seqA.differing != 0)
+                fail("the added modes change NOVA's BOW, BELL, BELL2 or BOW2");
+            for (const Cmp* c : {&loneF, &seqF})
+                if (c->differing != 0)
+                    worstFull = std::max(worstFull, c->diff / c->peak);
+        }
+    std::printf("\nThe edge v2 bake's other rows: largest |diff| %.1f dB re the peak (reported: the edge NPZ block gives NOVA the "
+                "NPZ presets' engine structure, docs/PORT_MAP.md, \"NOVA RIDE edge v2\")\n",
+                worstFull > 0.0 ? 20.0 * std::log10(worstFull) : -999.0);
+
+    // 2. The new EDGE: levels against the approved renders (44.1 kHz, mono mean, dB re full
+    // scale after the output gain, RMS of 0.05-0.55 s after a lone strike, HIT VARIATION as baked).
+    const double sr = 44100.0;
+    const int edge = bake->slotIndex("EDGE");
+    const double edgePos = bake->slots[size_t(edge)].position;
+    struct Approved
+    {
+        double v, db;
+    };
+    const Approved approved[] = {{0.35, -40.9}, {0.65, -37.6}, {0.8, -30.1}, {0.95, -29.4}, {1.0, -27.6}};
+    auto stats = [](const std::vector<float>& st, double sr2, double t0, double t1, double& monoDbOut, double& lrDb, double& corr) {
+        const size_t a = size_t(t0 * sr2), b = std::min(st.size() / 2, size_t(t1 * sr2));
+        double m2 = 0.0, l2 = 0.0, r2 = 0.0, lr = 0.0;
+        for (size_t i = a; i < b; ++i)
+        {
+            const double l = st[2 * i], r = st[2 * i + 1], m = 0.5 * (l + r);
+            m2 += m * m;
+            l2 += l * l;
+            r2 += r * r;
+            lr += l * r;
+        }
+        monoDbOut = 10.0 * std::log10(m2 / double(b - a));
+        lrDb = 10.0 * std::log10(l2 / r2);
+        corr = lr / std::sqrt(l2 * r2);
+    };
+    std::printf("\nEDGE, lone strikes (44.1 kHz, HIT VARIATION as baked):\n\n| Velocity | Level 0.05-0.55 s | Approved | Difference | "
+                "L/R (0-2 s) | L-R correlation (0-2 s) | 50 Hz share |\n|---|---|---|---|---|---|---|\n");
+    double cLo = 1e9, cHi = -1e9;
+    std::vector<double> edgeCorr;
+    for (const auto& ap : approved)
+    {
+        const auto st = lone<cymbalis::FastEngine>(bake, edge, ap.v, edgePos, sr, 3.0, 128);
+        double lvl, lr, corr, d0, d1;
+        stats(st, sr, 0.05, 0.55, lvl, d0, d1);
+        stats(st, sr, 0.0, 2.0, d0, lr, corr);
+        const double sh = share50Hz(st, sr);
+        edgeCorr.push_back(corr);
+        std::printf("| %.2f | %.1f dB | %.1f dB | %+.1f dB | %+.2f dB | %+.3f | %.2f %% |\n", ap.v, lvl, ap.db, lvl - ap.db, lr, corr, 100.0 * sh);
+        if (std::fabs(lvl - ap.db) > 1.5)
+            fail("EDGE at " + std::to_string(ap.v) + ": more than 1.5 dB from the approved render");
+        if (std::fabs(lr) > 0.5)
+            fail("EDGE at " + std::to_string(ap.v) + ": L/R balance more than 0.5 dB from centre");
+        if (!(sh <= 0.015))
+            fail("EDGE at " + std::to_string(ap.v) + ": the 50 Hz share is above 1.5 %");
+    }
+    std::printf("\nThe L-R correlation (0-2 s) of NOVA's BOW, BELL and BOW2 at the same velocities:\n\n| Row |");
+    for (const auto& ap : approved)
+        std::printf(" %.2f |", ap.v);
+    std::printf("\n|---|---|---|---|---|---|\n");
+    for (const char* row : {"BOW", "BELL", "BOW2"})
+    {
+        const int slot = bake->slotIndex(row);
+        std::printf("| %s |", row);
+        for (const auto& ap : approved)
+        {
+            const auto st = lone<cymbalis::FastEngine>(bake, slot, ap.v, bake->slots[size_t(slot)].position, sr, 2.0, 128);
+            double d0, d1, corr;
+            stats(st, sr, 0.0, 2.0, d0, d1, corr);
+            cLo = std::min(cLo, corr);
+            cHi = std::max(cHi, corr);
+            std::printf(" %+.3f |", corr);
+        }
+        std::printf("\n");
+    }
+    for (double c : edgeCorr)
+        if (c < cLo || c > cHi)
+            fail("EDGE's L-R correlation " + std::to_string(c) + " is outside BOW's, BELL's and BOW2's range");
+    std::printf("\nEDGE's correlation %+.3f to %+.3f, within BOW's, BELL's and BOW2's %+.3f to %+.3f: %s\n",
+                *std::min_element(edgeCorr.begin(), edgeCorr.end()), *std::max_element(edgeCorr.begin(), edgeCorr.end()), cLo, cHi,
+                ok ? "yes" : "see above");
+
+    // The 50 Hz share for comparison: REF's EDGE (the bow shoulder at the edge) and the new EDGE
+    // with the 20 ms frame-decay restart switched on (velocity 0.8).
+    {
+        const auto mainEdge = lone<cymbalis::FastEngineRef>(refBake, refBake->slotIndex("EDGE"), 0.8,
+                                                             refBake->slots[size_t(refBake->slotIndex("EDGE"))].position, sr, 3.0, 128);
+        auto on = std::make_shared<cymbalis::BakeData>(*bake);
+        on->tuning.cymbal.frameDecayRestart = true;
+        on->edgeNpz.frameDecayRestart = true;
+        const auto restart = lone<cymbalis::FastEngine>(on, edge, 0.8, edgePos, sr, 3.0, 128);
+        std::printf("50 Hz share at 0.8 for comparison: REF's EDGE %.2f %%, the new EDGE with the frame-decay restart on %.2f %%\n",
+                    100.0 * share50Hz(mainEdge, sr), 100.0 * share50Hz(restart, sr));
+    }
+    std::printf("\n%s\n", ok ? "NOVA RIDE edge v2 checks passed." : "A NOVA RIDE edge v2 check FAILED.");
+    return ok ? 0 : 1;
+}
 } // namespace
 
 int main(int argc, char** argv)
 {
     noDenormals();
-    bool time = false, mechanisms = false, boundMode = false, splashMode = false;
+    bool time = false, mechanisms = false, boundMode = false, splashMode = false, novaMode = false;
     int runs = 4;
     std::vector<double> rates;
     std::vector<std::string> bakes;
@@ -1036,6 +1365,8 @@ int main(int argc, char** argv)
             boundMode = true;
         else if (a == "--splash")
             splashMode = true;
+        else if (a == "--nova-edge-v2")
+            novaMode = true;
         else if (a == "--runs" && i + 1 < argc)
             runs = std::max(1, std::atoi(argv[++i]));
         else if (a == "--sample-rate" && i + 1 < argc)
@@ -1055,6 +1386,12 @@ int main(int argc, char** argv)
             return bound(bakes);
         if (splashMode)
             return splash(bakes);
+        if (novaMode)
+        {
+            if (bakes.size() != 2)
+                throw std::runtime_error("--nova-edge-v2 takes REF's NOVA bake and the working tree's");
+            return novaEdgeV2(bakes[0], bakes[1]);
+        }
         return time ? timing(bakes, rates, runs) : identity(bakes, mechanisms);
     }
     catch (const std::exception& e)

@@ -509,7 +509,7 @@ These are plugin mechanisms; none is a port of Python. Kris tunes them by ear in
 
 ### Articulations and sticks
 
-13. **Every edge is SHOULDER only, and Nova's EDGE plays the bow shoulder at the edge** (2026-10-17). Nova has no edge captures. Its EDGE row played the base preset (no overlay) at position 0.0, a stand-in. That stand-in is gone from the bake. The row now plays `edge`, a copy of `bow_shoulder` (velocity tables, calibration, no onset gains) struck at 0.0, with bow_shoulder's level trim (−7.91 dB). As a separate articulation it is tuned apart from the bow shoulder. This is a deliberate sound change, and the only one: every other row of every preset plays as before. The 602 and Bettis edges are SHOULDER captures already and stay as they are. The EDGE stick box shows SHOULDER, fixed, on every preset.
+13. **Every edge is SHOULDER only, and Nova's EDGE plays the bow shoulder at the edge** (2026-10-17; NOVA's EDGE since 2026-11-27: "NOVA RIDE edge v2"). Nova has no edge captures. Its EDGE row played the base preset (no overlay) at position 0.0, a stand-in. That stand-in is gone from the bake. The row now plays `edge`, a copy of `bow_shoulder` (velocity tables, calibration, no onset gains) struck at 0.0, with bow_shoulder's level trim (−7.91 dB). As a separate articulation it is tuned apart from the bow shoulder. This is a deliberate sound change, and the only one: every other row of every preset plays as before. The 602 and Bettis edges are SHOULDER captures already and stay as they are. The EDGE stick box shows SHOULDER, fixed, on every preset.
 14. **The 602 and Bettis get SHOULDER versions of their tip articulations, as copies** (2026-10-17). Their bell, bow and center are TIP. Each gets a SHOULDER copy that starts as an exact copy, its level trim included, and is tuned on its own: 602 `bow_shoulder` and `center_shoulder`, Bettis `bell_shoulder` and `bow_shoulder`. Python has no shoulder data for these presets; the copies exist to be tuned by ear.
    - **Sticks.** Their bell and bow rows offer TIP / SHOULDER, as Nova's do. They started on TIP; since 2026-10-31 BELL and BOW start on TIP and BELL2 and BOW2 on SHOULDER, on every preset, Nova included (`docs/UI_SPEC.md` section 8, "Default sticks"). Each preset keeps its own stick choices (`docs/UI_SPEC.md` sections 6, 8 and 9).
    - **NOVA SHOULDER PROFILE.** The tuning button fills such a copy's band gains with Nova's shoulder-minus-tip difference (`docs/TUNING.md`), computed once from the Nova velocity tables by `tools/shoulder_profile.py`.
@@ -1651,3 +1651,80 @@ Per articulation (TIP, EDGE, FOOT, SPLASH): level, velocity curve, brightness vs
 - **The splash's captures outlast the strike's 8 s.** The captures are still 43–47 dB under their own peak at 8 s (9.6 s of data). A splash with the foot left up ends at `kHiHatMaxRingS` (8 s after its strike) with the 10 ms end fade, about 20 dB under its level at 2–3 s (−65 dB re full scale in the fully open gesture, so about −85 dB). This is as the spec gives it ("up to `kHiHatMaxRingS`"); a longer limit would be a change.
 - **The splash's join is a level rise, not a click** (2026-11-26). In the fully open gesture the splash is struck 87.2 ms after the stomp (38.3 ms after the FOOT). Over 5 ms windows high-passed at 1 kHz, the output steps up by 2.7 dB where the splash enters (−38.8 to −36.1 dB re full scale). The prototype's check asked for 2 dB. The splash alone enters at about the FOOT's level (−39.7 dB in its first 5 ms, then −40.0, −39.6, −41.0, −41.3 and −41.6: no onset peak), so two sounds of about equal level add up to about +2.7 dB. The FOOT alone already steps by up to 2.6 dB between 5 ms windows over the 30 ms before.
 - **The FOOT is still choked by its own close.** With a splash, the FOOT chick stays as it was, and the ring after it is the splash's.
+
+## NOVA RIDE edge v2
+
+NOVA RIDE gets a real EDGE, built from Kris's new edge captures. Kris approved it by ear on 2026-11-27 from the project session's renders; the task prompt is the spec. NOVA never had edge captures: since 2026-10-17 its EDGE row played the bow shoulder at the edge (decision 13 above; `COPIED_ENTRIES`). Kris recorded four edge hits (Edge V1–V4, with some room noise; the captures stay out of the repo). The project session built the edge from them on NOVA's own modes, as RAVEN's and the others' edges were built. The data is `presets/nova/edge_v2/` (data branch `presets-nova-edge-v2`, commit `50168a8`; `docs/BASELINE_MANIFEST.md`, its note and MD5s).
+
+### The data
+
+- **The matching.** Each capture's partials go to their nearest NOVA mode within ±0.25 %; partials below 90 Hz and at 110–122 Hz (room, stand) are left out. The velocities come from the captures' levels: 0.30, 0.524, 0.932 and 1.0.
+- **The added modes.** Half the edge's energy between 356 and 713 Hz had no NOVA mode, among them its strongest partials (652–665 Hz): NOVA's modes come from bow and bell captures, which have almost nothing there. So 34 edge-only modes are added, between 215 and 708 Hz (2270 → 2304). With them 84–94 % of each capture's energy lands on a NOVA mode, up from 66–88 %.
+  - **Their own values** (`nova_edge_v2_modes.json`): frequency, T60, drift, mode id (900000 on), stereo picks, LFO rate and phase.
+  - **Nothing from BOW and BELL:** `exc_norm`, `bell_weight` and the bow peak times are 0, and the bow and bell velocity tables give them nothing.
+  - **From the nearest NOVA mode** (named in the file): every other per-mode value (edge weight, the LF / MF / HF masks and shapes, the tilt and onset bands), their contact-force rows, and their **stereo picks**, so the edge sits in the cymbal's stereo field. `mode_step` comes from their own frequency and T60.
+  - **At their frequency:** they are inserted where they fall, so the modes stay in frequency order, as the NPZ envelope bands must rise with the mode index. Every NOVA mode keeps every value, in its order.
+- **The edge NPZ** (`nova_edge_v2_npz.json`, in the final mode order):
+  - **velw:** per mode, the peak amplitude of the partials assigned to it, ^0.8, normalised per velocity; level law 1.3.
+  - **The envelopes:** the 22 plugin bands, 20 ms frames from the strike, 749 frames (15.0 s); the window (`onset_s`) 15.5 s.
+  - **Their cleaning:** gaps filled; a 140 ms median and a 60 ms Gaussian after 150 ms; continued at their own slope past the noise floor; then decaying 1 / 0.85 as fast after 160 ms, **the ring 15 % shorter** (Kris).
+  - **The rest:** the band index, the RMS correction from the velw norms as `build_preset.py` does, and per-mode edge peak times (no audible effect: NPZ edge strikes follow the envelopes).
+- **The settings** (`nova_edge_v2_settings.json`):
+  - **The 20 ms frame-decay restart is off.** On NOVA's fast-decaying modes it clicked at every 20 ms frame ("The in-frame decay is a 50 Hz sawtooth"). Off, the level follows the band envelope alone.
+  - **The velocity settings:** the `edge` articulation's velocity curve −2 dB at 0.6 and at 0.3; the EDGE level trim −2.11 dB (matched to the shipped EDGE at velocity 0.9, 1 s RMS from the strike, then +2 dB: Kris, "the hardest hits a dB or two louder"; not re-measured).
+  - **Every slot's edge parameters and flags:** `edge_npz` and `edge_band_env` on, the window, the RMS correction, velw on and normalised.
+
+### The build step
+
+`tools/apply_nova_edge_v2.py` takes `resources/presets/nova_ride.bake.json` as it was on `main` and writes it with the edge v2 changes. Nothing else changes: the other slots' trims, skip thresholds and the tuning block stay; only EDGE's skip threshold was measured again (`cymbalis_trims --skip-thresholds`, stored with `set_skip_thresholds.py --only EDGE`: 1.131e-7, was 8.749e-8). The bake records the step (`edge_v2`: when, the data's MD5s, the approval), and the step refuses to run twice. NOVA can no longer be re-baked from `presets/` alone: the order is `bake_preset.py`, edge v2, the level trims keeping EDGE's (`set_level_trims.py --keep EDGE`), the skip thresholds (`docs/BUILDS.md`).
+
+Its output equals the approved test bake (`assemble_reference.py` run on `main`'s bake) array for array: all 62 arrays. The differences are only the step's own records (`added_modes`, `edge_v2`, the NPZ block's `source`), the EDGE trim's record (the same −2.11 dB), and `render_phase_uniform.per_strike`, which stays NOVA's own 2270 (below).
+
+### The loader and the engine: added modes (general)
+
+- **The bake lists them.** `added_modes.indices` names the added modes, written by the build step, not inferred from `mode_id` (`BakeData::addedModes`, `numOwnModes`).
+- **Seeded values.** The loader checks the preset's own modes, in their order, against the streams drawn for their count, exactly as before: `pick_l` / `pick_r`, `lfo_rate_hz` / `lfo_phase` ("PCG64/numpy mismatch" otherwise). It takes the added modes' values as baked. `render_phase_uniform.per_strike` must equal the own modes' count. A hi-hat bake may not have added modes.
+- **The strike phases.** A strike draws its phases in this order: the own modes first, in their order, from the render stream as before, so each gets exactly the draw it always got; then the added modes from a stream of their own (`addRng_`: two outputs of a copy of the render stream, after the two HIT VARIATION takes, mixed with constants), so the render stream's sequence is unchanged by them. That keeps BOW, BELL, BELL2 and BOW2's phases what they were in any sequence of strikes, not only a lone one. A literal reading of the task (`per_strike` set to 2304, one stream in index order, as the approved renders drew) would shift every strike after the first by 34 draws. The NPZ edge strike's second set of phases draws the same way; the energy cascade draws an added mode's phase from `addRng_`. EDGE is therefore not bit for bit with the approved renders (the task allows it).
+- **Everything else** that runs over the modes takes 2304 as any count: the build-up, the silence rule, the stereo gains and `tools/apply_tuning.py`'s stereo block (a stereo tuning file writes 2304 gains on NOVA; checked). **Presets without added modes** load and play bit for bit as before: every other preset is bit for bit as `main` (`tools/cymbalis_identity/run.sh`).
+- **For the kit:** the loader's support is general; any instrument whose captured articulations sound modes its bank lacks can use it.
+
+### NOVA is now a preset with NPZ edge data, and that reaches its other rows
+
+**NOVA's BOW, BELL, BELL2 and BOW2 are not bit for bit as `main`.** The task asks for it; it cannot be had without an engine change:
+- **The added modes alone change nothing.** With the bake's edge NPZ block taken out, the four rows are bit for bit as `main`: lone strikes at 0.3, 0.6, 0.9 and 1.0, BOW2 at the bow end of BLEND POSITION, and the four rows in turn for 11 s, at 44.1 kHz / 128 and 96 kHz / 64, HIT VARIATION off and on.
+- **The NPZ block gives NOVA the NPZ presets' engine structure** ("Swish", above: an NPZ preset's engine structure follows its NPZ data). The shared oscillator has no decay, so every strike carries its whole decay in its own component, because a strike following a band envelope cannot ride a decaying oscillator. The control block also divides the 20 ms frame (126 samples at 44.1 kHz instead of 128, 120 at 48 kHz, 240 at 96 kHz).
+- **The difference:** at most −51.7 dB re the peak on lone strikes (−54 to −58 dB in the sequences). Nearly all of it is the oscillator: with only the control block changed it is −89 to −100 dB. It is the same arithmetic split differently: the decay interpolated linearly across each control block now carries the whole decay of the fast-decaying high modes. Every other NPZ preset (STINE, HAMMERED THIN, SWISH, RAVEN, EXTRA PAPER THIN, KONSTAN, CRASH 16) has always played this way, and so did the approved test bake.
+- **Kris decides:** accept it, or ask for an engine change so that a preset's structure no longer depends on having NPZ data (for instance, envelope strikes compensating the oscillator's decay and being re-referenced often enough): a separate task.
+
+Also, as on the other NPZ presets, a strike towards the edge (edge fraction above 0.1: BOW and BOW2 with BLEND POSITION 2 past 20 %) now takes the new edge data.
+
+### Checks (`tools/cymbalis_identity/run.sh --nova-edge-v2`, in memory)
+
+The new EDGE, lone strikes at 44.1 kHz (mono mean, dB re full scale after the output gain, RMS of 0.05–0.55 s after the strike, HIT VARIATION as baked), and its stereo over the first 2 s:
+
+| Velocity | 0.35 | 0.65 | 0.8 | 0.95 | 1.0 |
+|---|---|---|---|---|---|
+| Level | −41.4 | −38.5 | −31.0 | −30.1 | −27.5 |
+| Approved | −40.9 | −37.6 | −30.1 | −29.4 | −27.6 |
+| Difference | −0.5 | −0.9 | −0.9 | −0.7 | +0.1 |
+| L/R balance | −0.11 dB | −0.18 dB | +0.13 dB | +0.08 dB | +0.24 dB |
+| L–R correlation | +0.208 | +0.403 | +0.386 | +0.306 | +0.155 |
+| 50 Hz share | 0.02 % | 0.04 % | 0.03 % | 0.04 % | 0.12 % |
+
+- **Levels: 0.5 to 0.9 dB under the approved renders at 0.35 to 0.95** (the task expects about ±0.5 dB); the check allows 1.5 dB.
+  - **The phases account for part of it.** With the approved renders' draw order (one stream, index order) the levels are −41.2, −38.1, −30.7, −30.1 and −28.4 dB: 0.3 to 0.8 dB under.
+  - **Strike to strike, the level moves a lot.** Over 16 strikes, it moves 0.9 to 4.3 dB (at 0.65 from −40.0 to −38.5, at 1.0 from −31.8 to −27.5); the first strike is the loudest.
+  - **What is left is not explained here.** At 0.65 and 0.8 the approved values lie above all 16 strikes.
+- **Stereo.** The L/R balance is within 0.24 dB of centre at every velocity. EDGE's L–R correlation (+0.155 to +0.403) lies within NOVA's BOW, BELL and BOW2 at the same velocities (−0.238 to +0.404). At 1.0 it is below the approved renders' +0.21 to +0.43, because BOW's own correlation falls to −0.18 and −0.24 at 0.95 and 1.0.
+- **No clicks.** The 50 Hz share is at most 0.12 % (the check allows 1.5 %). The measure is this check's own (the project session's numbers, approved 0.9 %, today's EDGE 0.7 %, the restart on 5.0 %, are on another scale): the 2–8 kHz band's power in 1 ms frames, over its own 100 ms moving average, minus 1, over 0.5–2.5 s; its spectrum (Hann window, 0.5 Hz bins); the power within 1 Hz of 50 Hz as a share of 1–450 Hz. On the same scale, at 0.8: `main`'s EDGE 0.12 %, the new EDGE with the frame-decay restart switched on 2.22 %.
+- **Bench** (`cymbalis_bench`, this repo's Linux machine, 48 kHz / 256):
+  - **All slots playing:** NOVA 14.1 % of a core (13.3 % on `main`), about 7× real time.
+  - **Dense** (`--dense`, a strike every 24 ms): blocks median 736 µs (780), worst 1771 µs (1616) of 5333.
+  - **The single-strike spike moves.** `strike()` worst 496 µs (333), mean 319 µs (294), because an EDGE strike now does the NPZ coupling (a second set of phases, the velw tables); blocks with a strike worst 1920 µs (1669), 36 % of the budget. The 34 modes themselves add about 1.5 % to every strike.
+
+### Merge impact
+
+- **Engine:** no change to the threading model. NOVA plays 34 more modes; its EDGE strikes do the NPZ coupling, as every NPZ preset's do.
+- **Bake pipeline:** NOVA's bake is `bake_preset.py`, then edge v2, then the trims (keeping EDGE's) and skip thresholds. The kit's bake pipeline must keep that order.
+- **Saved state, parameters, MIDI, UI, dhpool:** none. The edge values are existing tuning values; the Tuning window shows NOVA the edge envelope values because its bake has NPZ data.
+- **Bench:** NOVA's figures move slightly with the added modes and the NPZ edge.
