@@ -501,6 +501,21 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
             rep.push_back("added modes  " + std::to_string(b.addedModes.size()) + " added to the preset's own " +
                           std::to_string(b.numOwnModes) + " (seeded values as baked; own modes checked below)");
         }
+        // Modes whose stereo picks are baked, not seeded (Bake.h, bakedPicks).
+        if (const json::Value* bp = root.find("baked_picks"); bp != nullptr && !bp->isNull())
+        {
+            for (const auto& v : bp->at("indices").array())
+            {
+                const double x = v.number();
+                if (!(x >= 0.0 && x < double(n)) || x != std::floor(x))
+                    throw BakeError("baked_picks.indices: " + fmt("%.17g", x) + " is not a mode index");
+                const int k = static_cast<int>(x);
+                if (!b.bakedPicks.empty() && k <= b.bakedPicks.back())
+                    throw BakeError("baked_picks.indices must be ascending");
+                b.bakedPicks.push_back(k);
+            }
+            rep.push_back("baked picks  " + std::to_string(b.bakedPicks.size()) + " modes' pick_l / pick_r as baked");
+        }
 
         const auto& sh = root.at("shared");
         b.freqHz = readArray(sh.at("freq_hz"), "shared.freq_hz", {n}, rep);
@@ -946,6 +961,23 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
                 out.push_back(second[i]);
             return out;
         };
+        // The own modes (by their place among them) whose picks are baked: not checked (both the
+        // baked and the regenerated values are set to 0 there).
+        std::vector<size_t> bakedOwn;
+        {
+            size_t a = 0;
+            for (size_t j = 0; j < no; ++j)
+            {
+                while (a < b.bakedPicks.size() && size_t(b.bakedPicks[a]) < own[j])
+                    ++a;
+                if (a < b.bakedPicks.size() && size_t(b.bakedPicks[a]) == own[j])
+                    bakedOwn.push_back(j);
+            }
+        }
+        const auto maskBaked = [&](std::vector<double>& pair) {
+            for (size_t j : bakedOwn)
+                pair[j] = pair[no + j] = 0.0;
+        };
         // __init__ lines 205-207: uniform(0.6, 1.0, n) * choice([-1., 1.], n), for L then R.
         {
             const double low = 0.6, range = 1.0 - 0.6;
@@ -960,9 +992,11 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
                     for (size_t i = 0; i < no; ++i)
                         out[side * no + i] = mag[i] * (g.choiceIndex2() == 0 ? -1.0 : 1.0);
                 }
+                maskBaked(out);
                 return out;
             };
-            const std::vector<double> baked = ownValues(b.pickL, b.pickR);
+            std::vector<double> baked = ownValues(b.pickL, b.pickR);
+            maskBaked(baked);
             const UniformForm f = verifyAgainstNumpy(baked, "pick_l/pick_r", pickPair);
             rep.push_back(std::string("numpy rng ok pick_l/pick_r regenerated bit-exactly (uniform as ") + formName(f) +
                           ", choice via 32-bit Lemire)");

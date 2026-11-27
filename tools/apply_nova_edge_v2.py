@@ -20,6 +20,12 @@ unless --out is given. It changes nothing but:
   * the edge NPZ block and the per-mode edge peak times (nova_edge_v2_npz.json);
   * every slot's edge parameters and flags, the EDGE level trim, and two tuning values: the 20 ms
     frame-decay restart off and the edge articulation's velocity curve (nova_edge_v2_settings.json);
+  * last, the stereo picks (pick_l, pick_r) of the 575 modes in nova_edge_v2_picks.json (Kris,
+    2026-11-27: the edge sits in the same stereo field as NOVA's other articulations): modes the
+    edge plays and bow and bell barely touch take the picks of one of their band's strongest
+    bow/bell modes. Fixed data, not recomputed here. "baked_picks" lists them for the loader, apart
+    from the added modes (21 of them are added modes): it takes their picks as baked and checks
+    every other NOVA mode's against the seed; the LFO values stay seeded for every NOVA mode;
   * "added_modes": the added modes' indices, which the plugin's loader needs (plugin/dsp/Bake.h):
     it checks the NOVA modes' seeded values against NOVA's streams and takes the added modes' as
     baked. The strike phases: the NOVA modes draw from the render stream exactly as before
@@ -52,7 +58,7 @@ from bake_preset import dump_json, enc  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, 'presets', 'nova', 'edge_v2')
-FILES = ('nova_edge_v2_modes.json', 'nova_edge_v2_npz.json', 'nova_edge_v2_settings.json')
+FILES = ('nova_edge_v2_modes.json', 'nova_edge_v2_npz.json', 'nova_edge_v2_settings.json', 'nova_edge_v2_picks.json')
 LN1000 = 6.907755278982137
 # The added modes' own values, by bake key: the key in nova_edge_v2_modes.json's "added".
 OWN = {'mode_id': 'mode_id', 'freq_hz': 'f', 't60_s': 't60_s', 'drift_hz': 'drift_hz', 'pick_l': 'pick_l',
@@ -103,7 +109,7 @@ def main():
         b = json.load(f)
     if b.get('preset') not in ('nova', 'nova_ride') and 'nova' not in str(b.get('preset', '')).lower():
         raise SystemExit(f'{args.bake}: not NOVA RIDE\'s bake (preset {b.get("preset")!r})')
-    if 'edge_v2' in b or 'added_modes' in b:
+    if 'edge_v2' in b or 'added_modes' in b or 'baked_picks' in b:
         raise SystemExit(f'{args.bake}: edge v2 is already applied ({b.get("edge_v2", {}).get("applied_utc", "added_modes present")})')
     with open(os.path.join(DATA, FILES[0])) as f:
         M = json.load(f)
@@ -111,6 +117,8 @@ def main():
         Z = json.load(f)
     with open(os.path.join(DATA, FILES[2])) as f:
         St = json.load(f)
+    with open(os.path.join(DATA, FILES[3])) as f:
+        P = json.load(f)
 
     sh = b['shared']
     n0, n1 = int(b['n_modes']), int(M['n_modes'])
@@ -202,6 +210,21 @@ def main():
     for art, v in St['tuning_articulations'].items():
         tun.setdefault('articulations', {}).setdefault(art, {}).update(v)
 
+    # Last: the stereo picks of the listed modes (nothing else changes).
+    pl, pr = get(sh['pick_l']), get(sh['pick_r'])
+    picked = []
+    for m in P['modes']:
+        k = int(m['index'])
+        if not (0 <= k < n1) or freq[k] != float(m['f']) or (int(m['nova_index']) >= 0) != (order[k] >= 0) \
+                or (order[k] >= 0 and order[k] != int(m['nova_index'])):
+            raise SystemExit(f'nova_edge_v2_picks.json: mode {k} does not match the mode list')
+        pl[k], pr[k] = float(m['pick_l']), float(m['pick_r'])
+        picked.append(k)
+    if len(set(picked)) != len(picked):
+        raise SystemExit('nova_edge_v2_picks.json: a mode is listed twice')
+    sh['pick_l'] = put(pl, sh['pick_l'])
+    sh['pick_r'] = put(pr, sh['pick_r'])
+
     b['n_modes'] = n1
     # render_phase_uniform.per_strike stays NOVA's own count: the NOVA modes draw from the
     # render stream as before, the added modes from a stream of their own (plugin/dsp/FastEngine.h).
@@ -212,6 +235,13 @@ def main():
         'note': ('edge-only modes inserted at their frequency (presets/nova/edge_v2/nova_edge_v2_modes.json); their seeded '
                  'values are as baked, NOVA\'s own modes are checked against NOVA\'s streams; a strike\'s phases: NOVA\'s '
                  'modes from the render stream as before, the added modes after them from a stream of their own'),
+    }
+    b['baked_picks'] = {
+        'indices': sorted(picked),
+        'set_by': 'tools/apply_nova_edge_v2.py (presets/nova/edge_v2/nova_edge_v2_picks.json)',
+        'note': ('stereo picks baked, not seeded: modes the edge plays and bow and bell barely touch, with the picks of one '
+                 'of their band\'s strongest bow/bell modes, so the edge sits in the cymbal\'s stereo field (Kris, 2026-11-27); '
+                 'lfo_rate_hz / lfo_phase stay seeded'),
     }
     b['edge_v2'] = {
         'applied_by': 'tools/apply_nova_edge_v2.py',
@@ -225,7 +255,8 @@ def main():
     with open(out, 'w') as f:
         f.write(dump_json(b) + '\n')
     print(f'edge v2 applied to {os.path.relpath(out, ROOT)}: {n0} -> {n1} modes, EDGE trim {St["edge_level_trim_db"]:+.2f} dB, '
-          f'edge NPZ {len(Z["velocities"])} velocities x {len(Z["envelopes"][0])} frames x {len(Z["envelopes"][0][0])} bands')
+          f'edge NPZ {len(Z["velocities"])} velocities x {len(Z["envelopes"][0])} frames x {len(Z["envelopes"][0][0])} bands, '
+          f'{len(picked)} modes\' stereo picks baked')
 
 
 if __name__ == '__main__':

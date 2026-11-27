@@ -206,6 +206,11 @@ struct BakeData
     // count (numOwnModes), and they draw the strike phases they drew before the modes were added.
     std::vector<int> addedModes;
     int numOwnModes = 0;
+    // Modes whose stereo picks (pick_l / pick_r) are baked rather than seeded, by index, ascending
+    // ("baked_picks"; NOVA RIDE's edge v2 stereo): the loader takes their picks as baked and checks
+    // every other own mode's against the seed; lfo_rate_hz / lfo_phase stay seeded for every own mode.
+    // Listed apart from addedModes (an added mode can be in both).
+    std::vector<int> bakedPicks;
 
     double log1000 = 0.0;          // np.log(1000.0)
     double twoPi = 0.0;            // 2.*np.pi
