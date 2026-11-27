@@ -357,7 +357,7 @@ With HIT VARIATION off, every preset plays bit for bit as it did before it exist
 
 #### Stereo
 
-How stereo works: every mode has a fixed left and right gain from the bake (the pick vectors `pick_l`, `pick_r`, random from the preset's seed, signed), and the right channel has a 120 Hz high-pass. The STEREO values change both.
+How stereo works: every mode has a fixed left and right gain from the bake (the pick vectors `pick_l`, `pick_r`, random from the preset's seed, signed; on NOVA RIDE, 575 of them are baked instead, so that its edge sits in the cymbal's stereo field: `docs/PORT_MAP.md`, "NOVA RIDE edge v2"), and the right channel has a 120 Hz high-pass. The STEREO values change both.
 
 - **Modes and bands.** Modes belong to the 22 bands by their frequency, as for the band gains.
 - **A mode's baked gains** are a level, sqrt(L² + R²), and a position from −1 (hard left) to +1 (hard right): atan2(|R|, |L|) / (π/4) − 1. The baked positions lie within about L31 to R30.
@@ -376,7 +376,7 @@ In the panel it is the **STEREO** group of WHOLE CYMBAL:
 - the **Overall width**;
 - the **Right-channel high-pass** switch and its **frequency**.
 
-**In the bake.** `tools/apply_tuning.py` stores the stereo values in the bake's tuning block. It also writes every mode's resulting left and right gains into a `stereo` block (`gain_l`, `gain_r`, checksummed like the other arrays). The plugin plays them at load as they are; a lean build (`CYMBALIS_WITH_TUNING` OFF) too. `pick_l` and `pick_r` stay as baked: the loader still regenerates them from the seed, and it checks that each stored gain pair keeps the level and signs of its pick vector entries. The high-pass settings go into the tuning block.
+**In the bake.** `tools/apply_tuning.py` stores the stereo values in the bake's tuning block. It also writes every mode's resulting left and right gains into a `stereo` block (`gain_l`, `gain_r`, checksummed like the other arrays). The plugin plays them at load as they are; a lean build (`CYMBALIS_WITH_TUNING` OFF) too. `pick_l` and `pick_r` stay as baked: the loader still regenerates them from the seed (all but the modes the bake lists as having baked picks or as added), and it checks that each stored gain pair keeps the level and signs of its pick vector entries. The high-pass settings go into the tuning block.
 
 #### Edge voice from bow
 

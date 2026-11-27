@@ -114,7 +114,7 @@ python tools/bake_preset.py --preset azcrash --overrides '{"nl_amount": 0.0}' --
 python tools/bake_preset.py --preset 602 --overrides '{"nl_amount": 0.0}' --out resources/presets/archive/smoke_flat_ride.bake.json
 ```
 
-**NOVA RIDE can no longer be re-baked from `presets/` alone** (since 2026-11-27, edge v2: `docs/PORT_MAP.md`, "NOVA RIDE edge v2"). Its real EDGE is a step after `tools/bake_preset.py`, like the trims and skip thresholds: `tools/apply_nova_edge_v2.py` inserts the 34 edge-only modes, the edge NPZ block, the edge settings and the EDGE trim from `presets/nova/edge_v2/` (checked against `docs/BASELINE_MANIFEST.md`), records that it ran, and refuses to run twice. The order is `bake_preset.py`, then edge v2, then the level trims keeping EDGE's (`--keep EDGE`: edge v2 sets it), then the skip thresholds:
+**NOVA RIDE can no longer be re-baked from `presets/` alone** (since 2026-11-27, edge v2: `docs/PORT_MAP.md`, "NOVA RIDE edge v2"). Its real EDGE is a step after `tools/bake_preset.py`, like the trims and skip thresholds: `tools/apply_nova_edge_v2.py` inserts the 34 edge-only modes, the edge NPZ block, the edge settings, the EDGE trim and, last, the stereo picks of 575 modes from `presets/nova/edge_v2/` (checked against `docs/BASELINE_MANIFEST.md`), records that it ran, and refuses to run twice. The order is `bake_preset.py`, then edge v2, then the level trims keeping EDGE's (`--keep EDGE`: edge v2 sets it), then the skip thresholds:
 
 ```
 python tools/bake_preset.py --preset nova --overrides '{"nl_amount": 0.0}' --out resources/presets/nova_ride.bake.json

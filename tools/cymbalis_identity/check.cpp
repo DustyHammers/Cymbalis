@@ -29,13 +29,19 @@
 //       against the working tree's on the edge v2 bake: NOVA's BOW, BELL, BELL2 and BOW2 (lone
 //       strikes at 0.3, 0.6, 0.9 and 1.0, BOW2 at the bow end of BLEND POSITION, and the four
 //       rows in turn for 11 s, at 44.1 kHz / 128 and 96 kHz / 64, HIT VARIATION off and on),
-//       bit for bit with the bake's edge NPZ block taken out (the added modes alone), and with
-//       it as reported (the NPZ block gives NOVA the NPZ presets' engine structure); the new
-//       EDGE at 0.35, 0.65, 0.8, 0.95 and 1.0: its level (mono mean, RMS of 0.05-0.55 s after a
-//       lone strike, HIT VARIATION as baked) against the approved renders (within 1.5 dB), its
-//       L/R balance (within 0.5 dB of centre) and L-R correlation over the first 2 s (within
-//       BOW's, BELL's and BOW2's at the same velocities), and the share of 50 Hz in the 2-8 kHz
-//       envelope's modulation over 0.5-2.5 s (at most 1.5 %). Exit status 1 if one fails.
+//       bit for bit with the bake's edge NPZ block taken out and REF's stereo picks (the added
+//       modes alone), and with the bake as it is reported (the NPZ block gives NOVA the NPZ
+//       presets' engine structure; the picks change their stereo); with the picks they change
+//       only in stereo: each channel's difference from REF at most -20 dB re that channel and the
+//       mono level within 0.1 dB (0.05-2.0 s, 0.3-1.0, HIT VARIATION off). The stereo pattern:
+//       per third-octave band the L/R level difference over 0.05-2.0 s (STFT 4096); EDGE at 0.65
+//       and 0.95 within 0.8 dB (energy-weighted) of the mean of BELL, BELL2, BOW and BOW2 at 0.9;
+//       with each row's coherence. The new EDGE at 0.35, 0.65, 0.8, 0.95 and 1.0: its level (mono
+//       mean, RMS of 0.05-0.55 s after a lone strike, HIT VARIATION as baked) against the
+//       approved renders (within 1.5 dB), its L/R balance (within 0.5 dB of centre) and L-R
+//       correlation over the first 2 s (within BOW's, BELL's and BOW2's at the same velocities),
+//       and the share of 50 Hz in the 2-8 kHz envelope's modulation over 0.5-2.5 s (at most 1.5 %).
+//       Exit status 1 if one fails.
 //
 //   check --splash BAKE.json ...
 //       The HI-HAT's foot splash and fast-tap FOOT (docs/PORT_MAP.md, "Hi-hat"), in memory, the
@@ -63,6 +69,7 @@
 #include "FastEngine.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -1086,7 +1093,7 @@ std::vector<double> bandPass(const std::vector<double>& x, double sr, double lo,
 
 // The share of 50 Hz in the modulation of the 2-8 kHz band's envelope over 0.5-2.5 s (the 20 ms
 // frame-decay restart's sawtooth): the band's power in 1 ms frames, over its own 100 ms moving
-// average, minus 1; its spectrum (Hann window, 0.5 Hz bins); the power within 1 Hz of 50 Hz as a
+// average, minus 1; its spectrum (Hann window, 0.5 Hz bins); the power within 0.5 Hz of 50 Hz as a
 // share of the power from 1 to 450 Hz.
 double share50Hz(const std::vector<float>& st, double sr)
 {
@@ -1132,7 +1139,7 @@ double share50Hz(const std::vector<float>& st, double sr)
         }
         const double pw = re * re + im * im;
         total += pw;
-        if (k >= 98 && k <= 102)
+        if (k >= 99 && k <= 101) // 49.5-50.5 Hz: the frame-decay restart's sawtooth (a beat a hertz off is not it)
             at50 += pw;
     }
     return total > 0.0 ? at50 / total : 0.0;
@@ -1156,6 +1163,31 @@ int novaEdgeV2(const std::string& refPath, const std::string& path)
     // dividing the 20 ms frame).
     auto noNpz = std::make_shared<cymbalis::BakeData>(*bake);
     noNpz->edgeNpz = cymbalis::EdgeNpz {};
+    // ... and every NOVA mode's stereo picks as on REF (the picks file undone).
+    {
+        std::vector<int> own;
+        for (int k = 0, a = 0; k < bake->numModes; ++k)
+        {
+            if (a < int(bake->addedModes.size()) && bake->addedModes[size_t(a)] == k)
+                ++a;
+            else
+                own.push_back(k);
+        }
+        if (int(own.size()) != refBake->numModes)
+            fail("the bake's own modes are not REF's");
+        else
+            for (size_t j = 0; j < own.size(); ++j)
+            {
+                const size_t k = size_t(own[j]);
+                noNpz->pickL[k] = refBake->pickL[j];
+                noNpz->pickR[k] = refBake->pickR[j];
+                if (noNpz->gainL.size() == size_t(bake->numModes) && refBake->gainL.size() == size_t(refBake->numModes))
+                {
+                    noNpz->gainL[k] = refBake->gainL[j];
+                    noNpz->gainR[k] = refBake->gainR[j];
+                }
+            }
+    }
     const char* rows[] = {"BOW", "BELL", "BELL2", "BOW2"};
 
     // 1. NOVA's BOW, BELL, BELL2 and BOW2.
@@ -1182,7 +1214,7 @@ int novaEdgeV2(const std::string& refPath, const std::string& path)
             return buf;
         }
     };
-    std::printf("| Rows | Rate / block | HIT VARIATION | Added modes alone (no NPZ block) | The edge v2 bake |\n|---|---|---|---|---|\n");
+    std::printf("| Rows | Rate / block | HIT VARIATION | Added modes alone (no NPZ block, REF's picks) | The edge v2 bake |\n|---|---|---|---|---|\n");
     double worstFull = 0.0;
     for (const auto& [sr, block] : std::vector<std::pair<double, int>> {{44100.0, 128}, {96000.0, 64}})
         for (bool hv : {false, true})
@@ -1255,9 +1287,186 @@ int novaEdgeV2(const std::string& refPath, const std::string& path)
                 if (c->differing != 0)
                     worstFull = std::max(worstFull, c->diff / c->peak);
         }
-    std::printf("\nThe edge v2 bake's other rows: largest |diff| %.1f dB re the peak (reported: the edge NPZ block gives NOVA the "
-                "NPZ presets' engine structure, docs/PORT_MAP.md, \"NOVA RIDE edge v2\")\n",
+    std::printf("\nThe edge v2 bake's other rows: largest |diff| %.1f dB re the peak (reported: the stereo picks change their stereo, "
+                "below, and the edge NPZ block gives NOVA the NPZ presets' engine structure, docs/PORT_MAP.md, \"NOVA RIDE edge v2\")\n",
                 worstFull > 0.0 ? 20.0 * std::log10(worstFull) : -999.0);
+
+    // 1b. BOW, BOW2, BELL and BELL2 change only in stereo (the picks file): each channel's
+    // difference from REF, re that channel, and the mono level, over 0.05-2.0 s after a lone
+    // strike at 44.1 kHz, HIT VARIATION off.
+    {
+        auto off = [](const std::shared_ptr<const cymbalis::BakeData>& b) {
+            auto c = std::make_shared<cymbalis::BakeData>(*b);
+            c->tuning.cymbal.hitVariation = false;
+            return std::shared_ptr<const cymbalis::BakeData>(c);
+        };
+        const auto r = off(refBake), f = off(bake);
+        std::printf("\nBOW, BOW2, BELL and BELL2 with the picks file, against REF (0.05-2.0 s, 44.1 kHz, HIT VARIATION off): each "
+                    "channel's difference re that channel, the mono level's change\n\n| Row | 0.3 | 0.6 | 0.9 | 1.0 |\n|---|---|---|---|---|\n");
+        double worstCh = -1e9, worstMono = 0.0;
+        for (const char* row : rows)
+        {
+            std::printf("| %s |", row);
+            for (double v : {0.3, 0.6, 0.9, 1.0})
+            {
+                const int slot = r->slotIndex(row);
+                const double pos = r->slots[size_t(slot)].position;
+                const auto a = lone<cymbalis::FastEngineRef>(r, slot, v, pos, 44100.0, 2.0, 128);
+                const auto c = lone<cymbalis::FastEngine>(f, slot, v, pos, 44100.0, 2.0, 128);
+                double s2[2] = {}, d2[2] = {}, ma = 0.0, mc = 0.0;
+                for (size_t i = size_t(0.05 * 44100.0); i < a.size() / 2; ++i)
+                    for (int ch = 0; ch < 2; ++ch)
+                    {
+                        const double x = a[2 * i + ch], y = c[2 * i + ch];
+                        s2[ch] += x * x;
+                        d2[ch] += (y - x) * (y - x);
+                        if (ch == 1)
+                        {
+                            const double m1 = 0.5 * (double(a[2 * i]) + x), m2 = 0.5 * (double(c[2 * i]) + y);
+                            ma += m1 * m1;
+                            mc += m2 * m2;
+                        }
+                    }
+                const double ch = std::max(10.0 * std::log10(d2[0] / s2[0]), 10.0 * std::log10(d2[1] / s2[1]));
+                const double mono = 10.0 * std::log10(mc / ma);
+                worstCh = std::max(worstCh, ch);
+                worstMono = std::max(worstMono, std::fabs(mono));
+                std::printf(" %.1f dB, mono %+.2f dB |", ch, mono);
+            }
+            std::printf("\n");
+        }
+        std::printf("\nLargest channel difference %.1f dB (allowed -20 dB), largest mono change %.2f dB (allowed 0.1 dB)\n", worstCh, worstMono);
+        if (worstCh > -20.0)
+            fail("a channel of BOW, BOW2, BELL or BELL2 differs from REF by more than -20 dB");
+        if (worstMono > 0.1)
+            fail("the mono level of BOW, BOW2, BELL or BELL2 moved by more than 0.1 dB");
+    }
+
+    // 1c. The stereo pattern (Kris, 2026-11-27): per third-octave band (from 89.09 Hz x 2^(j/3), j = 0-22)
+    // the left/right level difference over 0.05-2.0 s after a lone strike (44.1 kHz, STFT 4096, Hann,
+    // hop 1024); the reference is the mean of NOVA's BELL, BELL2, BOW and BOW2 at 0.9; a row's
+    // distance is the energy-weighted mean of |its band difference - the reference|. Coherence:
+    // the energy-weighted mean over the bands of |sum L conj(R)| / sqrt(sum |L|^2 sum |R|^2).
+    {
+        struct Pattern
+        {
+            std::array<double, 23> diff {}, energy {};
+            double coherence = 0.0;
+        };
+        auto pattern = [](const std::vector<float>& st, double sr2) {
+            constexpr int N = 4096, hop = 1024;
+            Pattern p;
+            std::array<double, 23> pl {}, pr {}, cre {}, cim {};
+            std::vector<double> lre(N), lim(N), rre(N), rim(N);
+            const size_t a = size_t(0.05 * sr2), b = std::min(st.size() / 2, size_t(2.0 * sr2));
+            for (size_t start = a; start + N <= b; start += hop)
+            {
+                for (int i = 0; i < N; ++i)
+                {
+                    const double w = 0.5 - 0.5 * std::cos(2.0 * 3.14159265358979323846 * i / (N - 1));
+                    lre[size_t(i)] = w * st[2 * (start + size_t(i))];
+                    rre[size_t(i)] = w * st[2 * (start + size_t(i)) + 1];
+                    lim[size_t(i)] = rim[size_t(i)] = 0.0;
+                }
+                // In-place radix-2 FFT of both channels.
+                for (auto* xs : {&lre, &rre})
+                {
+                    auto& re = *xs;
+                    auto& im = xs == &lre ? lim : rim;
+                    for (int i = 1, j = 0; i < N; ++i)
+                    {
+                        int bit = N >> 1;
+                        for (; j & bit; bit >>= 1)
+                            j ^= bit;
+                        j ^= bit;
+                        if (i < j)
+                        {
+                            std::swap(re[size_t(i)], re[size_t(j)]);
+                            std::swap(im[size_t(i)], im[size_t(j)]);
+                        }
+                    }
+                    for (int len = 2; len <= N; len <<= 1)
+                    {
+                        const double ang = -2.0 * 3.14159265358979323846 / len;
+                        for (int i = 0; i < N; i += len)
+                            for (int k = 0; k < len / 2; ++k)
+                            {
+                                const double wr = std::cos(ang * k), wi = std::sin(ang * k);
+                                const size_t u = size_t(i + k), v = size_t(i + k + len / 2);
+                                const double tr = re[v] * wr - im[v] * wi, ti = re[v] * wi + im[v] * wr;
+                                re[v] = re[u] - tr;
+                                im[v] = im[u] - ti;
+                                re[u] += tr;
+                                im[u] += ti;
+                            }
+                    }
+                }
+                for (int j = 0; j < 23; ++j)
+                {
+                    const double lo = 89.09 * std::pow(2.0, j / 3.0), hi = 89.09 * std::pow(2.0, (j + 1) / 3.0); // named by its lower edge
+                    for (int k = int(std::ceil(lo * N / sr2)); k <= int(std::floor(hi * N / sr2)) && k < N / 2; ++k)
+                    {
+                        const size_t q = size_t(k);
+                        pl[size_t(j)] += lre[q] * lre[q] + lim[q] * lim[q];
+                        pr[size_t(j)] += rre[q] * rre[q] + rim[q] * rim[q];
+                        cre[size_t(j)] += lre[q] * rre[q] + lim[q] * rim[q];
+                        cim[size_t(j)] += lim[q] * rre[q] - lre[q] * rim[q];
+                    }
+                }
+            }
+            double we = 0.0, wc = 0.0;
+            for (int j = 0; j < 23; ++j)
+            {
+                const size_t q = size_t(j);
+                p.diff[q] = pl[q] > 0.0 && pr[q] > 0.0 ? 10.0 * std::log10(pl[q] / pr[q]) : 0.0;
+                p.energy[q] = pl[q] + pr[q];
+                if (pl[q] > 0.0 && pr[q] > 0.0)
+                {
+                    wc += p.energy[q] * std::hypot(cre[q], cim[q]) / std::sqrt(pl[q] * pr[q]);
+                    we += p.energy[q];
+                }
+            }
+            p.coherence = we > 0.0 ? wc / we : 0.0;
+            return p;
+        };
+        auto distance = [](const Pattern& p, const std::array<double, 23>& ref) {
+            double num = 0.0, den = 0.0;
+            for (size_t j = 0; j < 23; ++j)
+            {
+                num += p.energy[j] * std::fabs(p.diff[j] - ref[j]);
+                den += p.energy[j];
+            }
+            return den > 0.0 ? num / den : 0.0;
+        };
+        const double sr2 = 44100.0;
+        std::vector<std::pair<std::string, Pattern>> refRows;
+        std::array<double, 23> ref {};
+        for (const char* row : {"BELL", "BELL2", "BOW", "BOW2"})
+        {
+            const int slot = bake->slotIndex(row);
+            refRows.push_back({row, pattern(lone<cymbalis::FastEngine>(bake, slot, 0.9, bake->slots[size_t(slot)].position, sr2, 2.0, 128), sr2)});
+            for (size_t j = 0; j < 23; ++j)
+                ref[j] += 0.25 * refRows.back().second.diff[j];
+        }
+        std::printf("\nThe stereo pattern: each row's distance from the mean band pattern of BELL, BELL2, BOW and BOW2 at 0.9 "
+                    "(energy-weighted mean |band L/R difference - the reference|, 0.05-2.0 s), and its coherence\n\n"
+                    "| Row | Distance | Coherence |\n|---|---|---|\n");
+        for (const auto& [row, p] : refRows)
+            std::printf("| %s 0.9 | %.2f dB | %.2f |\n", row.c_str(), distance(p, ref), p.coherence);
+        for (double v : {0.65, 0.95, 1.0})
+        {
+            const auto p = pattern(lone<cymbalis::FastEngine>(bake, bake->slotIndex("EDGE"), v,
+                                                              bake->slots[size_t(bake->slotIndex("EDGE"))].position, sr2, 2.0, 128), sr2);
+            const double d = distance(p, ref);
+            std::printf("| EDGE %.2f | %.2f dB | %.2f |\n", v, d, p.coherence);
+            if (v < 0.99 && d > 0.8)
+                fail("EDGE at " + std::to_string(v) + ": its band pattern is more than 0.8 dB from BOW's and BELL's");
+        }
+        std::printf("\nThe reference pattern (dB, + left):");
+        for (size_t j = 0; j < 23; ++j)
+            std::printf(" %+.1f", ref[j]);
+        std::printf("\n");
+    }
 
     // 2. The new EDGE: levels against the approved renders (44.1 kHz, mono mean, dB re full
     // scale after the output gain, RMS of 0.05-0.55 s after a lone strike, HIT VARIATION as baked).
