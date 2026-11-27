@@ -455,8 +455,8 @@ With amount 0 nothing is computed and every preset plays exactly as before (a da
 
 Added 2026-11-26 (Kris; `docs/PORT_MAP.md`, "Sizzle chain"). A bead chain resting on the ride, on STINE FLAT RIDE, HAMMERED THIN RIDE, SWISH, RAVEN and EXTRA PAPER THIN 24" only (their bakes have a `chain` block). In the panel it is the **SIZZLE CHAIN** group at the top, above ARTICULATIONS, on those five presets only; its header, drawn like the part headers, reads "STINE, HAMMERED THIN, SWISH, RAVEN and EXTRA PAPER THIN only" and has **CHAIN** with an **OFF | ON** pair of boxes at its right (`docs/UI_SPEC.md` section 6).
 
-- **The switch** (CHAIN OFF | ON) is session state, not a tuning value and not a host parameter (no automation): it acts at once (the sizzle fades in or out over 50 ms; the damping applies from the next strike), each preset keeps its own, and it is saved with the session as `chain_<preset id>` (1 or 0; a session without it: off). No tuning file holds it, RESET ALL leaves it, and **MODIFIED** does not count it. Off, the cymbal plays bit for bit as without the chain.
-  - **What stays after switching off:** the strikes made while it was on ring out with their damping (at most their own ring), and the sizzle fades over 50 ms, so a strike within those 50 ms still gets some of it. Nothing else, apart from one effect far under the playing: in dense playing, while all 24 of the engine's strike slots are full, merging two ringing strikes can pass a little of the damping of a strike made while on to one made after it (`docs/PORT_MAP.md`, "Sizzle chain", "Off is off"). Checked on every pull request (`cymbalis_chain_off`).
+- **The switch** (CHAIN OFF | ON) is session state, not a tuning value and not a host parameter (no automation): it acts at once (the sizzle fades in or out over 50 ms; the damping comes on or off every ringing strike at once, a change of decay rate only), each preset keeps its own, and it is saved with the session as `chain_<preset id>` (1 or 0; a session without it: off). No tuning file holds it, RESET ALL leaves it, and **MODIFIED** does not count it. Off, the cymbal plays bit for bit as without the chain.
+  - **What stays after switching off:** from 50 ms after switching off, the only difference from a chain never switched on is that the strikes made while it was on are quieter, by what they lost; they decay at the normal rates. A strike made within those 50 ms gets no sizzle (the fading sizzle holds the level it had at the switch). Checked on every pull request (`cymbalis_chain_off`; `docs/PORT_MAP.md`, "Sizzle chain", "Off is off").
 - **The eight values** are tuning values (the bake's tuning block, tuning files, the session's tuning, `tools/apply_tuning.py`), acting from the next block; the same defaults on all five presets:
 
 | Key | Shown as | Default | Range |
@@ -475,7 +475,7 @@ Added 2026-11-26 (Kris; `docs/PORT_MAP.md`, "Sizzle chain"). A bead chain restin
   - **VELOCITY EFFECT:** the drive × (velocity / 0.9) to this power.
   - **STOPS AT:** the gate closes over the 6 dB under this, in dB below a full hit's drive 0.5 s after it (BOW at 0.9 stops about 4.2 s after the hit on HAMMERED THIN RIDE and 6.9 s on STINE FLAT RIDE).
   - **SWING:** how much the sizzle follows the plate's motion (0: a steady sizzle). It changes the flicker, not the level: the swing is scaled to keep the sizzle's power (`docs/PORT_MAP.md`, "Sizzle chain").
-  - **DAMPING:** with the chain on, every mode's t60 / (1 + this × (f / 4 kHz)^1.5), from the next strike.
+  - **DAMPING:** with the chain on, every mode's t60 / (1 + this × (f / 4 kHz)^1.5), on every ringing strike: a change reaches them at once (at the next strike or within 3 ms).
 
   The values live in one small struct with its own keys (`plugin/dsp/ChainSettings.h`), apart from the TUNING page's code, so that they can move as they are to the combined kit plugin.
 

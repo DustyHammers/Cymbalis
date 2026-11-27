@@ -46,8 +46,9 @@
 //       the sizzle gone 0.6 s after the gate shuts); the stereo (the sizzle's L/R balance within
 //       1 dB of the cymbal's own in the sizzle's band, 3.5-16 kHz; its L-R correlation against the
 //       cymbal's there, reported for every row); switching while a BOW hit rings (on to off and
-//       off to on at 1 s: no sample-to-sample step larger than the sizzle's own before or after,
-//       nothing added 50 ms after switching off, nothing before switching on). Exit status 1 if an
+//       off to on at 1 s, against the sizzle muted and switched alike, as the damping follows the
+//       switch: no sample-to-sample step larger than the sizzle's own before or after, nothing
+//       added 50 ms after switching off, nothing before switching on). Exit status 1 if an
 //       order, balance or switching check fails; where the task's expectation and the spec's
 //       formulas disagree (a soft hit stopping later, the correlation), a NOTE.
 //
@@ -1272,31 +1273,35 @@ int chain(const std::vector<std::string>& bakes)
                     m = std::max({ m, std::fabs(double(a.L[i]) - b.L[i]), std::fabs(double(a.R[i]) - b.R[i]) });
                 return m;
             };
-            // On to off: against the muted render (the same damping): the sizzle fading out.
+            // On to off: against the muted render switched alike (the same damping, which follows
+            // the switch): the sizzle fading out.
             const auto onOff = chainRender(base, slot, 0.9, 1.5, true, 1.0, false);
             const auto ref = chainRender(muted, slot, 0.9, 1.5, true);
-            const double before = maxStep(onOff, ref, at - size_t(0.2 * 48000.0), at), during = maxStep(onOff, ref, at, at + fade);
+            const auto refOnOff = chainRender(muted, slot, 0.9, 1.5, true, 1.0, false);
+            const double before = maxStep(onOff, refOnOff, at - size_t(0.2 * 48000.0), at), during = maxStep(onOff, refOnOff, at, at + fade);
             // After the fade the sizzle adds nothing: the left channel bit for bit; the right one
             // within float rounding (the right-channel high-pass's state still holds a trace of
             // it, which decays with the filter's own response).
             double leftAfter = 0.0, rightAfter = 0.0, peak = 0.0;
             for (size_t i = 0; i < onOff.L.size(); ++i)
             {
-                peak = std::max({ peak, std::fabs(double(ref.L[i])), std::fabs(double(ref.R[i])) });
+                peak = std::max({ peak, std::fabs(double(refOnOff.L[i])), std::fabs(double(refOnOff.R[i])) });
                 if (i >= at + fade + 128)
                 {
-                    leftAfter = std::max(leftAfter, std::fabs(double(onOff.L[i]) - ref.L[i]));
-                    rightAfter = std::max(rightAfter, std::fabs(double(onOff.R[i]) - ref.R[i]));
+                    leftAfter = std::max(leftAfter, std::fabs(double(onOff.L[i]) - refOnOff.L[i]));
+                    rightAfter = std::max(rightAfter, std::fabs(double(onOff.R[i]) - refOnOff.R[i]));
                 }
             }
-            // Off to on: against the chain off (no damping before the next strike): the sizzle
-            // fading in, at once (its drive was tracked while off).
+            // Off to on: against the muted render switched alike (the ringing hit takes the
+            // damping at the switch): the sizzle fading in, at once (its drive was tracked while
+            // off). Before the switch, against the chain off throughout.
             const auto offOn = chainRender(base, slot, 0.9, 1.5, false, 1.0, true);
+            const auto refOffOn = chainRender(muted, slot, 0.9, 1.5, false, 1.0, true);
             const auto plain = chainRender(base, slot, 0.9, 1.5, false);
             const auto onFromStart = chainRender(base, slot, 0.9, 1.5, true);
-            const double early = maxAbs(offOn, plain, 0, at), into = maxStep(offOn, plain, at, at + fade),
-                         after = maxStep(offOn, plain, at + fade, at + fade + size_t(0.2 * 48000.0));
-            const double levelIn = monoDb(offOn, &plain, 1.1, 1.4), levelOn = monoDb(onFromStart, &ref, 1.1, 1.4);
+            const double early = maxAbs(offOn, plain, 0, at), into = maxStep(offOn, refOffOn, at, at + fade),
+                         after = maxStep(offOn, refOffOn, at + fade, at + fade + size_t(0.2 * 48000.0));
+            const double levelIn = monoDb(offOn, &refOffOn, 1.1, 1.4), levelOn = monoDb(onFromStart, &ref, 1.1, 1.4);
             std::printf("Switching at 1 s (BOW at 0.9): on to off, largest step %.3g in the fade against %.3g before, largest "
                         "difference after the fade %.3g left, %.3g right (%.0f dB re the peak); off to on, largest difference before "
                         "%.3g, largest step %.3g in the fade against %.3g after, sizzle 1.1-1.4 s %.1f dB (on from the start: "

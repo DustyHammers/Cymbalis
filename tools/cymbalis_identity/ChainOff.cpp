@@ -18,14 +18,22 @@
 //                                                            after the silence
 //   C  the playing with the chain off while its eight values change, each to both ends of its
 //      range, every 0.4 s                                  -> bit-identical throughout
-//   Fade window: on, then off one sample before an EDGE strike at 1.0 -> its fading sizzle
-//      reported; from the fade's end the left channel bit-identical, the right within -90 dB
-//   D  the playing for 24 s, the chain on for its first 4 s -> the merge leak: in no 0.5 s window
-//      from the switch (where the difference is above -120 dBFS) does the difference stand more
-//      than 25 dB over what the strikes made while on leave by themselves (the same engines
-//      playing only those). The task's own criterion (the difference never rises at a strike made
-//      after the switch by more than 0.5 dB, over the 20 ms from the strike against the 20 ms
-//      before it) is reported, not checked: the pool's merges break it (docs/PORT_MAP.md)
+//   Fade window (from silence): on with nothing struck, then off one sample before an EDGE strike
+//      at 1.0                                              -> bit-identical throughout
+//   Fade window (ringing): the playing with the chain on, off one sample before an EDGE strike
+//      at 1.0, against the same without it, both also with the sizzle muted -> the fading sizzle
+//      the same with the strike as without (-120 dB re the peak: the rounding of taking the cymbal
+//      away); from the fade's end no ring-out (left bit-identical, right within -90 dB)
+//   Switch step: the playing switched off (on) at 2 s while it rings, the sizzle muted, against
+//      the same with no switch -> the largest sample-to-sample step from 2 ms before to 10 ms
+//      after the switch at most 5 % over the no-switch one's (with the sizzle: reported)
+//   D  the playing for 24 s, the chain on for its first 4 s -> in no 0.5 s window from the fade's
+//      end does the difference, less the difference the strikes made while on make played by
+//      themselves (the same engines playing only those), stand more than -45 dB re the playing
+//      (docs/PORT_MAP.md, "Off is off": what is left is the engine's cymbal-wide behaviour and its
+//      merges acting on those quieter strikes). The task's own criterion of 2026-11-27 (the
+//      difference never rises at a strike made after the switch by more than 0.5 dB, over the
+//      20 ms from the strike against the 20 ms before it) is reported, not checked
 //   G  after B's second playing, the block at which each engine reports silence -> the same block
 //
 // CymbalisProcessor (its per-block switch, preset switching, its session):
@@ -324,40 +332,117 @@ Result engineA (const std::shared_ptr<const BakeData>& bake, double sr, int bloc
     return { "A", e.cmp.text (sr), ok };
 }
 
-// The fade window: the chain on for 0.5 s with nothing struck, off, and an EDGE strike at 1.0
-// one sample later, within the sizzle's 50 ms fade-out. Reported: how far the strike's sizzle
-// reaches (largest difference against the never-on strike's peak) and when it ends. Checked:
-// from the fade's end (one host block later), the left channel bit-identical and the right
-// within -90 dB of the peak (the right-channel high-pass's trace of the sizzle, dying away).
-Result engineFade (const std::shared_ptr<const BakeData>& bake, double sr, int block)
+// A copy of the bake with the sizzle muted (SIZZLE LEVEL -400 dB): the same switching, damping and
+// random draws, no sizzle to speak of.
+std::shared_ptr<const BakeData> muted (const std::shared_ptr<const BakeData>& b)
 {
-    EnginePair e (bake, sr, block);
-    e.record = true;
-    const std::int64_t at = e.samples (1.0);
-    std::vector<Event> te { { e.samples (0.5), Event::chainOn }, { at - 1, Event::chainOff }, { at, Event::strike, e.rows[2], 1.0 } };
-    std::vector<Event> re { { at, Event::strike, e.rows[2], 1.0 } };
-    e.run (te, re, e.samples (2.0));
-    const std::int64_t end = at + e.samples (cymbalis::SizzleChain::kFadeS) + block;
-    double peak = 0.0, inFade = 0.0, left = 0.0, right = 0.0;
-    std::int64_t last = -1;
-    for (size_t i = 0; i < e.recRef.size(); ++i)
+    auto copy = std::make_shared<BakeData> (*b);
+    copy->tuning.cymbal.chainLevelDb = -400.0;
+    return copy;
+}
+
+// The fade window (Kris, 2026-11-27: the envelope freezes at the switch). From silence: the chain
+// on at 0.5 s with nothing struck, off one sample before an EDGE strike at 1.0 -> bit-identical to
+// the never-on strike throughout. Ringing: the playing with the chain on for 1 s, off one sample
+// before an EDGE strike at 1.0, against the same without that strike, each also with the sizzle
+// muted -> the fading sizzle the same with the strike as without it (within the float rounding of
+// taking the cymbal away, -120 dB re the peak), and from the fade's end (one host block later) no
+// ring-out: the left channel bit-identical to the muted one's, the right within -90 dB (the
+// right-channel high-pass's trace of the sizzle).
+std::pair<Result, Result> engineFade (const std::shared_ptr<const BakeData>& bake, double sr, int block)
+{
+    Result silence;
+    {
+        EnginePair e (bake, sr, block);
+        e.cmp.from = 0;
+        const std::int64_t at = e.samples (1.0);
+        std::vector<Event> te { { e.samples (0.5), Event::chainOn }, { at - 1, Event::chainOff }, { at, Event::strike, e.rows[2], 1.0 } };
+        std::vector<Event> re { { at, Event::strike, e.rows[2], 1.0 } };
+        e.run (te, re, e.samples (2.0));
+        silence = { "Fade window (from silence)", e.cmp.text (sr) + " (a strike 1 sample after switching off)", e.cmp.identical() };
+    }
+    // Ringing: (T, R) the strike and none, on the bake; (Tm, Rm) the same with the sizzle muted.
+    EnginePair a (bake, sr, block), m (muted (bake), sr, block);
+    a.record = m.record = true;
+    const std::int64_t at = a.samples (1.0);
+    const auto p = a.strikes (playing (0.0, 1.0 - 0.02, 501));
+    auto te = p, re = p;
+    for (auto* ev : { &te, &re })
+    {
+        ev->push_back ({ 0, Event::chainOn });
+        ev->push_back ({ at - 1, Event::chainOff });
+    }
+    te.push_back ({ at, Event::strike, a.rows[2], 1.0 });
+    a.run (te, re, a.samples (2.0));
+    m.run (te, re, m.samples (2.0));
+    const std::int64_t end = at + a.samples (cymbalis::SizzleChain::kFadeS) + block;
+    double peak = 0.0, inFade = 0.0, left = 0.0, right = 0.0, sizzle = 0.0;
+    for (size_t i = 0; i < a.recTest.size(); ++i)
     {
         const std::int64_t n = std::int64_t (i / 2);
-        const double d = std::fabs (double (e.recTest[i]) - double (e.recRef[i]));
-        peak = std::max (peak, double (std::fabs (e.recRef[i])));
+        peak = std::max (peak, double (std::fabs (a.recTest[i])));
+        if (n < at - 1)
+            continue;
+        const double sT = double (a.recTest[i]) - double (m.recTest[i]), sR = double (a.recRef[i]) - double (m.recRef[i]);
         if (n < end)
-            inFade = std::max (inFade, d);
+        {
+            inFade = std::max (inFade, std::fabs (sT - sR));
+            sizzle = std::max (sizzle, std::fabs (sR));
+        }
         else
-            (i % 2 == 0 ? left : right) = std::max (i % 2 == 0 ? left : right, d);
-        if (i % 2 == 0 && d > 0.0)
-            last = n;
+            (i % 2 == 0 ? left : right) = std::max (i % 2 == 0 ? left : right, std::fabs (sT));
     }
-    const bool ok = left <= 0.0 && right <= 3.2e-5 * peak;
-    char buf[220];
-    std::snprintf (buf, sizeof (buf), "a strike 1 sample after switching off: its sizzle %.1f dB re its peak at most, the left channel back to bit-identical %.1f ms after the switch; after the fade: left %s, right within %.1f dB re the peak",
-                   inFade > 0.0 ? 20.0 * std::log10 (inFade / peak) : -999.0, last >= 0 ? 1000.0 * double (last + 1 - at) / sr : 0.0,
-                   left <= 0.0 ? "bit-identical" : "DIFFERS", right > 0.0 ? 20.0 * std::log10 (right / peak) : -999.0);
-    return { "Fade window", buf, ok };
+    const bool ok = inFade <= 1e-6 * peak && left <= 0.0 && right <= 3.2e-5 * peak;
+    const auto db = [&] (double x) { return x > 0.0 ? 20.0 * std::log10 (x / peak) : -999.0; };
+    char buf[300];
+    std::snprintf (buf, sizeof (buf), "a strike 1 sample after switching off changes the fading sizzle (%.1f dB re the peak at most) by %.1f dB re the peak at most; after the fade: left %s, right within %.1f dB re the peak",
+                   db (sizzle), db (inFade), left <= 0.0 ? "bit-identical" : "DIFFERS", db (right));
+    return { silence, { "Fade window (ringing)", buf, ok } };
+}
+
+// The switch's step (Kris, 2026-11-27: no click when the damping follows the switch): the playing,
+// switched at 2 s while it rings, against the same playing with no switch; the sizzle muted, so
+// that what changes is the damping of every ringing strike. Off: on from the start, off at 2 s
+// (against on throughout); on: off from the start, on at 2 s (against off throughout). The largest
+// sample-to-sample step from 2 ms before the switch to 10 ms after it (the damping applies at the
+// next control point, at most 2.9 ms later) -> at most 5 % (0.4 dB) over the no-switch playing's.
+// With the sizzle (reported): the same against the same playing with no switch.
+Result engineStep (const std::shared_ptr<const BakeData>& bake, double sr, int block)
+{
+    double ratio[2][2] {}; // [muted, with sizzle][off, on]
+    for (int withSizzle = 0; withSizzle < 2; ++withSizzle)
+        for (int dir = 0; dir < 2; ++dir)
+        {
+            EnginePair e (withSizzle ? bake : muted (bake), sr, block);
+            e.record = true;
+            const auto p = e.strikes (playing (0.0, 4.0, 601));
+            auto te = p, re = p;
+            if (dir == 0)
+            {
+                te.push_back ({ 0, Event::chainOn });
+                re.push_back ({ 0, Event::chainOn });
+                te.push_back ({ e.samples (2.0), Event::chainOff });
+            }
+            else
+                te.push_back ({ e.samples (2.0), Event::chainOn });
+            e.run (te, re, e.samples (2.1));
+            const std::int64_t a = e.samples (2.0 - 0.002), b = e.samples (2.0 + 0.010);
+            double st = 0.0, sr0 = 0.0;
+            for (std::int64_t n = a; n < b; ++n)
+                for (int c = 0; c < 2; ++c)
+                {
+                    const size_t k = size_t (2 * n + c), k0 = size_t (2 * (n - 1) + c);
+                    st = std::max (st, std::fabs (double (e.recTest[k]) - double (e.recTest[k0])));
+                    sr0 = std::max (sr0, std::fabs (double (e.recRef[k]) - double (e.recRef[k0])));
+                }
+            ratio[withSizzle][dir] = sr0 > 0.0 ? st / sr0 : 1.0;
+        }
+    const auto db = [] (double r) { return 20.0 * std::log10 (r); };
+    const bool ok = ratio[0][0] <= 1.05 && ratio[0][1] <= 1.05;
+    char buf[300];
+    std::snprintf (buf, sizeof (buf), "largest step around the switch against the same playing with no switch, the damping alone: off %+.2f dB, on %+.2f dB; with the sizzle: off %+.2f dB, on %+.2f dB",
+                   db (ratio[0][0]), db (ratio[0][1]), db (ratio[1][0]), db (ratio[1][1]));
+    return { "Switch step", buf, ok };
 }
 
 // Cases B and G: struck while on; silence; the playing.
@@ -421,12 +506,18 @@ struct DResult
     std::vector<std::pair<double, double>> levels; // (time, difference re the signal, dB) per 0.5 s
     std::vector<double> excess; // per 0.5 s: dB the difference stands over the ring-out alone's
     double worstExcess = -1e9, worstExcessAt = 0.0;
+    // The residual: the difference minus the ring-out alone's difference, per 0.5 s from the
+    // fade's end, re the signal and re the ring-out's difference (dB).
+    std::vector<double> residual;
+    double worstResSig = -1e9, worstResSigAt = 0.0, worstResRing = -1e9, worstResRingAt = 0.0;
     int strikesAfter = 0, rises = 0;
 };
 
-// The merge leak's limit: in no 0.5 s window from the switch on, where the difference is above
-// -120 dBFS, may it stand more than this over what the strikes made while on leave by themselves.
-constexpr double kLeakLimitDb = 25.0;
+// The residual's limit (Kris, 2026-11-27: from 50 ms after switching off, the only difference from
+// a chain never on is that the strikes made while on are quieter, by what they lost, and decay at
+// the normal rates): in no 0.5 s window from the fade's end may the difference, less the
+// difference those strikes make played by themselves, stand more than this re the playing.
+constexpr double kResidualLimitDb = -45.0;
 
 DResult engineD (const std::shared_ptr<const BakeData>& bake, double sr, int block)
 {
@@ -497,8 +588,31 @@ DResult engineD (const std::shared_ptr<const BakeData>& bake, double sr, int blo
             d.largestAt = double (i / 2) / sr;
         }
     }
+    const auto resRms = [&] (std::int64_t from, std::int64_t to) {
+        double s2 = 0.0;
+        from = std::max<std::int64_t> (from, 0);
+        to = std::min<std::int64_t> (to, std::int64_t (n));
+        for (std::int64_t i = from; i < to; ++i)
+            for (int c = 0; c < 2; ++c)
+            {
+                const size_t k = size_t (2 * i + c);
+                const double x = (double (e.recTest[k]) - double (e.recRef[k])) - (double (o.recTest[k]) - double (o.recRef[k]));
+                s2 += x * x;
+            }
+        return to > from ? std::sqrt (s2 / double (2 * (to - from))) : 0.0;
+    };
+    const double fadeEndS = switchS + cymbalis::SizzleChain::kFadeS + double (block) / sr;
     for (double t = switchS; t + 0.5 <= totalS + 1e-9; t += 0.5)
     {
+        const double ta = std::max (t, fadeEndS);
+        const double res = resRms (e.samples (ta), e.samples (t + 0.5));
+        const double sigR = rms (&e.recRef, nullptr, e.samples (ta), e.samples (t + 0.5));
+        const double ringR = rms (&o.recTest, &o.recRef, o.samples (ta), o.samples (t + 0.5));
+        const double rs = res > 0.0 && sigR > 0.0 ? 20.0 * std::log10 (res / sigR) : -999.0;
+        const double rr = res > 0.0 && ringR > 0.0 ? 20.0 * std::log10 (res / ringR) : (res > 0.0 ? 999.0 : -999.0);
+        d.residual.push_back (rs);
+        if (rs > d.worstResSig) { d.worstResSig = rs; d.worstResSigAt = t; }
+        if (res > 1e-6 && rr > d.worstResRing) { d.worstResRing = rr; d.worstResRingAt = t; }
         const double diff = rms (&e.recTest, &e.recRef, e.samples (t), e.samples (t + 0.5));
         const double sig = rms (&e.recRef, nullptr, e.samples (t), e.samples (t + 0.5));
         const double ring = rms (&o.recTest, &o.recRef, o.samples (t), o.samples (t + 0.5));
@@ -512,10 +626,10 @@ DResult engineD (const std::shared_ptr<const BakeData>& bake, double sr, int blo
             d.worstExcessAt = t;
         }
     }
-    char buf[300];
-    std::snprintf (buf, sizeof (buf), "the difference stands at most %.1f dB over what the strikes made while on leave by themselves (at %.1f s; limit %.0f dB where it is above -120 dBFS); largest |difference| %.1f dB re the peak (at %.2f s)",
-                   d.worstExcess, d.worstExcessAt, kLeakLimitDb, d.largestRel > 0.0 ? 20.0 * std::log10 (d.largestRel) : -999.0, d.largestAt);
-    d.result = { "D (merge leak)", buf, d.worstExcess <= kLeakLimitDb };
+    char buf[400];
+    std::snprintf (buf, sizeof (buf), "from the fade's end the difference, less what the strikes made while on make played by themselves, stands at most %.1f dB re the playing (at %.1f s; limit %.0f dB); the difference itself at most %.1f dB over theirs (at %.1f s, where above -120 dBFS); largest |difference| %.1f dB re the peak (at %.2f s)",
+                   d.worstResSig, d.worstResSigAt, kResidualLimitDb, d.worstExcess, d.worstExcessAt, d.largestRel > 0.0 ? 20.0 * std::log10 (d.largestRel) : -999.0, d.largestAt);
+    d.result = { "D", buf, d.worstResSig <= kResidualLimitDb };
     char rise[64];
     std::snprintf (rise, sizeof (rise), d.worstRiseDb > 1e8 ? "from silence" : "%.1f dB", d.worstRiseDb);
     std::snprintf (buf, sizeof (buf), "the task's 0.5 dB criterion: %d of %d strikes after the switch raise the difference by more (worst %s at %.2f s); reported, not checked (docs/PORT_MAP.md)",
@@ -840,7 +954,10 @@ ConfigOutput runConfig (const Config& c, int nova, bool quiet)
     results.push_back (bg.first);
     results.push_back (bg.second);
     results.push_back (engineC (b, c.sr, c.block));
-    results.push_back (engineFade (b, c.sr, c.block));
+    const auto fade = engineFade (b, c.sr, c.block);
+    results.push_back (fade.first);
+    results.push_back (fade.second);
+    results.push_back (engineStep (b, c.sr, c.block));
     const auto d = engineD (b, c.sr, c.block);
     results.push_back (d.result);
     results.push_back (d.criterion);
@@ -873,7 +990,7 @@ ConfigOutput runConfig (const Config& c, int nova, bool quiet)
             if (db < -998.0)
                 std::snprintf (buf, sizeof (buf), " %.0fs none", t);
             else
-                std::snprintf (buf, sizeof (buf), " %.0fs %.0f dB (%+.0f)", t, db, std::max (d.excess[w], -99.0));
+                std::snprintf (buf, sizeof (buf), " %.0fs %.0f dB (%+.0f, %.0f)", t, db, std::max (d.excess[w], -99.0), std::max (d.residual[w], -199.0));
             out.dLine += buf;
         }
     }
@@ -966,8 +1083,9 @@ int main (int argc, char** argv)
         engineS += o.engineS;
         processorS += o.processorS;
     }
-    std::printf ("\nCase D: the difference (chain on for the first 4 s, then off) against the signal, per 0.5 s window, every 2 s "
-                 "from the switch; in brackets, dB over the ring-out alone (the strikes made while on, played by themselves):\n");
+    std::printf ("\nCase D: the difference (chain on for the first 4 s, then off) against the playing, per 0.5 s window, every 2 s "
+                 "from the switch; in brackets, dB over the difference the strikes made while on make played by themselves, and the "
+                 "residual (the difference less theirs, from the fade's end) re the playing:\n");
     for (const auto& o : outputs)
         std::printf ("- %s\n", o.dLine.c_str());
     const double secs = std::chrono::duration<double> (std::chrono::steady_clock::now() - started).count();

@@ -21,8 +21,10 @@
 //    so that at env = 1 each one-third-octave band's power (mono mean of L and R, before the
 //    output gain, which the sizzle passes through as the cymbal does) is C_b x ref_ms (the bake's,
 //    tools/cymbalis_trims --chain-ref) x SIZZLE LEVEL.
-//  - The damping: with the chain on, a strike's modes take t60 / (1 + DAMPING (f / 4 kHz) ^ 1.5)
-//    (FastEngine applies dampingFactor() to each new strike's decay; ringing strikes keep theirs).
+//  - The damping: with the chain on, every strike's modes take t60 / (1 + DAMPING (f / 4 kHz) ^ 1.5).
+//    It follows the switch (Kris, 2026-11-27): FastEngine applies dampingFactor() to each new
+//    strike made while on and to every ringing strike when switched on, takes it off them all
+//    when switched off, and moves them to a new DAMPING while on (a rate change only).
 //  - Switching: the sizzle fades in or out over 50 ms; the drive is tracked on or off. Switched
 //    off, the envelope freezes for the fade at the drive and gate it had at the switch (D g, the
 //    envelope's RMS, the swing having a mean square of 1), so strikes made in the fade add nothing
@@ -68,7 +70,7 @@ public:
 
     // On: the sizzle fades in over 50 ms (the drive is always tracked); off: it fades out over
     // 50 ms with its envelope frozen at the switch (D g then), so nothing struck in the fade
-    // reaches it. FastEngine damps the strikes made while on (dampingFactor()).
+    // reaches it. FastEngine applies the damping (dampingFactor()) to every ringing strike.
     void setOn (bool on) noexcept;
     bool on() const noexcept { return on_; }
     // Each mode's t60 divisor with the chain on, 1 + DAMPING (f / 4 kHz) ^ 1.5 (numModes values).

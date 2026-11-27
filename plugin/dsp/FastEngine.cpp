@@ -324,6 +324,7 @@ FastEngine::FastEngine(std::shared_ptr<const BakeData> bake)
         chain_.build(b, b.chain.seed, b.chain.refMs);
         chain_.setSettings(b.tuning.cymbal);
         chainRate_.assign(size_t(b.numModes), 0.0);
+        chainDamp_.assign(chain_.dampingFactor(), chain_.dampingFactor() + b.numModes);
     }
     {
         // HIT VARIATION's stream: two outputs of a copy of the render stream (the strike
@@ -711,7 +712,11 @@ void FastEngine::prepare(double sampleRate)
     baseSample_ = 0;
     startFreePhase();
     if (chain_.built())
+    {
         chain_.prepare(sr_, negLambda_.data(), gainL_.data(), gainR_.data());
+        std::copy(chain_.dampingFactor(), chain_.dampingFactor() + n_, chainDamp_.begin()); // nothing carries it
+        chainDampPending_ = false;
+    }
 }
 
 double FastEngine::timeSeconds() const noexcept
@@ -1075,6 +1080,8 @@ void FastEngine::renderFree(float* left, float* right, int n) noexcept
                 endGainRamp();
             if (decayPending_)
                 applyDecay();
+            if (chainDampPending_)
+                applyChainDamping();
             beginControlBlock();
         }
         const int m = std::min(K_ - j, n - pos);
@@ -2156,6 +2163,53 @@ void FastEngine::setDecayAll(Component& c) noexcept
     }
 }
 
+// The sizzle chain's damping follows the switch (Kris, 2026-11-27; docs/PORT_MAP.md, "Sizzle
+// chain"): component c's modes take t60 / damp[i] when on and lose it when off, a rate change
+// only. Its total rate factor (oscWash_ + epsK) is divided by the factors it carried and
+// multiplied by the new ones: epsK_on = (oscWash_ + epsK) x damp - oscWash_, epsK_off =
+// (oscWash_ + epsK_on) / damp - oscWash_. Its decay restarts from its next block (the caller is at
+// a control point or after a rebase, where the decay so far is in its amplitudes or D).
+void FastEngine::chainDampComponent(Component& c, bool on, const double* factors, bool sameFactors) noexcept
+{
+    if (c.chainDamped == on && (! on || sameFactors))
+        return;
+    const size_t n = size_t(n_);
+    for (size_t i = 0; i < n; ++i)
+    {
+        double total = oscWash_ + c.epsK[i];
+        if (c.chainDamped)
+            total /= chainDamp_[i];
+        if (on)
+            total *= factors[i];
+        c.epsK[i] = total - oscWash_;
+    }
+    c.chainDamped = on;
+    if (! c.pending)
+        setDecayAll(c);
+}
+
+void FastEngine::applyChainDamping() noexcept
+{
+    chainDampPending_ = false;
+    if (! chain_.built())
+        return;
+    const bool on = chain_.on();
+    const double* factors = chain_.dampingFactor();
+    const bool same = std::equal(chainDamp_.begin(), chainDamp_.end(), factors);
+    for (auto& c : components_)
+        if (c.used)
+            chainDampComponent(c, on, factors, same);
+    std::copy(factors, factors + n_, chainDamp_.begin());
+}
+
+void FastEngine::setChain(bool on) noexcept
+{
+    if (on == chain_.on())
+        return;
+    chain_.setOn(on);
+    chainDampPending_ = chain_.built();
+}
+
 // Adds `from` into `into`; both refer to the same sample. The decay becomes the
 // energy-weighted mean per mode. dropEnvelopes: what is left of both onset envelopes is
 // dropped (used only when no settled pair exists).
@@ -3060,6 +3114,9 @@ FastEngine::Component* FastEngine::cascadeComponent() noexcept
     std::fill(c.Br.begin(), c.Br.end(), 0.0f);
     std::fill(c.Bi.begin(), c.Bi.end(), 0.0f);
     std::fill(c.D.begin(), c.D.end(), 1.0f);
+    c.chainDamped = false;
+    if (chain_.built() && chain_.on()) // the sizzle chain's damping, as every ringing strike's
+        chainDampComponent(c, true, chainDamp_.data(), true);
     setDecayAll(c);
     cascComp_ = static_cast<int>(slot - components_.data());
     return slot;
@@ -3353,7 +3410,8 @@ void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecayS
     setMechanisms(c);
 
     // The sizzle chain's values: from the next block (the drive weights on the ringing strikes
-    // too), the damping from the next strike.
+    // too); a new DAMPING while it is on reaches every ringing strike at the next strike or
+    // control point (applyChainDamping).
     if (chain_.built())
     {
         const ChainSettings& next = c;
@@ -3362,7 +3420,10 @@ void FastEngine::setTuning(const Tuning& t, const float* modeGains, const DecayS
         for (const auto& k : chainKeys())
             changed = changed || next.*(k.member) != now.*(k.member);
         if (changed)
+        {
             chain_.setSettings(next);
+            chainDampPending_ = true;
+        }
     }
 }
 #endif
@@ -3446,6 +3507,8 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
         interruptGainRamp();
     if (freeStarted_)
         rebaseComponents();
+    if (chainDampPending_)
+        applyChainDamping(); // the ringing strikes to the switch before this one joins or merges
     CYM_PROF_END(strikeRebase);
     const double strikeTime = timeSeconds();
     CYM_PROF_BEGIN(strikeCymbalWide);
@@ -3606,12 +3669,14 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
     comp.eps = std::max(washDamp - oscWash_, 0.0); // 0 only for a velocity outside 0..1
     for (size_t i = 0; i < n; ++i)
         comp.epsK[i] = comp.eps;
+    comp.chainDamped = false;
     if (chain_.built())
     {
         // The sizzle chain: with it on, this strike's modes take t60 / (1 + DAMPING (f / 4 kHz) ^ 1.5)
-        // (the ringing strikes keep theirs); its drive takes this strike, on or off, from its
-        // coupling and each mode's whole decay rate.
+        // as every ringing strike's do; its drive takes this strike, on or off, from its coupling
+        // and each mode's whole decay rate.
         const double* damp = chain_.dampingFactor();
+        comp.chainDamped = chain_.on();
         if (chain_.on())
             for (size_t i = 0; i < n; ++i)
                 comp.epsK[i] = (oscWash_ + comp.eps) * damp[i] - oscWash_;

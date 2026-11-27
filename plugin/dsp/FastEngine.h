@@ -169,12 +169,14 @@ public:
     bool isSilent() const noexcept;
 
     // The sizzle chain (SizzleChain.h; docs/PORT_MAP.md, "Sizzle chain"): only on a bake with a
-    // chain block. On, the sizzle fades in over 50 ms and the strikes from the next one are damped;
-    // off, it fades out and the engine plays exactly as without a chain. Its drive is tracked
-    // either way. The envelope env (1: a full hit's drive 0.5 s after it, the gate open), its mean
-    // over the last process(), for the chain's drawing; the drive and gate now, for checks.
+    // chain block. On, the sizzle fades in over 50 ms; off, it fades out over 50 ms (its envelope
+    // frozen at the switch). The damping follows the switch: every ringing strike takes it on and
+    // loses it off, at the next strike or control point (a rate change only), as do new strikes;
+    // off, the engine plays exactly as without a chain. Its drive is tracked either way. The
+    // envelope env (1: a full hit's drive 0.5 s after it, the gate open), its mean over the last
+    // process(), for the chain's drawing; the drive and gate now, for checks.
     bool hasChain() const noexcept { return chain_.built(); }
-    void setChain(bool on) noexcept { chain_.setOn(on); }
+    void setChain(bool on) noexcept;
     bool chainOn() const noexcept { return chain_.on(); }
     float chainEnvelope() const noexcept { return chain_.envelope(); }
     double chainDrive() const noexcept { return chain_.drive(); }
@@ -227,6 +229,7 @@ private:
     {
         bool used = false;
         bool pending = false;     // its contact is still running; Br/Bi hold the coupling
+        bool chainDamped = false; // its epsK carry the sizzle chain's damping (chainDamp_)
         bool cascade = false;     // it holds the energy cascade's moved energy and nothing else
         uint64_t order = 0;       // creation order, for "oldest"
         int64_t contactStart = 0; // engine sample where its contact began
@@ -477,6 +480,10 @@ private:
     std::vector<double> negLambda_;     // -ln(1000) / T60 per mode (undamped decay rate, 1/s)
     SizzleChain chain_;                 // built only with the bake's chain block
     std::vector<double> chainRate_;     // a strike's amplitude decay rate per mode, for the chain
+    // The chain's damping per mode that the components marked chainDamped carry (its t60 divisor),
+    // and a switch or DAMPING change not yet applied to the ringing strikes (applyChainDamping).
+    std::vector<double> chainDamp_;
+    bool chainDampPending_ = false;
     // Per-band ring lengths (docs/TUNING.md): the band factors negLambda_ holds, the ring
     // length the engine was built with, and new coefficients waiting for a control point.
     std::array<double, kExcitationBands> ringBandNow_ = kUnitBands;
@@ -760,6 +767,10 @@ private:
     // (VecMath.h) in the strike's per-mode loops (preallocated, n each).
     std::vector<double> vmArg_, vmArg2_, vmExp_, vmSin_, vmCos_, vmSin2_, vmCos2_;
     void setDecayAll(Component& c) noexcept; // setDecay for every mode
+    // The sizzle chain's damping to the switch and DAMPING now: on every used component (its
+    // epsK, then its decay), at a strike (after the rebase) or a free-phase control point.
+    void applyChainDamping() noexcept;
+    void chainDampComponent(Component& c, bool on, const double* factors, bool sameFactors) noexcept;
 };
 
 } // namespace cymbalis
