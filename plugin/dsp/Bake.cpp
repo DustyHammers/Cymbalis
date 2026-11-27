@@ -481,6 +481,27 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
         b.ampSkipThreshold = c.at("amp_skip_threshold").number();
         b.overrides = root.at("overrides");
 
+        // Modes added after the bake (Bake.h, addedModes): listed by the step that added them.
+        b.numOwnModes = b.numModes;
+        if (const json::Value* am = root.find("added_modes"); am != nullptr && !am->isNull())
+        {
+            for (const auto& v : am->at("indices").array())
+            {
+                const double x = v.number();
+                if (!(x >= 0.0 && x < double(n)) || x != std::floor(x))
+                    throw BakeError("added_modes.indices: " + fmt("%.17g", x) + " is not a mode index");
+                const int k = static_cast<int>(x);
+                if (!b.addedModes.empty() && k <= b.addedModes.back())
+                    throw BakeError("added_modes.indices must be ascending");
+                b.addedModes.push_back(k);
+            }
+            if (b.addedModes.empty() || b.addedModes.size() >= n)
+                throw BakeError("added_modes.indices: need at least one added mode and one of the preset's own");
+            b.numOwnModes = b.numModes - static_cast<int>(b.addedModes.size());
+            rep.push_back("added modes  " + std::to_string(b.addedModes.size()) + " added to the preset's own " +
+                          std::to_string(b.numOwnModes) + " (seeded values as baked; own modes checked below)");
+        }
+
         const auto& sh = root.at("shared");
         b.freqHz = readArray(sh.at("freq_hz"), "shared.freq_hz", {n}, rep);
         b.t60S = readArray(sh.at("t60_s"), "shared.t60_s", {n}, rep);
@@ -618,8 +639,8 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
         // The hi-hat (tools/bake_hihat.py): its strike model, not a V19 preset.
         if (const json::Value* hh = root.find("hihat"); hh != nullptr && !hh->isNull())
         {
-            if (b.edgeNpz.present || ep.contactPermode || ep.bandEnvOnset || ep.velTilt)
-                throw BakeError("hihat: the hi-hat bake must have no NPZ edge data, contact or onset ramp");
+            if (b.edgeNpz.present || ep.contactPermode || ep.bandEnvOnset || ep.velTilt || !b.addedModes.empty())
+                throw BakeError("hihat: the hi-hat bake must have no NPZ edge data, contact, onset ramp or added modes");
             readHiHat(*hh, b, b.hihat, rep);
         }
         if (ep.mfDepth > 0.0)
@@ -902,24 +923,46 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
         b.renderStream = readStream(streams.at("render"), "render", rep);
         readStream(streams.at("calibration"), "calibration", rep);
 
+        // The preset's own modes (all of them unless modes were added), in their order: the
+        // seeded values are checked on them, drawn for their count.
+        std::vector<size_t> own;
+        {
+            size_t a = 0;
+            for (size_t i = 0; i < n; ++i)
+            {
+                if (a < b.addedModes.size() && size_t(b.addedModes[a]) == i)
+                    ++a;
+                else
+                    own.push_back(i);
+            }
+        }
+        const size_t no = own.size();
+        const auto ownValues = [&](const std::vector<double>& first, const std::vector<double>& second) {
+            std::vector<double> out;
+            out.reserve(2 * no);
+            for (size_t i : own)
+                out.push_back(first[i]);
+            for (size_t i : own)
+                out.push_back(second[i]);
+            return out;
+        };
         // __init__ lines 205-207: uniform(0.6, 1.0, n) * choice([-1., 1.], n), for L then R.
         {
             const double low = 0.6, range = 1.0 - 0.6;
             auto pickPair = [&](UniformForm f) {
                 Pcg64 g = pick;
-                std::vector<double> out(2 * n);
+                std::vector<double> out(2 * no);
                 for (int side = 0; side < 2; ++side)
                 {
-                    std::vector<double> mag(n);
-                    for (size_t i = 0; i < n; ++i)
+                    std::vector<double> mag(no);
+                    for (size_t i = 0; i < no; ++i)
                         mag[i] = uniformAs(f, low, range, g.nextDouble());
-                    for (size_t i = 0; i < n; ++i)
-                        out[side * n + i] = mag[i] * (g.choiceIndex2() == 0 ? -1.0 : 1.0);
+                    for (size_t i = 0; i < no; ++i)
+                        out[side * no + i] = mag[i] * (g.choiceIndex2() == 0 ? -1.0 : 1.0);
                 }
                 return out;
             };
-            std::vector<double> baked(b.pickL);
-            baked.insert(baked.end(), b.pickR.begin(), b.pickR.end());
+            const std::vector<double> baked = ownValues(b.pickL, b.pickR);
             const UniformForm f = verifyAgainstNumpy(baked, "pick_l/pick_r", pickPair);
             rep.push_back(std::string("numpy rng ok pick_l/pick_r regenerated bit-exactly (uniform as ") + formName(f) +
                           ", choice via 32-bit Lemire)");
@@ -929,28 +972,30 @@ std::shared_ptr<const BakeData> buildBake(const json::Value& root, const std::st
             const double rateHz = root.at("slots").array().at(0).at("effective").at("wander_rate_hz").number();
             auto lfo = [&](UniformForm f) {
                 Pcg64 g = wander;
-                std::vector<double> out(2 * n);
+                std::vector<double> out(2 * no);
                 const double range1 = 1.3 - 0.7;
-                for (size_t i = 0; i < n; ++i)
+                for (size_t i = 0; i < no; ++i)
                     out[i] = uniformAs(f, 0.7, range1, g.nextDouble()) * rateHz;
                 const double range2 = b.twoPi - 0.0;
-                for (size_t i = 0; i < n; ++i)
-                    out[n + i] = uniformAs(f, 0.0, range2, g.nextDouble());
+                for (size_t i = 0; i < no; ++i)
+                    out[no + i] = uniformAs(f, 0.0, range2, g.nextDouble());
                 return out;
             };
-            std::vector<double> baked(b.lfoRateHz);
-            baked.insert(baked.end(), b.lfoPhase.begin(), b.lfoPhase.end());
+            const std::vector<double> baked = ownValues(b.lfoRateHz, b.lfoPhase);
             const UniformForm f = verifyAgainstNumpy(baked, "lfo_rate_hz/lfo_phase", lfo);
             rep.push_back(std::string("numpy rng ok lfo_rate_hz/lfo_phase regenerated bit-exactly (uniform as ") +
                           formName(f) + ")");
         }
-        // render() line 1035: per strike, uniform(0, 2pi, n). Check the head of the stream.
+        // render() line 1035: per strike, uniform(0, 2pi, n). Check the head of the stream. With
+        // added modes, a strike draws as many from it as the preset has own modes (the added ones
+        // draw from a stream of their own, FastEngine).
         {
             const auto& u = rng.at("render_phase_uniform");
             b.phaseLow = u.at("low").number();
             b.phaseHigh = u.at("high").number();
-            if (static_cast<size_t>(u.at("per_strike").number()) != n)
-                throw BakeError("render_phase_uniform.per_strike != n_modes");
+            if (static_cast<size_t>(u.at("per_strike").number()) != no)
+                throw BakeError(b.addedModes.empty() ? "render_phase_uniform.per_strike != n_modes"
+                                                     : "render_phase_uniform.per_strike != the preset's own modes");
             Pcg64 g = b.renderStream;
             const double range = b.phaseHigh - b.phaseLow;
             const auto& head = rng.at("render_phase_head").array();
