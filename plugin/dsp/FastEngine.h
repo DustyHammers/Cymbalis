@@ -739,6 +739,17 @@ private:
     Pcg64 aheadFrom_, aheadRng_;
     int aheadDone_ = 0; // phases drawn ahead so far
     std::vector<double> phaseCos_, phaseSin_;
+    // A bake with added modes (BakeData::addedModes; NOVA RIDE's edge v2): a strike's phases are
+    // drawn in this order, the preset's own modes first, in their order, from rng_ as before (so
+    // they get the draws they always got), then the added modes from addRng_, a stream of their
+    // own (a copy of the render stream mixed with constants, as hitRng_). drawIdx_: the mode of
+    // each draw; ownModes_ of them come from rng_. isAdded_: per mode. Empty without added modes.
+    std::vector<int> drawIdx_;
+    std::vector<uint8_t> isAdded_;
+    int ownModes_ = 0;
+    Pcg64 addRng_, aheadAddFrom_, aheadAddRng_;
+    std::vector<double> drawPhase_, drawSin_, drawCos_;
+    double drawPhase (int draw) noexcept; // the next phase for draw position `draw` (rng_ or addRng_)
 
     // Per-mode arguments and results of exp, sin and cos, evaluated two at a time
     // (VecMath.h) in the strike's per-mode loops (preallocated, n each).

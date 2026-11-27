@@ -71,7 +71,7 @@ One set per bake entry: NOVA RIDE `bell_shoulder`, `bow_tip`, `edge`, `bell_tip`
 | KONSTAN CRASH 18" | `bow_shoulder` | `bow` | BOW and BOW2, SHOULDER |
 | CRASH 16" | `bell_shoulder` | `bell` | BELL and BELL2, SHOULDER |
 | CRASH 16" | `bow_shoulder` | `bow` | BOW and BOW2, SHOULDER |
-| NOVA RIDE | `edge` | `bow_shoulder` (at the edge position, 0.0) | EDGE |
+| NOVA RIDE | `edge` | `bow_shoulder` (at the edge position, 0.0); since edge v2 (2026-11-27) it plays the edge captures' NPZ data | EDGE |
 
 #### HI-HAT
 
@@ -82,7 +82,7 @@ HI-HAT has four articulations (`docs/PORT_MAP.md`, "Hi-hat"): `tip` (the BOW row
 
 All four start with the same level trim, EDGE's, so TIP, FOOT and SPLASH keep their captured levels relative to EDGE. There is no NOVA SHOULDER PROFILE button on the hi-hat.
 
-Nova Ride's `edge` replaced the base preset played at the edge (Nova has no edge captures). It is the one articulation that does not play as it did before: the EDGE row now sounds like the bow shoulder struck at the edge. A tuning file with `edge` values from before applies them to the new `edge`.
+Nova Ride's `edge` replaced the base preset played at the edge (Nova had no edge captures). It is the one articulation that does not play as it did before: the EDGE row now sounds like the bow shoulder struck at the edge. A tuning file with `edge` values from before applies them to the new `edge`. Since 2026-11-27 it plays Kris's edge captures instead (edge v2, `docs/PORT_MAP.md`, "NOVA RIDE edge v2"), with the edge envelope values the other presets with NPZ edge data have; its velocity curve starts at −2 dB at 0.6 and 0.3.
 
 #### NOVA SHOULDER PROFILE
 
@@ -170,8 +170,8 @@ Each articulation also has, per band, an **onset delay** (ms) and an **onset spe
 
 How they act depends on the onset the strike has. The articulation struck decides which values apply, even when a blend knob moves the strike.
 
-- **Band envelope.** This covers Stine, Bettis, Raven, Paper Thin, Konstan and Crash 16 edge strikes, and on those presets any strike towards the edge (edge fraction above 0.1, such as BOW with Blend 2 past 20 %). Band j's envelope is read at (t − delay) × speed. Before the delay ends it holds its first frame. A negative delay starts that far into the envelope; the ring length then scales that time after the kept onset ("Ring length"). The 20 ms in-frame decay and the envelope window (`edge_band_env_onset_s`) keep real time. A band slowed below ×1 may therefore still be inside its envelope when the window ends (Stine's envelopes run 30 s and its window 30 s; Bettis 16.2 s and 20 s; Raven 8.7 s and 9.2 s; Paper Thin 13.7 s and 14.2 s; Konstan 7.1 s and 7.6 s; Crash 16 8.4 s and 8.9 s). The strike then rings on from its own decaying level, as at any window end; a longer window lets the envelope finish. The envelope bands are the NPZ bands of the same number: the same thirds, within 0.1 %.
-- **Onset ramp.** This covers Nova edge strikes, and Nova strikes towards the edge (edge fraction above 0.1). Each mode's ramp, from 0.4 of its level (the birth fraction) to full, peaks at peak time / speed + delay, never below 0. A peak time of 1 ms or less means no ramp.
+- **Band envelope.** This covers Nova, Stine, Bettis, Raven, Paper Thin, Konstan and Crash 16 edge strikes, and on those presets any strike towards the edge (edge fraction above 0.1, such as BOW with Blend 2 past 20 %). Band j's envelope is read at (t − delay) × speed. Before the delay ends it holds its first frame. A negative delay starts that far into the envelope; the ring length then scales that time after the kept onset ("Ring length"). The 20 ms in-frame decay and the envelope window (`edge_band_env_onset_s`) keep real time. A band slowed below ×1 may therefore still be inside its envelope when the window ends (Nova's envelopes run 15.0 s and its window 15.5 s; Stine's 30 s and 30 s; Bettis 16.2 s and 20 s; Raven 8.7 s and 9.2 s; Paper Thin 13.7 s and 14.2 s; Konstan 7.1 s and 7.6 s; Crash 16 8.4 s and 8.9 s). The strike then rings on from its own decaying level, as at any window end; a longer window lets the envelope finish. The envelope bands are the NPZ bands of the same number: the same thirds, within 0.1 %.
+- **Onset ramp.** This covers edge strikes, and strikes towards the edge (edge fraction above 0.1), with EDGE ONSET ENVELOPE off (and NOVA RIDE's until its edge v2 of 2026-11-27, when it had no edge captures). Each mode's ramp, from 0.4 of its level (the birth fraction) to full, peaks at peak time / speed + delay, never below 0. A peak time of 1 ms or less means no ramp.
 - **Bow, bell and center strikes at their base positions.** The engine has no onset ramp here: Python skips it for strikes with an edge fraction of 0.1 or less ("skip ramp for bow"). Their peak time is therefore 0:
   - a positive delay ramps the band from 0.4 to full level over the delay;
   - the speed has no onset to act on;
@@ -222,10 +222,10 @@ In the panel, the **BANDS** section below the articulations works like a graphic
 | Group | Value | Key | Range | Presets | Notes |
 |---|---|---|---|---|---|
 | Cymbal | Output gain | `output_gain_db` | −24 to +12 dB | all | Whole preset, for headroom; before the Volume knob |
-| | Edge capture curve | `edge_velocity_remap_exponent` | 0.25–2.0 | Stine, Bettis, Swish, Raven, Paper Thin, Konstan, Crash 16 | Exponent of the NPZ velocity remap (0.5 = sqrt). Each capture still maps to itself; this shapes how the velocities between captures are reached |
+| | Edge capture curve | `edge_velocity_remap_exponent` | 0.25–2.0 | Nova, Stine, Bettis, Swish, Raven, Paper Thin, Konstan, Crash 16 | Exponent of the NPZ velocity remap (0.5 = sqrt). Each capture still maps to itself; this shapes how the velocities between captures are reached |
 | | Bow brightness vs velocity | `tau_ref_ms` | 0.05–8 ms | Stine, Bettis, Swish, Raven, Paper Thin, Konstan, Crash 16 (no velocity tables) | `hertz_vel_scale` contact time at velocity 1 |
 | | Ring length | `ring_length` | 0.5–2.0 × | all | Multiplier of the baked T60 of every mode (t60_scale), and of the length of an edge strike's band envelope after the kept onset (on HI-HAT every strike's); see "Ring length" below. Rebuilds the engine |
-| | Kept onset | `edge_ring_keep_ms` | 0–300 ms | Stine, Bettis, Swish, Raven, Paper Thin, Konstan, Crash 16, HI-HAT | How much of an edge strike's band envelope (on HI-HAT every strike's) the ring length leaves as recorded; it scales the time after it ("Ring length"). Default 60 ms. Per strike |
+| | Kept onset | `edge_ring_keep_ms` | 0–300 ms | Nova, Stine, Bettis, Swish, Raven, Paper Thin, Konstan, Crash 16, HI-HAT | How much of an edge strike's band envelope (on HI-HAT every strike's) the ring length leaves as recorded; it scales the time after it ("Ring length"). Default 60 ms. Per strike |
 | | Ring length per band | `ring_length_bands` | ×0.25–×4 per band | all | 22 values, see below. Default ×1 |
 | | TIP OPEN LEVEL | `hh_tip_open_level` | 0–100 % | HI-HAT | How much of the closed tip/edge level difference (per band, dB, smoothed to its straight-line fit over the bands) an open TIP strike drops at full opening: at openness o, (1 − value × o) × the difference. 0 %: as before. The bake's: 60 %. Per strike. See "HI-HAT: the open tip and the ring floor" below |
 | | TIP OPEN TICK | `hh_tip_open_tick_db` | 0 to +12 dB | HI-HAT | The TIP's stick click raised by value × o dB at the strike's openness o. 0: as before. The bake's: +4 dB. Per strike |
@@ -257,10 +257,10 @@ In the panel, the **BANDS** section below the articulations works like a graphic
 | | Cutoff | `lf_cutoff_hz` | 100–8000 Hz | all | Modes below it get the LF scale (sigmoid, 200 Hz wide) |
 | | Bow, edge, bell weights | `lf_bow_weight`, `lf_edge_weight`, `lf_bell_weight` | 0–2 | all | |
 | | Wander-rate boost | `lf_wander_rate_boost` | 0–2 | all | The LF accumulator speeds up the wander |
-| Edge envelope | EDGE ONSET ENVELOPE | `edge_band_envelope` | on/off | Stine, Bettis, Swish, Raven, Paper Thin, Konstan, Crash 16 | On (the bake; for Swish the bake switches it on, `docs/PORT_MAP.md`, "Swish"): an edge strike's level follows the NPZ band envelope for the window. Off: the strike rings from the start, with the onset ramp of its pk_t data, as Python plays Swish. Per strike |
-| | EDGE VOICE FROM BOW | `edge_voice_from_bow` | 0–100 % | Stine, Bettis, Swish, Raven, Paper Thin, Konstan, Crash 16 | Within each envelope band, how far the edge's long-ringing modes take the bow's mode pattern; see "Edge voice from bow" below. The bakes start at 100 % for Konstan and at 0 % for Stine, Bettis, Swish and Raven. Per strike |
-| | Window | `edge_band_env_onset_s` | 0.1–30 s | Stine, Bettis, Swish, Raven, Paper Thin, Konstan, Crash 16 | How long an edge strike follows the NPZ band envelope; per strike. A ring length above ×1 lengthens it, up to ×2 ("Ring length") |
-| | 20 ms frame-decay restart | `edge_frame_decay_restart` | on/off | Stine, Bettis, Swish, Raven, Paper Thin, Konstan, Crash 16 | On (the bake): the in-frame decay restarts every 20 ms (`docs/PORT_MAP.md`, "The in-frame decay is a 50 Hz sawtooth"). Off: no in-frame decay; the level follows the band envelope alone. Per strike |
+| Edge envelope | EDGE ONSET ENVELOPE | `edge_band_envelope` | on/off | Nova, Stine, Bettis, Swish, Raven, Paper Thin, Konstan, Crash 16 | On (the bake; for Swish the bake switches it on, `docs/PORT_MAP.md`, "Swish"): an edge strike's level follows the NPZ band envelope for the window. Off: the strike rings from the start, with the onset ramp of its pk_t data, as Python plays Swish. Per strike |
+| | EDGE VOICE FROM BOW | `edge_voice_from_bow` | 0–100 % | Nova, Stine, Bettis, Swish, Raven, Paper Thin, Konstan, Crash 16 | Within each envelope band, how far the edge's long-ringing modes take the bow's mode pattern; see "Edge voice from bow" below. The bakes start at 100 % for Konstan and at 0 % for Nova, Stine, Bettis, Swish and Raven. Per strike |
+| | Window | `edge_band_env_onset_s` | 0.1–30 s | Nova, Stine, Bettis, Swish, Raven, Paper Thin, Konstan, Crash 16 | How long an edge strike follows the NPZ band envelope; per strike. A ring length above ×1 lengthens it, up to ×2 ("Ring length") |
+| | 20 ms frame-decay restart | `edge_frame_decay_restart` | on/off | Nova, Stine, Bettis, Swish, Raven, Paper Thin, Konstan, Crash 16 | On (the bake; off on Nova, whose fast-decaying modes clicked at every frame, `docs/PORT_MAP.md`, "NOVA RIDE edge v2"): the in-frame decay restarts every 20 ms (`docs/PORT_MAP.md`, "The in-frame decay is a 50 Hz sawtooth"). Off: no in-frame decay; the level follows the band envelope alone. Per strike |
 | Energy cascade | Amount | `cascade_amount` | 0–1 | all | 0 (default) switches it off. See "Energy cascade" below |
 | | Threshold | `cascade_threshold_db` | −40 to 0 dB | all | Per band, relative to that band's energy after a velocity-1.0 BOW strike (on HI-HAT a closed velocity-1.0 TIP strike at its peak). Default −12 dB |
 | | Speed (attack) | `cascade_speed_ms` | 5–1000 ms | all | How fast the transfer starts, and its time constant at amount 1. Default 100 ms |
@@ -311,9 +311,9 @@ Both take effect from the next FOOT (a splash already armed keeps the values it 
 
 **Ring length** multiplies the baked T60 of every mode (`t60_scale`), so every strike rings that much longer or shorter. A change rebuilds the engine when the slider is released ("The values" above).
 
-**Edge strikes with a band envelope.** On STINE FLAT RIDE, HAMMERED THIN RIDE, SWISH, RAVEN, EXTRA PAPER THIN 24", KONSTAN CRASH 18" and CRASH 16", an edge strike's level follows its recorded NPZ band envelope for the envelope window (EDGE ONSET ENVELOPE on), not its T60. The T60 alone changes only its 20 ms in-frame decay and its ring after the window. So the ring length also scales the envelope in time, after a kept onset:
+**Edge strikes with a band envelope.** On NOVA RIDE, STINE FLAT RIDE, HAMMERED THIN RIDE, SWISH, RAVEN, EXTRA PAPER THIN 24", KONSTAN CRASH 18" and CRASH 16", an edge strike's level follows its recorded NPZ band envelope for the envelope window (EDGE ONSET ENVELOPE on), not its T60. The T60 alone changes only its 20 ms in-frame decay and its ring after the window. So the ring length also scales the envelope in time, after a kept onset:
 
-- **The factor.** Each envelope band has a ring factor x = ring length × that band's **Ring length per band** (below). An envelope band takes the per-band value of the one-third-octave band its middle mode is in, as for the onset shift; on Stine, Bettis, Raven, Paper Thin, Konstan and Crash 16 that is the band of the same number. SWISH's 20 envelope bands are its own, so there the values of the 225–283 Hz, 898–1131 Hz, 7.2–9.1 kHz and 9.1–11.4 kHz bands reach no envelope (they still set those modes' T60).
+- **The factor.** Each envelope band has a ring factor x = ring length × that band's **Ring length per band** (below). An envelope band takes the per-band value of the one-third-octave band its middle mode is in, as for the onset shift; on Nova, Stine, Bettis, Raven, Paper Thin, Konstan and Crash 16 that is the band of the same number. SWISH's 20 envelope bands are its own, so there the values of the 225–283 Hz, 898–1131 Hz, 7.2–9.1 kHz and 9.1–11.4 kHz bands reach no envelope (they still set those modes' T60).
 - **The kept onset.** The envelope's first k ms play as recorded, so the attack keeps its timing. k is **Kept onset** (`edge_ring_keep_ms`, 0–300 ms, default 60 ms), in the CYMBAL group under Ring length.
 - **The time scale.** After the kept onset k, the envelope is read x times slower: at time t after the strike it plays the recording's k + (t − k) / x. At ×2 everything after k takes twice as long: the bloom, the recorded flutter and the decay. At ×0.5 it takes half as long. The levels are the recording's; only their timing changes.
 - **With the onset shift.** The envelope time is (t − delay) × speed, as before; the ring length then scales that time after k.
@@ -324,7 +324,7 @@ Both take effect from the next FOOT (a splash already armed keeps the values it 
 
 Where a band's envelope data end before the window, its last frame is held until the window ends, as before. The data end at k + (data length − k) × x after the strike. At ring length ×0.5 that is about halfway: RAVEN's 8.7 s of data end at 4.4 s and hold to 9.2 s. At ×2 they end at 17.3 s and hold to 18.4 s. Most last frames are 0 (`docs/PORT_MAP.md`, live-engine decision 20).
 
-On every other strike, and on NOVA RIDE's edge, the ring length acts through the T60 alone.
+On every other strike the ring length acts through the T60 alone.
 
 #### Ring length per band
 
@@ -357,7 +357,7 @@ With HIT VARIATION off, every preset plays bit for bit as it did before it exist
 
 #### Stereo
 
-How stereo works: every mode has a fixed left and right gain from the bake (the pick vectors `pick_l`, `pick_r`, random from the preset's seed, signed), and the right channel has a 120 Hz high-pass. The STEREO values change both.
+How stereo works: every mode has a fixed left and right gain from the bake (the pick vectors `pick_l`, `pick_r`, random from the preset's seed, signed; on NOVA RIDE, 575 of them are baked instead, so that its edge sits in the cymbal's stereo field: `docs/PORT_MAP.md`, "NOVA RIDE edge v2"), and the right channel has a 120 Hz high-pass. The STEREO values change both.
 
 - **Modes and bands.** Modes belong to the 22 bands by their frequency, as for the band gains.
 - **A mode's baked gains** are a level, sqrt(L² + R²), and a position from −1 (hard left) to +1 (hard right): atan2(|R|, |L|) / (π/4) − 1. The baked positions lie within about L31 to R30.
@@ -376,7 +376,7 @@ In the panel it is the **STEREO** group of WHOLE CYMBAL:
 - the **Overall width**;
 - the **Right-channel high-pass** switch and its **frequency**.
 
-**In the bake.** `tools/apply_tuning.py` stores the stereo values in the bake's tuning block. It also writes every mode's resulting left and right gains into a `stereo` block (`gain_l`, `gain_r`, checksummed like the other arrays). The plugin plays them at load as they are; a lean build (`CYMBALIS_WITH_TUNING` OFF) too. `pick_l` and `pick_r` stay as baked: the loader still regenerates them from the seed, and it checks that each stored gain pair keeps the level and signs of its pick vector entries. The high-pass settings go into the tuning block.
+**In the bake.** `tools/apply_tuning.py` stores the stereo values in the bake's tuning block. It also writes every mode's resulting left and right gains into a `stereo` block (`gain_l`, `gain_r`, checksummed like the other arrays). The plugin plays them at load as they are; a lean build (`CYMBALIS_WITH_TUNING` OFF) too. `pick_l` and `pick_r` stay as baked: the loader still regenerates them from the seed (all but the modes the bake lists as having baked picks or as added), and it checks that each stored gain pair keeps the level and signs of its pick vector entries. The high-pass settings go into the tuning block.
 
 #### Edge voice from bow
 

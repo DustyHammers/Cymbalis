@@ -1,0 +1,47 @@
+{
+ "description": "NOVA RIDE edge v2 settings (Kris, 2026-11-27)",
+ "edge_level_trim_db": -2.11,
+ "edge_level_trim_note": "matched to the shipped EDGE at velocity 0.9 (1 s RMS from the strike), then +2 dB (Kris: the hardest hits a dB or two louder)",
+ "tuning_cymbal": {
+  "edge_frame_decay_restart": false
+ },
+ "tuning_articulations": {
+  "edge": {
+   "vel_0.6_db": -2.0,
+   "vel_0.3_db": -2.0
+  }
+ },
+ "slot_params": {
+  "edge_band_env_onset_s": 15.5,
+  "edge_rms_correction": [
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   4.0,
+   1.0,
+   4.0,
+   1.2832,
+   0.839,
+   0.8759,
+   0.6401,
+   0.7469,
+   0.6954,
+   0.9274,
+   0.9934,
+   0.8864,
+   1.393,
+   1.5357,
+   1.4326,
+   1.3468,
+   1.0339
+  ],
+  "edge_use_velw": true,
+  "edge_velw_normalize": true
+ },
+ "effective_flags": {
+  "edge_npz": true,
+  "edge_band_env": true
+ }
+}

@@ -114,18 +114,31 @@ python tools/bake_preset.py --preset azcrash --overrides '{"nl_amount": 0.0}' --
 python tools/bake_preset.py --preset 602 --overrides '{"nl_amount": 0.0}' --out resources/presets/archive/smoke_flat_ride.bake.json
 ```
 
+**NOVA RIDE can no longer be re-baked from `presets/` alone** (since 2026-11-27, edge v2: `docs/PORT_MAP.md`, "NOVA RIDE edge v2"). Its real EDGE is a step after `tools/bake_preset.py`, like the trims and skip thresholds: `tools/apply_nova_edge_v2.py` inserts the 34 edge-only modes, the edge NPZ block, the edge settings, the EDGE trim and, last, the stereo picks of 575 modes from `presets/nova/edge_v2/` (checked against `docs/BASELINE_MANIFEST.md`), records that it ran, and refuses to run twice. The order is `bake_preset.py`, then edge v2, then the level trims keeping EDGE's (`--keep EDGE`: edge v2 sets it), then the skip thresholds:
+
+```
+python tools/bake_preset.py --preset nova --overrides '{"nl_amount": 0.0}' --out resources/presets/nova_ride.bake.json
+python tools/apply_nova_edge_v2.py resources/presets/nova_ride.bake.json
+build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/nova_ride.bake.json --json trims.json
+python tools/set_level_trims.py resources/presets/nova_ride.bake.json trims.json --keep EDGE
+build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/nova_ride.bake.json --skip-thresholds --json skip.json
+python tools/set_skip_thresholds.py resources/presets/nova_ride.bake.json skip.json
+```
+
+The shipped bake had its trims and skip thresholds when edge v2 was applied to it; only EDGE's skip threshold was measured again (`set_skip_thresholds.py ... --only EDGE`). Its tuning block (`tools/apply_tuning.py`) works as on any bake, with the 2304 modes.
+
 **The hi-hat's bake** comes from `tools/bake_hihat.py` (numpy and scipy; the same environment): it runs the approved strike model's preparation (`docs/hihat_reference.py`: the stick envelopes, each knot's level per band, the band decay rates; `docs/PORT_MAP.md`, "Hi-hat") on `presets/hihat/`, checks those files against `docs/BASELINE_MANIFEST.md`, and writes the plugin's bake format with a `hihat` block (the foot splash's knots from `presets/hihat/data/hihat_splash.json` among them, since 2026-11-26), its entries TIP, EDGE, FOOT and SPLASH with their stick clicks, and its tuning block (output gain −11 dB, HIT VARIATION on, the hi-hat's own values), which it writes itself. The plugin's engine does the per-strike interpolation. Then its trims, as below:
 
 ```
 python tools/bake_hihat.py --out resources/presets/hihat.bake.json
 ```
 
-Each bake also holds its slots' level trims, in `slots[].level_trim.gain_db`. The plugin uses only that number; edit it to adjust a slot's level by ear. Re-baking drops the trims. Nova Ride's trims give a velocity-0.9 hit at each slot's base position the same 1-second RMS as one on BOW (tip). The Stine, 602, Bettis, Swish, Raven, Paper Thin, Konstan and Crash 16 trims work at velocity 1.0 over the first 500 ms. BOW, Stine's and the 602's CENTER (a copy of BOW) and Swish's BOW_SHOULDER are matched to Nova's BOW (tip); Swish's, Raven's, Paper Thin's, Konstan's and Crash 16's BELL_SHOULDER take BELL's SPEAR target. The shoulder copies of Stine, the 602, Bettis, Raven, Paper Thin, Konstan and Crash 16, and Nova's EDGE (a copy of BOW2), start with their sources' trims. EDGE and BELL go to the level their SPEAR captures have relative to BOW, capped where one hit would peak above 0.9 before the output gain and the Volume knob (`docs/PORT_MAP.md`, "602 and Bettis", decision 5). To measure trims again with the plugin's engine and store them (`--peak-limit 0.25365` is that 0.9 after the −11 dB output gain, see "Headroom" below):
+Each bake also holds its slots' level trims, in `slots[].level_trim.gain_db`. The plugin uses only that number; edit it to adjust a slot's level by ear. Re-baking drops the trims. Nova Ride's trims give a velocity-0.9 hit at each slot's base position the same 1-second RMS as one on BOW (tip). The Stine, 602, Bettis, Swish, Raven, Paper Thin, Konstan and Crash 16 trims work at velocity 1.0 over the first 500 ms. BOW, Stine's and the 602's CENTER (a copy of BOW) and Swish's BOW_SHOULDER are matched to Nova's BOW (tip); Swish's, Raven's, Paper Thin's, Konstan's and Crash 16's BELL_SHOULDER take BELL's SPEAR target. The shoulder copies of Stine, the 602, Bettis, Raven, Paper Thin, Konstan and Crash 16 start with their sources' trims. Nova's EDGE has edge v2's trim (−2.11 dB, not measured: `--keep EDGE`). EDGE and BELL go to the level their SPEAR captures have relative to BOW, capped where one hit would peak above 0.9 before the output gain and the Volume knob (`docs/PORT_MAP.md`, "602 and Bettis", decision 5). To measure trims again with the plugin's engine and store them (`--peak-limit 0.25365` is that 0.9 after the −11 dB output gain, see "Headroom" below):
 
 ```
 cmake --build build --target cymbalis_trims
 build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/nova_ride.bake.json --json trims.json
-python tools/set_level_trims.py resources/presets/nova_ride.bake.json trims.json
+python tools/set_level_trims.py resources/presets/nova_ride.bake.json trims.json --keep EDGE
 build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/stine_flat_ride.bake.json --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target EDGE=19.25 --peak-limit 0.25365 --json trims.json
 python tools/set_level_trims.py resources/presets/stine_flat_ride.bake.json trims.json
 build/tools/cymbalis_trims/cymbalis_trims --bake resources/presets/archive/smoke_flat_ride.bake.json --reference resources/presets/nova_ride.bake.json --velocity 1.0 --window 0.5 --spear-target EDGE=2.8 --peak-limit 0.25365 --json trims.json

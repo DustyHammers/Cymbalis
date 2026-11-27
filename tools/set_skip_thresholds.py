@@ -15,6 +15,9 @@ The other fields record the measurement. Engine, the Python-matching path, keeps
 constants.amp_skip_threshold (1e-9). The bake is rewritten in place; nothing else in it
 changes. A trim does not change the factor (it scales the peak and the level alike), so the
 order with tools/set_level_trims.py does not matter.
+
+--only SLOT stores only SLOT's factor (repeatable) and leaves the others as the bake has them:
+NOVA RIDE's EDGE after edge v2 (tools/apply_nova_edge_v2.py).
 """
 import argparse
 import json
@@ -29,6 +32,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('bake', help='bake JSON to update in place')
     ap.add_argument('skip', help='JSON written by cymbalis_trims --skip-thresholds --json')
+    ap.add_argument('--only', action='append', default=[], metavar='SLOT', help='store only this slot\'s factor')
     args = ap.parse_args()
 
     with open(args.bake) as f:
@@ -39,7 +43,12 @@ def main():
     names = [s['name'] for s in bake['slots']]
     if sorted(names) != sorted(skip['slots']):
         raise SystemExit(f'the factors are for slots {sorted(skip["slots"])}, the bake has {sorted(names)}')
+    for name in args.only:
+        if name not in names:
+            raise SystemExit(f'--only {name}: the bake has slots {names}')
     for s in bake['slots']:
+        if args.only and s['name'] not in args.only:
+            continue
         m = skip['slots'][s['name']]
         if float(m['position']) != float(s['position']):
             raise SystemExit(f'slot {s["name"]}: measured at position {m["position"]}, bake has {s["position"]}')
