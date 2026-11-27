@@ -39,9 +39,14 @@ Checked with numpy 2.5.3, scipy 1.18.1, soundfile 0.14.0.
 | `presets/nova/data/nova_vel_participation_shoulder_correct.json` | `b35e81435c5fa52165c8c7758326a988` |
 | `presets/nova/data/nova_vel_participation_tip_s2a_ceil.json` | `1d143acc1baf05397f436b5472f28d8e` |
 | `presets/nova/data/nova_vel_tilt.json` | `54533e6c49985a21c3b01a98eccde1dd` |
+| `presets/nova/edge_v2/nova_edge_v2_modes.json` | `91fb800e8dcf819034e8a7f3ad5267c4` |
+| `presets/nova/edge_v2/nova_edge_v2_npz.json` | `f4bc023ac80aa05c0d7351938ed8bfd7` |
+| `presets/nova/edge_v2/nova_edge_v2_settings.json` | `19d1d79f4c3cbde16beed297dcf8a7dd` |
+| `presets/nova/edge_v2/assemble_reference.py` | `1ecb38ac8e7b917ecdd65781e76439eb` |
 
 ## Notes
 
+- `edge_v2/` (added 2026-11-27, Kris: NOVA RIDE's real edge). Built by the project session from Kris's new SPEAR captures Edge V1-V4 (recorded 2026-11-27 with some room noise; the captures stay out of the repo), on NOVA's own modes. NOVA had no edge captures: its EDGE row played the bow shoulder at the edge. `nova_edge_v2_modes.json`: the mode list after inserting 34 edge-only modes between 215 and 708 Hz, where half of the edge's energy had no NOVA mode (among them the edge's strongest partials, 652-665 Hz); every NOVA mode keeps its order and its values. `nova_edge_v2_npz.json`: the edge NPZ in the final mode order (velw, 22-band envelopes, gaps filled and smoothed, continued past the noise floor, the ring 15 % shorter). `nova_edge_v2_settings.json`: the EDGE trim, the 20 ms frame-decay restart off (it clicked at every frame on NOVA's fast-decaying modes), the edge velocity curve -2 dB at 0.6 and 0.3, the edge level law 1.3. `assemble_reference.py`: documents exactly how the approved test bake was assembled from the shipped bake and these three files (reference only). Velocities from the captures' levels: 0.30, 0.524, 0.932, 1.0. Kris approved the result by ear on 2026-11-27.
 - `tip.json` and `shoulder.json` reference `nova_vel_participation_tip.json` and `nova_vel_participation_shoulder.json`, which are not in the package. Those two overlays cannot be loaded.
 - The bow-shoulder baseline render peaks at 1.28 (above full scale) at velocity 0.9. This is the locked behaviour.
 
