@@ -51,6 +51,7 @@ Since 2026-11-26 CI is lean while the presets are being developed (Kris: "we are
 
 - **Every push to `main`, every pull request, and a manual run without "full tests":**
   - checkout, Xcode, Ninja, the caches, configure and build;
+  - the edge ring check (`tools/cymbalis_edgering`, a few seconds; `docs/PORT_MAP.md`, "An envelope strike keeps its ring when another strike follows");
   - the CPU benchmark (about 2 minutes; the 3× real-time check in `CLAUDE.md`);
   - the bundle checks: both architectures, minimum macOS 11.0, no AVX in the Intel slice, the JUCE splash screen off;
   - ad-hoc code signing;

@@ -1800,32 +1800,8 @@ void FastEngine::sumComponents(double t0, double t1) noexcept
                 c.envWindow = std::min(c.envWindow, t1 - c.tStrike);
             continue;
         }
-        const int nb = envBands_;
-        for (int band = 0; band < nb; ++band)
-        {
-            const size_t bs = size_t(band);
-            if (bandEnd_[bs] <= bandStart_[bs])
-                continue;
-            // With an onset shift the band envelope is read at (t - delay) x speed; before the
-            // delay it holds its first frame (envelopeAt clamps at 0).
-            double te0 = t0 - c.tStrike, te1 = t1 - c.tStrike;
-            if (c.envShift)
-            {
-                const size_t j = npzShiftBand_[bs];
-                te0 = (te0 - static_cast<double>(c.envDelay[j])) * static_cast<double>(c.envSpeed[j]);
-                te1 = (te1 - static_cast<double>(c.envDelay[j])) * static_cast<double>(c.envSpeed[j]);
-            }
-            // Then the ring length scales the time after the kept onset (ringTime).
-            if (c.envRing)
-            {
-                te0 = ringTime(c, band, te0);
-                te1 = ringTime(c, band, te1);
-            }
-            std::fill(c.em0.begin() + bandStart_[bs], c.em0.begin() + bandEnd_[bs],
-                      static_cast<float>(envelopeAt(c, band, te0)));
-            std::fill(c.em1.begin() + bandStart_[bs], c.em1.begin() + bandEnd_[bs],
-                      static_cast<float>(envelopeAt(c, band, te1)));
-        }
+        envelopeModes(c, t0, c.em0.data());
+        envelopeModes(c, t1, c.em1.data());
     }
     rhoAny_ = rho;
     nKinks_ = 0;
@@ -2091,6 +2067,9 @@ void FastEngine::rebaseComponents() noexcept
         float* __restrict Bi = c.Bi.data();
         const float* __restrict D = c.D.data();
         const float* __restrict inv = c.invDmul.data();
+        // An NPZ envelope strike (not the hi-hat's) adds what it plays, below, not its B D (the
+        // ring it plays after its window); its own state is brought here as every component's.
+        const bool envShare = c.envOn && ! hihat_;
         for (int o = 0; o < nPad_; o += 4)
         {
             v4f dt = ld(D + o);
@@ -2106,8 +2085,11 @@ void FastEngine::rebaseComponents() noexcept
             const v4f nr = br * ur - bi * ui, ni = br * ui + bi * ur;
             st(Br + o, nr);
             st(Bi + o, ni);
-            st(sumR_.data() + o, ld(sumR_.data() + o) + nr);
-            st(sumI_.data() + o, ld(sumI_.data() + o) + ni);
+            if (! envShare)
+            {
+                st(sumR_.data() + o, ld(sumR_.data() + o) + nr);
+                st(sumI_.data() + o, ld(sumI_.data() + o) + ni);
+            }
         }
         // An envelope strike's |coupling| only turns with the oscillator (it has no decay).
         if (c.envOn)
@@ -2118,6 +2100,8 @@ void FastEngine::rebaseComponents() noexcept
                 st(c.Er.data() + o, ld(c.Er.data() + o) * rv);
                 st(c.Ei.data() + o, ld(c.Ei.data() + o) * rv);
             }
+        if (envShare)
+            addEnvelopeShare(c, j, frac);
     }
     for (int k = 0; k < n_; ++k)
     {
@@ -2125,6 +2109,46 @@ void FastEngine::rebaseComponents() noexcept
         zi_[size_t(k)] = sumI_[size_t(k)];
     }
     baseSample_ = sampleNow_;
+}
+
+// An NPZ envelope strike's share of the state at a rebase (docs/PORT_MAP.md, live-engine
+// decision "An envelope strike keeps its ring when another strike follows"): what it plays here,
+// its coupling E (turned to this sample) x band envelope x in-frame decay x onset gain, as
+// sumBlock gives it: x0 = em0 f0 (1 + gm1 env0) at the block's start and x1 = em1 f1 (1 + gm1 env1)
+// at its end, linear between them as the kernel renders it; x1 at a control point. With no block
+// since the free phase started at this sample, the envelope here (the next block's start).
+void FastEngine::addEnvelopeShare(Component& c, int j, float frac) noexcept
+{
+    if (j == 0 && freePos_ == 0)
+    {
+        const double t = segTBase_;
+        envelopeModes(c, t, c.em1.data());
+        c.env1 = c.onsetOn ? std::exp(-std::max(t - c.tStrike, 0.0) / c.onsetTau) : 0.0;
+    }
+    const v4f one = splat(1.0f), fr = splat(frac);
+    const v4f e0 = splat(static_cast<float>(c.env0)), e1 = splat(static_cast<float>(c.env1));
+    // fd holds the in-frame decay at the block's end; at its start, before the block's step.
+    const v4f fstep = splat(c.frameRestart ? 1.0f : 0.0f);
+    const float* __restrict er = c.Er.data();
+    const float* __restrict ei = c.Ei.data();
+    const float* __restrict gm = c.gm1.data();
+    const float* __restrict f = c.fd.data();
+    const float* __restrict inv = c.invDmul.data();
+    const float* __restrict m0 = c.em0.data();
+    const float* __restrict m1 = c.em1.data();
+    for (int o = 0; o < nPad_; o += 4)
+    {
+        const v4f g = ld(gm + o), f1 = ld(f + o);
+        v4f x = ld(m1 + o) * f1 * (one + g * e1);
+        if (j != 0)
+        {
+            const v4f f0 = f1 * (fstep * ld(inv + o) + (one - fstep));
+            const v4f x0 = ld(m0 + o) * f0 * (one + g * e0);
+            x = x0 + (x - x0) * fr;
+        }
+        st(sumR_.data() + o, ld(sumR_.data() + o) + ld(er + o) * x);
+        st(sumI_.data() + o, ld(sumI_.data() + o) + ld(ei + o) * x);
+    }
 }
 
 // B *= u per mode (complex), four modes per vector.
@@ -2425,6 +2449,31 @@ double FastEngine::envelopeAt(const Component& c, int band, double te) const noe
     };
     const double corr = z.rmsCorrection.empty() ? 1.0 : z.rmsCorrection[size_t(band)];
     return (at(k0) * (1.0 - fr) + at(k1) * fr) * c.envScale * corr;
+}
+
+// An NPZ envelope strike's band envelope at time t, per mode, into em (modes in no band are
+// left as they are).
+void FastEngine::envelopeModes(const Component& c, double t, float* em) const noexcept
+{
+    const int nb = envBands_;
+    for (int band = 0; band < nb; ++band)
+    {
+        const size_t bs = size_t(band);
+        if (bandEnd_[bs] <= bandStart_[bs])
+            continue;
+        // With an onset shift the band envelope is read at (t - delay) x speed; before the
+        // delay it holds its first frame (envelopeAt clamps at 0).
+        double te = t - c.tStrike;
+        if (c.envShift)
+        {
+            const size_t j = npzShiftBand_[bs];
+            te = (te - static_cast<double>(c.envDelay[j])) * static_cast<double>(c.envSpeed[j]);
+        }
+        // Then the ring length scales the time after the kept onset (ringTime).
+        if (c.envRing)
+            te = ringTime(c, band, te);
+        std::fill(em + bandStart_[bs], em + bandEnd_[bs], static_cast<float>(envelopeAt(c, band, te)));
+    }
 }
 
 // The ring length on a band envelope (docs/TUNING.md, "Ring length"): the envelope time te
@@ -4028,6 +4077,18 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
     }
     const int64_t m = sampleNow_ - baseSample_; // contact samples since the components' base
 
+    // NPZ envelope strikes already ringing before this segment's strikes (not the hi-hat's): the
+    // skip test below keeps every mode one of them can still give (docs/PORT_MAP.md, "An
+    // envelope strike keeps its ring when another strike follows"): those that have had a free
+    // start of their own (order up to freeOrder_), not this segment's new strikes, with or
+    // without a contact.
+    std::array<const Component*, kMaxPool> envOld {};
+    int nEnvOld = 0;
+    if (! hihat_)
+        for (const auto& c : components_)
+            if (c.used && !c.pending && c.envOn && c.order <= freeOrder_)
+                envOld[size_t(nEnvOld++)] = &c;
+
     // Older components step (undamped, as the contact phase did) to this sample; new ones
     // take their contact's response (coupling x H x step^extra, extra: samples since the
     // contact ended); then every component's own decay restarts here.
@@ -4138,10 +4199,23 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
         vmArg2_[k] = wanderOn_ && wC_[k] != 0.0 ? W_[k] + wC_[k] * gW * (vmCos_[k] - cW_[k]) : W_[k];
     }
     vecmath::sinCosArray(vmArg2_.data(), vmSin2_.data(), vmCos2_.data(), n_);
+    // What an envelope strike can still give a mode, as dropQuietModes counts it: |B|^2 (its ring
+    // after its window; D is 1 here) + |E|^2 x emax^2 (its band envelope's peak).
+    const double thr2 = threshold * threshold;
+    const auto envKeeps = [&](size_t k) {
+        for (int q = 0; q < nEnvOld; ++q)
+        {
+            const Component& c = *envOld[size_t(q)];
+            const double br = c.Br[k], bi = c.Bi[k], er = c.Er[k], ei = c.Ei[k], mx = c.emax[k];
+            if (br * br + bi * bi + (er * er + ei * ei) * (mx * mx) >= thr2)
+                return true;
+        }
+        return false;
+    };
     for (int i = 0; i < n_; ++i)
     {
         const size_t k = size_t(i);
-        if (below(zr_[k], zi_[k]))
+        if (below(zr_[k], zi_[k]) && ! envKeeps(k))
         {
             // Below the skip threshold for this segment (as Engine): what it holds is dropped.
             for (auto& c : components_)
@@ -4200,6 +4274,7 @@ void FastEngine::startFreePhase(bool sameGrid) noexcept
     }
     nAct_ = a;
     nKinks_ = 0;
+    freeOrder_ = componentOrder_;
     // |d W / dt| <= 2 pi |drift x depth| x depth scale, so this bounds the phase step per block.
     wanderSmall_ = b.twoPi * maxDriftDepth_ * std::fabs(wanderScale_) * K / sr_ < kSmallAngle;
     freeStarted_ = true;

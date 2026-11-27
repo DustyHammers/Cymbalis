@@ -100,7 +100,7 @@ jobs:
       - name: Build
         run: |
           set -o pipefail
-          if ! cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU CymbalisUiTest cymbalis_bench cymbalis_bench_profile cymbalis_trims dhpool_selftest --parallel 2>&1 | tee build.log; then
+          if ! cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU CymbalisUiTest cymbalis_bench cymbalis_bench_profile cymbalis_trims cymbalis_edgering dhpool_selftest --parallel 2>&1 | tee build.log; then
             .github/scripts/annotate_errors.sh build.log Build
             exit 1
           fi
@@ -115,6 +115,19 @@ jobs:
         if: (github.event_name == 'workflow_dispatch' && inputs.full_tests) || startsWith(github.ref, 'refs/tags/v')
         timeout-minutes: 5
         run: build/shared/dhpool/dhpool_selftest
+
+      # An EDGE strike's ring is not cut by the next strike (docs/PORT_MAP.md, live-engine decision
+      # "An envelope strike keeps its ring when another strike follows"): on every preset with NPZ
+      # edge data, EDGE at 0.8 alone against EDGE at 0.8 then BOW, and BELL, at velocity 1e-6 0.8 s
+      # later, in memory (tools/cymbalis_edgering, a few seconds). No band of the edge's ring may
+      # fall by more than 1 dB, nor the difference in the 4 ms after the second strike be above
+      # -30 dB re the edge alone. Every run; printed to the log and the job summary.
+      - name: Edge ring kept (in memory)
+        timeout-minutes: 5
+        run: |
+          build/tools/cymbalis_edgering/cymbalis_edgering resources/presets/*.bake.json | tee edgering.txt
+          test "${PIPESTATUS[0]}" -eq 0
+          { echo "### Edge ring kept"; echo; cat edgering.txt; } >> "$GITHUB_STEP_SUMMARY"
 
       # CPU cost of the real-time engine on this runner (Apple Silicon), every slot playing (on
       # HI-HAT with the pedal moving: cymbalis_bench). Printed to the log and the job summary

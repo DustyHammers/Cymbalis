@@ -322,6 +322,7 @@ private:
     template <int G, bool Ramp>
     void kernel(int m) noexcept;
     void rebaseComponents() noexcept;
+    void addEnvelopeShare(Component& c, int j, float frac) noexcept;
     void multiplyAmplitudes(Component& c, const float* ur, const float* ui) noexcept;
     void multiplyAmplitudes(float* re, float* im, const float* ur, const float* ui) noexcept;
     Component& allocateComponent() noexcept;
@@ -378,6 +379,7 @@ private:
 #endif
     void renderStick(float* left, float* right, int n) noexcept;
     double envelopeAt(const Component& c, int band, double te) const noexcept;
+    void envelopeModes(const Component& c, double t, float* em) const noexcept;
     double ringTime(const Component& c, int band, double te) const noexcept;
     void computeEnvRing() noexcept;
     void varyHit(double& position, double& velocity) noexcept;
@@ -452,6 +454,7 @@ private:
     uint64_t clock_ = 0;
     uint64_t strikesApplied_ = 0;
     uint64_t componentOrder_ = 0;
+    uint64_t freeOrder_ = 0; // componentOrder_ at the latest free start: strikes up to it have had theirs
     Pcg64 rng_;
 
     // Total modal state (calibrated, double) during a contact phase, as in Engine.

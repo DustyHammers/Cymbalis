@@ -27,6 +27,7 @@ add_subdirectory(plugin/dsp)
 add_subdirectory(tools/cymbalis_render)
 add_subdirectory(tools/cymbalis_bench)
 add_subdirectory(tools/cymbalis_trims)
+add_subdirectory(tools/cymbalis_edgering)
 
 if(NOT CYMBALIS_BUILD_PLUGIN)
     return()
