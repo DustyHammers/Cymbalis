@@ -51,6 +51,7 @@ Since 2026-11-26 CI is lean while the presets are being developed (Kris: "we are
 
 - **Every push to `main`, every pull request, and a manual run without "full tests":**
   - checkout, Xcode, Ninja, the caches, configure and build;
+  - the edge attack check (`tools/cymbalis_edgeclick`, about 15 seconds; `docs/PORT_MAP.md`, "An envelope strike's contact plays at its envelope level");
   - the CPU benchmark (about 2 minutes, 3.5 with the sizzle chain's runs: the five presets with a chain, with it on, `--chain`; the 3× real-time check in `CLAUDE.md`);
   - the sizzle chain off, its reduced set (`CymbalisChainOff`, about 30 s; `docs/PORT_MAP.md`, "Sizzle chain", "Off is off");
   - the bundle checks: both architectures, minimum macOS 11.0, no AVX in the Intel slice, the JUCE splash screen off;

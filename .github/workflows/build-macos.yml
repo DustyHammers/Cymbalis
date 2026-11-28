@@ -100,7 +100,7 @@ jobs:
       - name: Build
         run: |
           set -o pipefail
-          if ! cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU CymbalisUiTest cymbalis_bench cymbalis_bench_profile cymbalis_trims dhpool_selftest CymbalisChainOff --parallel 2>&1 | tee build.log; then
+          if ! cmake --build build --target ${PRODUCT}_VST3 ${PRODUCT}_AU CymbalisUiTest cymbalis_bench cymbalis_bench_profile cymbalis_trims cymbalis_edgeclick dhpool_selftest CymbalisChainOff --parallel 2>&1 | tee build.log; then
             .github/scripts/annotate_errors.sh build.log Build
             exit 1
           fi
@@ -129,6 +129,18 @@ jobs:
           "$OFF" | tee chainoff.txt
           test "${PIPESTATUS[0]}" -eq 0
           { echo "### Sizzle chain off (reduced set)"; echo; cat chainoff.txt; } >> "$GITHUB_STEP_SUMMARY"
+      # No click at the hand-over from an EDGE strike's contact to its free phase (docs/PORT_MAP.md,
+      # live-engine decision "An envelope strike's contact plays at its envelope level"): on NOVA
+      # RIDE and SWISH, 36 EDGE hits, each channel's second difference at the hand-over against its
+      # median over the next 2 ms, in memory (tools/cymbalis_edgeclick, about 15 s). NOVA within 4x
+      # median, 8x at the 90th percentile and 15x worst; SWISH no worse than before the fix. Every
+      # run; printed to the log and the job summary.
+      - name: Edge attack, no click (in memory)
+        timeout-minutes: 5
+        run: |
+          build/tools/cymbalis_edgeclick/cymbalis_edgeclick resources/presets/*.bake.json | tee edgeclick.txt
+          test "${PIPESTATUS[0]}" -eq 0
+          { echo "### Edge attack, no click"; echo; cat edgeclick.txt; } >> "$GITHUB_STEP_SUMMARY"
 
       # CPU cost of the real-time engine on this runner (Apple Silicon), every slot playing (on
       # HI-HAT with the pedal moving: cymbalis_bench), then the five presets with a sizzle chain

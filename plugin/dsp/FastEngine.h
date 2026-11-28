@@ -389,6 +389,7 @@ private:
     void hertzVelocity(double velocity, double* out) const noexcept;
     void npzCoupling(double velocity, double* out) const noexcept;
     void startEnvelope(Component& c, double velocity) noexcept;
+    void contactAtEnvelope(const Component& c, Contact& ct) noexcept;
     void startStick(int slot, double velocity, double position, double level) noexcept;
 #if CYMBALIS_TUNING
     void onsetPeaks(const Component& c, int slot) noexcept;
