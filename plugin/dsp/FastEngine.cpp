@@ -2429,6 +2429,48 @@ void FastEngine::startEnvelope(Component& c, double velocity) noexcept
     c.frameBlocksLeft = c.frameRestart ? frameBlocks_ : INT_MAX;
 }
 
+// An NPZ envelope strike's contact injection scaled per mode by the level its free phase starts
+// at, at the end of its contact (the hand-over): band envelope (through the onset shift and the
+// ring length, as sumComponents reads it) x in-frame decay (as restartFrames sets it) x onset gain.
+// Without it the contact plays the coupling at full level and the free phase drops to the
+// envelope's first frame, 8-26 dB lower on NOVA: a step at the hand-over.
+void FastEngine::contactAtEnvelope(const Component& c, Contact& ct) noexcept
+{
+    const double te = static_cast<double>(contactLen_) / sr_;
+    const double onset = c.onsetOn ? std::exp(-te / c.onsetTau) : 0.0;
+    if (c.frameRestart)
+    {
+        const double phase = std::fmod(te, bake_->edgeNpz.frameDecayPeriodS);
+        for (int k = 0; k < n_; ++k)
+            vmArg_[size_t(k)] = negLambda_[size_t(k)] * c.epsK[size_t(k)] * phase;
+        vecmath::expArray(vmArg_.data(), vmExp_.data(), n_);
+    }
+    for (int band = 0; band < envBands_; ++band)
+    {
+        const size_t bs = size_t(band);
+        if (bandEnd_[bs] <= bandStart_[bs])
+            continue;
+        double t = te;
+        if (c.envShift)
+        {
+            const size_t j = npzShiftBand_[bs];
+            t = (t - static_cast<double>(c.envDelay[j])) * static_cast<double>(c.envSpeed[j]);
+        }
+        if (c.envRing)
+            t = ringTime(c, band, t);
+        const double e = envelopeAt(c, band, t);
+        for (int k = bandStart_[bs]; k < bandEnd_[bs]; ++k)
+        {
+            const size_t i = size_t(k);
+            double g = e * (1.0 + static_cast<double>(c.gm1[i]) * onset);
+            if (c.frameRestart)
+                g *= vmExp_[i];
+            ct.cr[i] *= g;
+            ct.ci[i] *= g;
+        }
+    }
+}
+
 // The band envelope of one band at te seconds after the strike (lines 560-567: frame
 // values interpolated linearly, held after the last frame).
 double FastEngine::envelopeAt(const Component& c, int band, double te) const noexcept
@@ -3848,6 +3890,11 @@ void FastEngine::strike(int slotIndex, double velocity, double position) noexcep
         }
     }
     CYM_PROF_END(strikeAttack);
+    // An NPZ envelope strike with a contact phase plays its contact at its envelope level, as its
+    // free phase will play it (docs/PORT_MAP.md, "An envelope strike's contact plays at its
+    // envelope level"); its own coupling (Br, Bi) stays as it is.
+    if (comp.envOn && contact != nullptr)
+        contactAtEnvelope(comp, *contact);
     comp.settled = !comp.rampOn && !comp.onsetOn && !comp.envOn;
 #if CYMBALIS_TUNING
     CYM_PROF_BEGIN(strikeOnsetPeaks);

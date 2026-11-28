@@ -8,13 +8,15 @@
 # for a change meant to differ only far below hearing, the bounds of check.cpp's --bound instead
 # of bit-identity (docs/PORT_MAP.md, "One silence rule: 140 dB below a full hit").
 #
-#   tools/cymbalis_identity/run.sh [--ref REF] [--build DIR] [--arch arm64|x86_64] [--time [--runs N] | --bound | --splash | --nova-edge-v2 | --edge-ring]
+#   tools/cymbalis_identity/run.sh [--ref REF] [--build DIR] [--arch arm64|x86_64] [--time [--runs N] | --bound | --splash | --nova-edge-v2 | --edge-ring | --edge-click]
 #
 # --splash: the hi-hat's foot splash and fast-tap FOOT against REF (check.cpp's --splash).
 # --nova-edge-v2: NOVA RIDE edge v2 (check.cpp's --nova-edge-v2): REF's engine on REF's NOVA bake
 # against the working tree's on its own (docs/PORT_MAP.md, "NOVA RIDE edge v2").
 # --edge-ring: an envelope strike keeps its ring when another strike follows (check.cpp's
 # --edge-ring): the edge ring figures of both engines, and what must stay bit for bit.
+# --edge-click: an envelope strike's contact plays at its envelope level (check.cpp's
+# --edge-click): the hand-over figures of both engines, and what must stay bit for bit.
 #
 # A bake with added modes ("added_modes", plugin/dsp/Bake.h) whose copy at REF has none is left
 # out of the identity sequences and named: REF's engine draws its strike phases as if it had none.
@@ -30,6 +32,7 @@ BOUND=0
 SPLASH=0
 NOVA=0
 EDGERING=0
+EDGECLICK=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --ref) REF=$2; shift 2 ;;
@@ -41,7 +44,8 @@ while [ $# -gt 0 ]; do
     --splash) SPLASH=1; shift ;;
     --nova-edge-v2) NOVA=1; shift ;;
     --edge-ring) EDGERING=1; shift ;;
-    *) echo "usage: $0 [--ref REF] [--build DIR] [--arch arm64|x86_64] [--time [--runs N] | --bound | --splash | --nova-edge-v2 | --edge-ring]" >&2; exit 2 ;;
+    --edge-click) EDGECLICK=1; shift ;;
+    *) echo "usage: $0 [--ref REF] [--build DIR] [--arch arm64|x86_64] [--time [--runs N] | --bound | --splash | --nova-edge-v2 | --edge-ring | --edge-click]" >&2; exit 2 ;;
   esac
 done
 
@@ -92,6 +96,8 @@ if [ "$NOVA" = 1 ]; then
   ${RUN[@]+"${RUN[@]}"} "$TMP/check" --nova-edge-v2 "$TMP/nova_ride.ref.bake.json" "$ROOT/resources/presets/nova_ride.bake.json"
 elif [ "$EDGERING" = 1 ]; then
   ${RUN[@]+"${RUN[@]}"} "$TMP/check" --edge-ring "${BAKES[@]}"
+elif [ "$EDGECLICK" = 1 ]; then
+  ${RUN[@]+"${RUN[@]}"} "$TMP/check" --edge-click "${BAKES[@]}"
 elif [ "$SPLASH" = 1 ]; then
   ${RUN[@]+"${RUN[@]}"} "$TMP/check" --splash "${BAKES[@]}"
 elif [ "$BOUND" = 1 ]; then

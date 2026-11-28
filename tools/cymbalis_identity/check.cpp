@@ -36,6 +36,17 @@
 //       hi-hat its identity sequence and the --dense pattern with the pedal, 20 s. Exit status 1 if
 //       one is not bit for bit.
 //
+//   check --edge-click BAKE.json ...
+//       An envelope strike's contact plays at its envelope level (docs/PORT_MAP.md): on every bake
+//       with NPZ edge data and a contact phase (NOVA RIDE, SWISH), 36 EDGE hits (EdgeClick.h)
+//       through REF's engine and the working tree's: per channel the second difference at the
+//       hand-over against its median over the next 2 ms (median, 90th percentile, max); the
+//       difference from REF over 2 ms - 1 s after each strike (at most -45 dB re REF's there); the
+//       peak of the first 50 ms. NOVA RIDE's EDGE levels (RMS of 0.05-0.55 s) at 0.35-1.0. Then bit
+//       for bit as REF, HIT VARIATION off and on, 44.1 kHz / 128 and 96 kHz / 64: every row of a
+//       preset without a contact phase, the rows at or above position 0.45 of one with, and the
+//       hi-hat with its pedal. Exit status 1 if one fails.
+//
 //   check --nova-edge-v2 REF_NOVA_BAKE.json NOVA_BAKE.json
 //       NOVA RIDE edge v2 (docs/PORT_MAP.md, "NOVA RIDE edge v2"), REF's engine on REF's NOVA bake
 //       against the working tree's on the edge v2 bake: NOVA's BOW, BELL, BELL2 and BOW2 (lone
@@ -80,6 +91,7 @@
 #undef FastEngine
 #include "FastEngine.h"
 #include "../cymbalis_edgering/EdgeRing.h"
+#include "../cymbalis_edgeclick/EdgeClick.h"
 
 #include <algorithm>
 #include <array>
@@ -1709,12 +1721,221 @@ int edgeRingCheck(const std::vector<std::string>& bakes)
     std::printf("\n%s\n", ok ? "Edge ring identity checks passed." : "An edge ring identity check FAILED.");
     return ok ? 0 : 1;
 }
+// --edge-click --------------------------------------------------------------------------------
+// An envelope strike's contact plays at its envelope level (docs/PORT_MAP.md): the hand-over
+// figures of REF's engine and the working tree's (EdgeClick.h), the EDGE after its first 2 ms, the
+// approved NOVA EDGE levels and the peaks; then what must stay bit for bit.
+
+// The hits through both engines (slot -1: the pedal), HIT VARIATION as asked: bit for bit?
+bool bitForBit(const std::shared_ptr<const cymbalis::BakeData>& bake, const std::vector<Hit>& hits, double seconds, double sr,
+               int block, bool hv, double& worst)
+{
+    cymbalis::FastEngineRef a(bake);
+    cymbalis::FastEngine b(bake);
+    a.prepare(sr);
+    b.prepare(sr);
+    cymbalis::Tuning t = bake->tuning;
+    t.cymbal.hitVariation = hv;
+    a.setTuning(t, nullptr);
+    b.setTuning(t, nullptr);
+    std::vector<float> La, Ra, Lb, Rb;
+    renderEvents(a, hits, int64_t(seconds * sr), block, La, Ra);
+    renderEvents(b, hits, int64_t(seconds * sr), block, Lb, Rb);
+    double peak = 0.0, diff = 0.0;
+    bool same = true;
+    for (size_t s = 0; s < La.size(); ++s)
+    {
+        peak = std::max({peak, double(std::fabs(La[s])), double(std::fabs(Ra[s]))});
+        diff = std::max({diff, std::fabs(double(La[s]) - Lb[s]), std::fabs(double(Ra[s]) - Rb[s])});
+        same = same && std::memcmp(&La[s], &Lb[s], 4) == 0 && std::memcmp(&Ra[s], &Rb[s], 4) == 0;
+    }
+    worst = std::max(worst, peak > 0.0 ? diff / peak : 0.0);
+    return same;
+}
+
+int edgeClickCheck(const std::vector<std::string>& bakes)
+{
+    using namespace cymbalis::edgeclick;
+    bool ok = true;
+    const auto dB = [](double x) { return x > 0.0 ? 20.0 * std::log10(x) : -400.0; };
+    std::printf("The hand-over (36 EDGE hits, 0.35-1.0 in turn, 3 s apart, HIT VARIATION as baked, 44.1 kHz / 128): per\n"
+                "channel, max |second difference| over the hand-over +-2 samples / its median over the next 2 ms;\n"
+                "median, 90th percentile and max of the hits. Then the difference from REF over 2 ms - 1 s after each\n"
+                "strike (RMS, both channels, dB re REF's there; median and worst of the hits), and the peak of the\n"
+                "first 50 ms (dB, the working tree against REF; the velocity-1.0 hits' mean and the loudest hit).\n\n");
+    std::printf("| Preset | Engine | L: median | 90 %% | max | R: median | 90 %% | max | After 2 ms: median | worst | Peak: v 1.0 | loudest |\n"
+                "|---|---|---|---|---|---|---|---|---|---|---|---|\n");
+    for (const auto& path : bakes)
+    {
+        auto bake = cymbalis::loadBake(path);
+        const int edge = bake->slotIndex("EDGE");
+        if (! bake->edgeNpz.present || edge < 0)
+            continue;
+        const Render ra = cymbalis::edgeclick::render<cymbalis::FastEngineRef>(bake, edge),
+                     rb = cymbalis::edgeclick::render<cymbalis::FastEngine>(bake, edge);
+        if (ra.contact == 0)
+        {
+            std::printf("| %s | (no contact phase) | | | | | | | | | | |\n", name(path).c_str());
+            continue;
+        }
+        std::vector<double> after, peakV1;
+        double loudA = 0.0, loudB = 0.0;
+        for (size_t h = 0; h < ra.strikes.size(); ++h)
+        {
+            const size_t s0 = size_t(ra.strikes[h]);
+            const size_t i0 = s0 + size_t(std::lround(0.002 * cymbalis::edgeclick::kSampleRate)), i1 = s0 + size_t(std::lround(1.0 * cymbalis::edgeclick::kSampleRate));
+            double e = 0.0, d = 0.0;
+            for (size_t i = i0; i < i1; ++i)
+            {
+                e += double(ra.L[i]) * ra.L[i] + double(ra.R[i]) * ra.R[i];
+                const double dl = double(rb.L[i]) - ra.L[i], dr = double(rb.R[i]) - ra.R[i];
+                d += dl * dl + dr * dr;
+            }
+            after.push_back(e > 0.0 && d > 0.0 ? 10.0 * std::log10(d / e) : -400.0);
+            double pa = 0.0, pb = 0.0;
+            for (size_t i = s0; i < s0 + size_t(std::lround(0.05 * cymbalis::edgeclick::kSampleRate)); ++i)
+            {
+                pa = std::max({pa, double(std::fabs(ra.L[i])), double(std::fabs(ra.R[i]))});
+                pb = std::max({pb, double(std::fabs(rb.L[i])), double(std::fabs(rb.R[i]))});
+            }
+            if (cymbalis::edgeclick::kVelocities[h % 6] == 1.0)
+                peakV1.push_back(dB(pb / pa));
+            if (pa > loudA)
+            {
+                loudA = pa;
+                loudB = pb;
+            }
+        }
+        std::sort(after.begin(), after.end());
+        double v1 = 0.0;
+        for (const double x : peakV1)
+            v1 += x / double(peakV1.size());
+        for (int e = 0; e < 2; ++e)
+        {
+            const Render& r = e == 0 ? ra : rb;
+            const Stats l = stats(ratios(r.L, r)), rr = stats(ratios(r.R, r));
+            std::printf("| %s | %s | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | ", name(path).c_str(), e == 0 ? "REF" : "now", l.median, l.p90, l.max,
+                        rr.median, rr.p90, rr.max);
+            if (e == 0)
+                std::printf(" | | | |\n");
+            else
+            {
+                std::printf("%.1f dB | %.1f dB | %+.2f dB | %+.2f dB |\n", after[after.size() / 2], after.back(), v1, dB(loudB / loudA));
+                ok = ok && after.back() <= -45.0;
+            }
+        }
+    }
+
+    // The approved NOVA EDGE levels (PR #82): RMS of the mono mean 0.05-0.55 s after a lone strike.
+    for (const auto& path : bakes)
+    {
+        auto bake = cymbalis::loadBake(path);
+        if (name(path) != "nova_ride")
+            continue;
+        const int edge = bake->slotIndex("EDGE");
+        std::printf("\nNOVA RIDE's EDGE levels (lone strikes, RMS of the mono mean 0.05-0.55 s, 44.1 kHz / 128), REF -> now:\n");
+        for (const double v : {0.35, 0.65, 0.8, 0.95, 1.0})
+        {
+            double lv[2];
+            for (int e = 0; e < 2; ++e)
+            {
+                std::vector<float> L, R;
+                const std::vector<Hit> hits {{0, edge, v, bake->slots[size_t(edge)].position}};
+                if (e == 0)
+                {
+                    cymbalis::FastEngineRef x(bake);
+                    x.prepare(44100.0);
+                    render(x, hits, int64_t(0.6 * 44100.0), 128, L, R);
+                }
+                else
+                {
+                    cymbalis::FastEngine x(bake);
+                    x.prepare(44100.0);
+                    render(x, hits, int64_t(0.6 * 44100.0), 128, L, R);
+                }
+                double s2 = 0.0;
+                const size_t i0 = size_t(0.05 * 44100.0), i1 = size_t(0.55 * 44100.0);
+                for (size_t i = i0; i < i1; ++i)
+                {
+                    const double m = 0.5 * (double(L[i]) + R[i]);
+                    s2 += m * m;
+                }
+                lv[e] = 10.0 * std::log10(s2 / double(i1 - i0));
+            }
+            std::printf("  %.2f: %.2f -> %.2f dB (%+.3f)\n", v, lv[0], lv[1], lv[1] - lv[0]);
+        }
+    }
+
+    // Bit for bit as REF: every preset without a contact phase (all of it), every strike that is not
+    // an envelope strike (rows at or above position 0.45), the hi-hat; HIT VARIATION off and on.
+    std::printf("\nBit for bit as REF, HIT VARIATION off and on, 44.1 kHz / 128 and 96 kHz / 64: on a preset without a contact\n"
+                "phase, lone strikes on every row at 0.3, 0.6, 0.9 and 1.0 and the identity sequence; on one with a contact\n"
+                "phase and NPZ edge data, the same with only the rows at or above position 0.45 (no envelope strike); on the\n"
+                "hi-hat, its lone strikes, identity sequence and the --dense pattern with the pedal, 20 s:\n");
+    for (const auto& path : bakes)
+    {
+        auto bake = cymbalis::loadBake(path);
+        const int slots = int(bake->slots.size());
+        double worst = 0.0;
+        int cases = 0, same = 0;
+        for (const bool hv : {false, true})
+            for (const auto& rate : std::vector<std::pair<double, int>> {{44100.0, 128}, {96000.0, 64}})
+            {
+                const double sr = rate.first;
+                const int block = rate.second;
+                bool contact = false;
+                {
+                    cymbalis::FastEngine probe(bake);
+                    probe.prepare(sr);
+                    contact = probe.contactLength() > 0;
+                }
+                const bool envelopes = bake->edgeNpz.present && contact;
+                std::vector<int> rows;
+                for (int s = 0; s < slots; ++s)
+                    if (! envelopes || bake->slots[size_t(s)].position >= 0.45)
+                        rows.push_back(s);
+                const auto run = [&](const std::vector<Hit>& hits, double seconds) {
+                    ++cases;
+                    same += bitForBit(bake, hits, seconds, sr, block, hv, worst) ? 1 : 0;
+                };
+                for (const int s : rows)
+                    for (const double v : {0.3, 0.6, 0.9, 1.0})
+                        run({{0, s, v, bake->slots[size_t(s)].position}}, 3.0);
+                std::vector<Hit> hits;
+                const int nr = int(rows.size());
+                int k = 0;
+                for (; k * 0.024 < 5.0; ++k)
+                    hits.push_back({int64_t(std::floor(k * 0.024 * sr)), rows[size_t(k % nr)], kVelocities[k % 7],
+                                    bake->slots[size_t(rows[size_t(k % nr)])].position});
+                if (! bake->hihat.present)
+                    for (int j = 0; j < 8; ++j, ++k)
+                        hits.push_back({int64_t((6.5 + 0.4 * j) * sr), rows[size_t(k % nr)], kVelocities[k % 7],
+                                        envelopes ? 0.45 + 0.075 * j : 0.15 * j});
+                run(hits, 11.0);
+                if (bake->hihat.present)
+                {
+                    hits.clear();
+                    for (int j = 0; j * 0.024 < 20.0; ++j)
+                        hits.push_back({int64_t(std::floor(j * 0.024 * sr)), j % slots, kVelocities[j % 7], bake->slots[size_t(j % slots)].position});
+                    for (int64_t m = 0; double(m) * 0.01 < 20.0; ++m)
+                        hits.push_back({int64_t(std::floor(double(m) * 0.01 * sr)), -1, pedalOpenness(double(m) * 0.01), 0.0});
+                    sortHits(hits);
+                    run(hits, 20.0);
+                }
+            }
+        std::printf("%-20s %d of %d cases bit-identical%s\n", name(path).c_str(), same, cases,
+                    same == cases ? "" : ("; largest |diff| / peak " + std::to_string(worst)).c_str());
+        ok = ok && same == cases;
+    }
+    std::printf("\n%s\n", ok ? "Edge click checks passed." : "An edge click check FAILED.");
+    return ok ? 0 : 1;
+}
 } // namespace
 
 int main(int argc, char** argv)
 {
     noDenormals();
-    bool time = false, mechanisms = false, boundMode = false, splashMode = false, novaMode = false, edgeRingMode = false;
+    bool time = false, mechanisms = false, boundMode = false, splashMode = false, novaMode = false, edgeRingMode = false, edgeClickMode = false;
     int runs = 4;
     std::vector<double> rates;
     std::vector<std::string> bakes;
@@ -1733,6 +1954,8 @@ int main(int argc, char** argv)
             novaMode = true;
         else if (a == "--edge-ring")
             edgeRingMode = true;
+        else if (a == "--edge-click")
+            edgeClickMode = true;
         else if (a == "--runs" && i + 1 < argc)
             runs = std::max(1, std::atoi(argv[++i]));
         else if (a == "--sample-rate" && i + 1 < argc)
@@ -1743,7 +1966,7 @@ int main(int argc, char** argv)
     if (bakes.empty())
     {
         std::fprintf(stderr, "usage: check [--mechanisms] BAKE.json ... | check --bound BAKE.json ... | check --splash BAKE.json ... | "
-                             "check --edge-ring BAKE.json ... | check --time [--runs N] [--sample-rate SR ...] BAKE.json ...\n");
+                             "check --edge-ring BAKE.json ... | check --edge-click BAKE.json ... | check --time [--runs N] [--sample-rate SR ...] BAKE.json ...\n");
         return 2;
     }
     try
@@ -1754,6 +1977,8 @@ int main(int argc, char** argv)
             return splash(bakes);
         if (edgeRingMode)
             return edgeRingCheck(bakes);
+        if (edgeClickMode)
+            return edgeClickCheck(bakes);
         if (novaMode)
         {
             if (bakes.size() != 2)
