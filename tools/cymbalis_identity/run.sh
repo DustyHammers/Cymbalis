@@ -8,11 +8,13 @@
 # for a change meant to differ only far below hearing, the bounds of check.cpp's --bound instead
 # of bit-identity (docs/PORT_MAP.md, "One silence rule: 140 dB below a full hit").
 #
-#   tools/cymbalis_identity/run.sh [--ref REF] [--build DIR] [--arch arm64|x86_64] [--time [--runs N] | --bound | --splash | --nova-edge-v2 | --edge-click]
+#   tools/cymbalis_identity/run.sh [--ref REF] [--build DIR] [--arch arm64|x86_64] [--time [--runs N] | --bound | --splash | --nova-edge-v2 | --edge-ring | --edge-click]
 #
 # --splash: the hi-hat's foot splash and fast-tap FOOT against REF (check.cpp's --splash).
 # --nova-edge-v2: NOVA RIDE edge v2 (check.cpp's --nova-edge-v2): REF's engine on REF's NOVA bake
 # against the working tree's on its own (docs/PORT_MAP.md, "NOVA RIDE edge v2").
+# --edge-ring: an envelope strike keeps its ring when another strike follows (check.cpp's
+# --edge-ring): the edge ring figures of both engines, and what must stay bit for bit.
 # --edge-click: an envelope strike's contact plays at its envelope level (check.cpp's
 # --edge-click): the hand-over figures of both engines, and what must stay bit for bit.
 #
@@ -29,6 +31,7 @@ TIME=()
 BOUND=0
 SPLASH=0
 NOVA=0
+EDGERING=0
 EDGECLICK=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -40,8 +43,9 @@ while [ $# -gt 0 ]; do
     --bound) BOUND=1; shift ;;
     --splash) SPLASH=1; shift ;;
     --nova-edge-v2) NOVA=1; shift ;;
+    --edge-ring) EDGERING=1; shift ;;
     --edge-click) EDGECLICK=1; shift ;;
-    *) echo "usage: $0 [--ref REF] [--build DIR] [--arch arm64|x86_64] [--time [--runs N] | --bound | --splash | --nova-edge-v2 | --edge-click]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--ref REF] [--build DIR] [--arch arm64|x86_64] [--time [--runs N] | --bound | --splash | --nova-edge-v2 | --edge-ring | --edge-click]" >&2; exit 2 ;;
   esac
 done
 
@@ -90,6 +94,8 @@ echo "FastEngine of the working tree against $REF ($(git -C "$ROOT" rev-parse --
 if [ "$NOVA" = 1 ]; then
   git -C "$ROOT" show "$REF:resources/presets/nova_ride.bake.json" > "$TMP/nova_ride.ref.bake.json"
   ${RUN[@]+"${RUN[@]}"} "$TMP/check" --nova-edge-v2 "$TMP/nova_ride.ref.bake.json" "$ROOT/resources/presets/nova_ride.bake.json"
+elif [ "$EDGERING" = 1 ]; then
+  ${RUN[@]+"${RUN[@]}"} "$TMP/check" --edge-ring "${BAKES[@]}"
 elif [ "$EDGECLICK" = 1 ]; then
   ${RUN[@]+"${RUN[@]}"} "$TMP/check" --edge-click "${BAKES[@]}"
 elif [ "$SPLASH" = 1 ]; then
