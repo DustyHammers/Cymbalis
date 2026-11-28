@@ -9,7 +9,8 @@
 // and stands or other hardware could be added beside it.
 //
 // Units: the cymbal's radius is 1, as everywhere in the wireframe; sizes are given in inches and
-// divided by the cymbal's radius in inches (true size). z is the height in the cymbal's frame.
+// divided by the cymbal's radius in inches, drawn at 75 % of the parts' true size
+// (kBellHardwareScale, 2026-11-28). z is the height in the cymbal's frame.
 
 #include "CymbalModel.h"
 

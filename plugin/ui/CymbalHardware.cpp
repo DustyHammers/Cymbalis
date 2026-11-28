@@ -23,15 +23,21 @@ Rgb times (Rgb c, float k) { return { c.r * k, c.g * k, c.b * k }; }
 
 // Points of a hull: the felt, washer and boss have 98, each wing 120.
 constexpr size_t kMaxSolidPoints = 128;
+
+// The felt, washer and wing nut are drawn at 75 % of their true size: every size and offset below
+// (2026-11-28; at true size the stack covered much of the bell and made the cymbals look smaller
+// than they are). The reference's BELL_HARDWARE_SCALE.
+constexpr double kBellHardwareScale = 0.75;
 } // namespace
 
 CymbalHardware bellHardware (double radiusInches, double bellTop)
 {
     CymbalHardware h;
-    const double inch = 1.0 / radiusInches, z0 = bellTop;
-    const double feltR = 0.75 * inch, feltH = 0.55 * inch;   // 1.5" across, 0.55" tall
-    const double washerR = 0.62 * inch, washerH = 0.07 * inch; // 1.24" across, 0.07" thick
-    const double bossR = 0.22 * inch, bossH = 0.42 * inch;     // 0.44" across, 0.42" tall
+    // The sizes are the true parts' in inches; `inch` is one inch drawn at kBellHardwareScale, in R.
+    const double inch = kBellHardwareScale / radiusInches, z0 = bellTop;
+    const double feltR = 0.75 * inch, feltH = 0.55 * inch;   // 1.5" across, 0.55" tall (drawn 1.125" x 0.4125")
+    const double washerR = 0.62 * inch, washerH = 0.07 * inch; // 1.24" across, 0.07" thick (drawn 0.93" x 0.0525")
+    const double bossR = 0.22 * inch, bossH = 0.42 * inch;     // 0.44" across, 0.42" tall (drawn 0.33" x 0.315")
     const double feltTop = z0 + feltH, washerTop = feltTop + washerH, bossTop = washerTop + bossH;
 
     // hh_draw_cyl, 1 unit wide: a vertical cylinder on the axis from za to zb of radius r, its
@@ -76,9 +82,10 @@ CymbalHardware bellHardware (double radiusInches, double bellTop)
     cylinder (feltTop, washerTop, washerR, washer, 64, {});
     cylinder (washerTop, bossTop, bossR, steel, 48, { washerTop + 0.5 * bossH });
 
-    // The wings: a rounded paddle each side along x, a plate 0.09" thick (its outline at y
-    // -0.045" behind, at 0.7 x, and +0.045" in front), its outline an ellipse 0.54" wide and 0.8"
-    // tall centred 0.27" out from the boss's side and 0.5" above the washer, tilted 18 degrees
+    // The wings (true sizes, drawn at kBellHardwareScale): a rounded paddle each side along x, a
+    // plate 0.09" thick (its outline at y -0.045" behind, at 0.7 x, and +0.045" in front), its
+    // outline an ellipse 0.54" wide and 0.8" tall (drawn 0.405" x 0.6") centred 0.27" out from the
+    // boss's side and 0.5" above the washer, tilted 18 degrees
     // outward (the reference's x' = boss + (x - boss) cos 18 + (z - washer top) sin 18 x 0.6, no
     // nearer the axis than 0.9 x the boss's radius); 60 points around, the last the first again.
     // Highlights across the plate at its outermost and topmost points.

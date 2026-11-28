@@ -40,6 +40,10 @@ History:
 - 2026-11-27, approved from the project session's mockups ("Darker 2"): NOVA RIDE's rose bronze
   darker, both ends scaled by rose_k 0.62 (#452E24 to #8A6D5D) wherever they are used; rose_k is
   1.0 on every other preset.
+- 2026-11-28, approved from the project session's mockup (NOVA_hardware_sizes.png, the 75 % row):
+  the felt, washer and wing nut drawn at 75 % of their true size (BELL_HARDWARE_SCALE), every
+  size and offset; at true size the stack covered much of the bell and made the cymbals look
+  smaller than they are.
 """
 import math
 import numpy as np
@@ -1019,6 +1023,7 @@ def hihat_draw(openness=0.0, cx=787, cy=430, scale=270, max_gap_in=0.7):
     return img
 
 
+BELL_HARDWARE_SCALE = 0.75                          # the felt, washer and wing nut drawn at 75 % of their true size (2026-11-28)
 FELT = np.array([138, 140, 144], np.float32)       # BGR of #908C8A: the felt; its fibres at 0.8 (#73706E)
 WASHER = np.array([93, 93, 96], np.float32)        # #605D5D
 STEEL_NUT = np.array([168, 170, 174], np.float32)  # #AEAAA8: the wing nut, the clutch's steel
@@ -1029,13 +1034,14 @@ def bell_hardware(c, img):
     """The felt, washer and wing nut on top of a cymbal's bell, at the centre (every preset but
     the hi-hat, which keeps its clutch and rod): approved by Kris on 2026-11-26 from the project
     session's mockups (1_felt_and_wing_nut_closeup.png, 2_felt_and_wing_nut_all_rides.png). Sizes in
-    inches, converted with the cymbal's radius R (true size). c is a drawn Cymbal or Cymbal2 at
-    rest, img its drawing (float BGR); returns img with the hardware: the hardware's silhouettes
-    clear the cymbal lines behind them (to 0.08), and its own lines are drawn over all, its back
-    lines included (as hihat_draw's clutch). The groundwork for the sizzle chain, which hooks in
-    under the wing nut."""
+    inches, converted with the cymbal's radius R and drawn at BELL_HARDWARE_SCALE (75 % of true
+    size since 2026-11-28, from the project session's mockup NOVA_hardware_sizes.png: at true size
+    the stack covered much of the bell). c is a drawn Cymbal or Cymbal2 at rest, img its drawing
+    (float BGR); returns img with the hardware: the hardware's silhouettes clear the cymbal lines
+    behind them (to 0.08), and its own lines are drawn over all, its back lines included (as
+    hihat_draw's clutch)."""
     lay = np.zeros_like(img)
-    inch = 1.0 / c.c['R']; z0 = float(c.height(0.0))
+    inch = BELL_HARDWARE_SCALE / c.c['R']; z0 = float(c.height(0.0))   # one inch drawn at the scale
     f_r, f_h = 0.75 * inch, 0.55 * inch           # felt: 1.5" across, 0.55" tall
     w_r, w_h = 0.62 * inch, 0.07 * inch           # washer: 1.24" across, 0.07" thick
     b_r, b_h = 0.22 * inch, 0.42 * inch           # wing nut's boss: 0.44" across, 0.42" tall
