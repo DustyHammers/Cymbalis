@@ -24,6 +24,18 @@
 //       0.8 on each row: how long until each engine is silent (isSilent). Exit status 1 if any
 //       bound is broken.
 //
+//   check --edge-ring BAKE.json ...
+//       An envelope strike keeps its ring when another strike follows (docs/PORT_MAP.md): on every
+//       bake with NPZ edge data, EDGE at 0.8 alone against EDGE at 0.8 then BOW, and BELL (STINE:
+//       CENTER), at velocity 1e-6 0.8 s later (tools/cymbalis_edgering/EdgeRing.h): the edge's level
+//       change in seven bands 0.05-2 s after the second strike and the difference over the 4 ms after
+//       it, REF's engine and the working tree's (and BOW then BOW, for comparison). Then bit for bit
+//       as REF, HIT VARIATION off and on, 44.1 kHz / 128 and 96 kHz / 64: lone strikes on every row at
+//       0.3, 0.6, 0.9 and 1.0; the identity sequence with only the rows at or above position 0.45 (no
+//       envelope strike); EDGE at 0.8, then BOW after its window (twice the Window, + 0.3 s); on the
+//       hi-hat its identity sequence and the --dense pattern with the pedal, 20 s. Exit status 1 if
+//       one is not bit for bit.
+//
 //   check --edge-click BAKE.json ...
 //       An envelope strike's contact plays at its envelope level (docs/PORT_MAP.md): on every bake
 //       with NPZ edge data and a contact phase (NOVA RIDE, SWISH), 36 EDGE hits (EdgeClick.h)
@@ -97,6 +109,7 @@
 #undef SizzleChain
 #undef FastEngine
 #include "FastEngine.h"
+#include "../cymbalis_edgering/EdgeRing.h"
 #include "../cymbalis_edgeclick/EdgeClick.h"
 
 #include <algorithm>
@@ -1869,6 +1882,148 @@ int novaEdgeV2(const std::string& refPath, const std::string& path)
     std::printf("\n%s\n", ok ? "NOVA RIDE edge v2 checks passed." : "A NOVA RIDE edge v2 check FAILED.");
     return ok ? 0 : 1;
 }
+// --edge-ring ---------------------------------------------------------------------------------
+// An envelope strike keeps its ring when another strike follows (docs/PORT_MAP.md): the edge ring
+// figures of REF's engine and the working tree's (EdgeRing.h), then what must stay bit for bit.
+
+// One case of the bit-for-bit checks: the hits through both engines, HIT VARIATION as asked.
+bool sameCase(const std::shared_ptr<const cymbalis::BakeData>& bake, const std::vector<Hit>& hits, double seconds, double sr,
+              int block, bool hv, double& worst)
+{
+    cymbalis::FastEngineRef a(bake);
+    cymbalis::FastEngine b(bake);
+    a.prepare(sr);
+    b.prepare(sr);
+    cymbalis::Tuning t = bake->tuning;
+    t.cymbal.hitVariation = hv;
+    a.setTuning(t, nullptr);
+    b.setTuning(t, nullptr);
+    std::vector<float> La, Ra, Lb, Rb;
+    renderEvents(a, hits, int64_t(seconds * sr), block, La, Ra);
+    renderEvents(b, hits, int64_t(seconds * sr), block, Lb, Rb);
+    double peak = 0.0, diff = 0.0;
+    bool same = true;
+    for (size_t s = 0; s < La.size(); ++s)
+    {
+        peak = std::max({peak, double(std::fabs(La[s])), double(std::fabs(Ra[s]))});
+        diff = std::max({diff, std::fabs(double(La[s]) - Lb[s]), std::fabs(double(Ra[s]) - Rb[s])});
+        same = same && std::memcmp(&La[s], &Lb[s], 4) == 0 && std::memcmp(&Ra[s], &Rb[s], 4) == 0;
+    }
+    worst = std::max(worst, peak > 0.0 ? diff / peak : 0.0);
+    return same;
+}
+
+int edgeRingCheck(const std::vector<std::string>& bakes)
+{
+    using namespace cymbalis::edgering;
+    bool ok = true;
+    std::printf("The edge ring (EDGE 0.8, then a strike at 1e-6 on the row named, 0.8 s later; 48 kHz / 128): the edge's\n"
+                "level change (dB) 0.05-2 s after the second strike, and the difference over the 4 ms after it (dB re\n"
+                "the edge alone). REF, then the working tree.\n\n| Preset | Second | Engine | ");
+    for (int b = 0; b < kBands; ++b)
+        std::printf("%s | ", kBandNames[b]);
+    std::printf("Dip |\n|---|---|---|---|---|---|---|---|---|---|---|\n");
+    for (const auto& path : bakes)
+    {
+        auto bake = cymbalis::loadBake(path);
+        const int edge = bake->slotIndex("EDGE");
+        if (! bake->edgeNpz.present || edge < 0)
+            continue;
+        for (const char* second : {"BOW", "BELL", "CENTER"})
+        {
+            const int s = bake->slotIndex(second);
+            if (s < 0)
+                continue;
+            const Result rows[2] = {measure<cymbalis::FastEngineRef>(bake, edge, s, 0.8), measure<cymbalis::FastEngine>(bake, edge, s, 0.8)};
+            for (int e = 0; e < 2; ++e)
+            {
+                std::printf("| %s | %s | %s | ", name(path).c_str(), second, e == 0 ? "REF" : "now");
+                for (int b = 0; b < kBands; ++b)
+                    std::printf("%+.1f | ", rows[e].band[b]);
+                std::printf("%.1f dB |\n", rows[e].dipDb);
+            }
+        }
+        // For comparison: BOW first instead of EDGE (the rise at a near-silent strike).
+        const int bow = bake->slotIndex("BOW");
+        if (bow >= 0)
+        {
+            const Result r = measure<cymbalis::FastEngine>(bake, bow, bow, 0.8);
+            std::printf("| %s | (BOW first, then BOW) | now | ", name(path).c_str());
+            for (int b = 0; b < kBands; ++b)
+                std::printf("%+.1f | ", r.band[b]);
+            std::printf("%.1f dB |\n", r.dipDb);
+        }
+    }
+
+    // Bit for bit as REF: lone strikes, BOW/BELL sequences, an EDGE whose window has ended before the
+    // next strike, the hi-hat with its pedal; HIT VARIATION off and on.
+    std::printf("\nBit for bit as REF (lone strikes on every row at 0.3, 0.6, 0.9 and 1.0; the identity sequence without strikes\n"
+                "below position 0.45; EDGE at 0.8 then BOW after its window; the hi-hat's identity and --dense sequences with\n"
+                "the pedal), HIT VARIATION off and on, 44.1 kHz / 128 and 96 kHz / 64:\n");
+    for (const auto& path : bakes)
+    {
+        auto bake = cymbalis::loadBake(path);
+        const int slots = int(bake->slots.size());
+        double worst = 0.0;
+        int cases = 0, same = 0;
+        for (const bool hv : {false, true})
+            for (const auto& rate : std::vector<std::pair<double, int>> {{44100.0, 128}, {96000.0, 64}})
+            {
+                const double sr = rate.first;
+                const int block = rate.second;
+                const auto run = [&](const std::vector<Hit>& hits, double seconds) {
+                    ++cases;
+                    same += sameCase(bake, hits, seconds, sr, block, hv, worst) ? 1 : 0;
+                };
+                for (int s = 0; s < slots; ++s)
+                    for (const double v : {0.3, 0.6, 0.9, 1.0})
+                        run({{0, s, v, bake->slots[size_t(s)].position}}, 3.0);
+                if (bake->hihat.present)
+                {
+                    std::vector<Hit> hits;
+                    int k = 0;
+                    for (; k * 0.024 < 5.0; ++k)
+                        hits.push_back({int64_t(std::floor(k * 0.024 * sr)), k % slots, kVelocities[k % 7], bake->slots[size_t(k % slots)].position});
+                    run(hits, 8.0);
+                    hits.clear();
+                    for (int j = 0; j * 0.024 < 20.0; ++j)
+                        hits.push_back({int64_t(std::floor(j * 0.024 * sr)), j % slots, kVelocities[j % 7], bake->slots[size_t(j % slots)].position});
+                    for (int64_t m = 0; double(m) * 0.01 < 20.0; ++m)
+                        hits.push_back({int64_t(std::floor(double(m) * 0.01 * sr)), -1, pedalOpenness(double(m) * 0.01), 0.0});
+                    sortHits(hits);
+                    run(hits, 20.0);
+                    continue;
+                }
+                // The identity sequence with only the rows at or above position 0.45 (no envelope strike).
+                std::vector<int> rows;
+                for (int s = 0; s < slots; ++s)
+                    if (bake->slots[size_t(s)].position >= 0.45)
+                        rows.push_back(s);
+                std::vector<Hit> hits;
+                const int nr = int(rows.size());
+                int k = 0;
+                for (; k * 0.024 < 5.0; ++k)
+                    hits.push_back({int64_t(std::floor(k * 0.024 * sr)), rows[size_t(k % nr)], kVelocities[k % 7],
+                                    bake->slots[size_t(rows[size_t(k % nr)])].position});
+                for (int j = 0; j < 8; ++j, ++k)
+                    hits.push_back({int64_t((6.5 + 0.4 * j) * sr), rows[size_t(k % nr)], kVelocities[k % 7], 0.45 + 0.075 * j});
+                run(hits, 11.0);
+                // EDGE, then BOW once its window (at most twice the Window, with the ring length) has ended.
+                const int edge = bake->slotIndex("EDGE"), bow = bake->slotIndex("BOW");
+                if (edge >= 0 && bow >= 0)
+                {
+                    const double after = 2.0 * bake->tuning.cymbal.edgeEnvWindowS + 0.3;
+                    run({{0, edge, 0.8, bake->slots[size_t(edge)].position}, {int64_t(after * sr), bow, 0.8, bake->slots[size_t(bow)].position}},
+                        after + 3.0);
+                }
+            }
+        std::printf("%-20s %d of %d cases bit-identical%s\n", name(path).c_str(), same, cases,
+                    same == cases ? "" : ("; largest |diff| / peak " + std::to_string(worst)).c_str());
+        ok = ok && same == cases;
+    }
+    std::printf("\n%s\n", ok ? "Edge ring identity checks passed." : "An edge ring identity check FAILED.");
+    return ok ? 0 : 1;
+}
 // --edge-click --------------------------------------------------------------------------------
 // An envelope strike's contact plays at its envelope level (docs/PORT_MAP.md): the hand-over
 // figures of REF's engine and the working tree's (EdgeClick.h), the EDGE after its first 2 ms, the
@@ -2083,7 +2238,7 @@ int edgeClickCheck(const std::vector<std::string>& bakes)
 int main(int argc, char** argv)
 {
     noDenormals();
-    bool time = false, mechanisms = false, boundMode = false, splashMode = false, chainMode = false, novaMode = false, edgeClickMode = false;
+    bool time = false, mechanisms = false, boundMode = false, splashMode = false, chainMode = false, novaMode = false, edgeRingMode = false, edgeClickMode = false;
     int runs = 4;
     std::vector<double> rates;
     std::vector<std::string> bakes;
@@ -2102,6 +2257,8 @@ int main(int argc, char** argv)
             chainMode = true;
         else if (a == "--nova-edge-v2")
             novaMode = true;
+        else if (a == "--edge-ring")
+            edgeRingMode = true;
         else if (a == "--edge-click")
             edgeClickMode = true;
         else if (a == "--runs" && i + 1 < argc)
@@ -2114,7 +2271,7 @@ int main(int argc, char** argv)
     if (bakes.empty())
     {
         std::fprintf(stderr, "usage: check [--mechanisms] BAKE.json ... | check --bound BAKE.json ... | check --splash BAKE.json ... | "
-                             "check --chain BAKE.json ... | check --edge-click BAKE.json ... | check --time [--runs N] [--sample-rate SR ...] BAKE.json ...\n");
+                             "check --chain BAKE.json ... | check --edge-ring BAKE.json ... | check --edge-click BAKE.json ... | check --time [--runs N] [--sample-rate SR ...] BAKE.json ...\n");
         return 2;
     }
     try
@@ -2125,6 +2282,8 @@ int main(int argc, char** argv)
             return splash(bakes);
         if (chainMode)
             return chain(bakes);
+        if (edgeRingMode)
+            return edgeRingCheck(bakes);
         if (edgeClickMode)
             return edgeClickCheck(bakes);
         if (novaMode)
