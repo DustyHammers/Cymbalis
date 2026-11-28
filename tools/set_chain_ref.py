@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Give a baked preset its sizzle chain, or store its measured reference level.
 
-The sizzle chain (docs/PORT_MAP.md, "Sizzle chain"; Kris, 2026-11-26) is on STINE FLAT RIDE,
-HAMMERED THIN RIDE, SWISH, RAVEN and EXTRA PAPER THIN 24" only: a bake has one when it has a
-"chain" block. Two steps, as #76's skip thresholds:
+The sizzle chain (docs/PORT_MAP.md, "Sizzle chain"; Kris, 2026-11-26) is on NOVA RIDE (since
+2026-11-28), STINE FLAT RIDE, HAMMERED THIN RIDE, SWISH, RAVEN and EXTRA PAPER THIN 24" only: a
+bake has one when it has a "chain" block. Two steps, as #76's skip thresholds:
 
     python tools/set_chain_ref.py resources/presets/stine_flat_ride.bake.json --init
     cymbalis_trims --bake resources/presets/stine_flat_ride.bake.json --chain-ref --json chain.json
@@ -15,7 +15,10 @@ chain's damping already applies, which the measurement needs). The second step s
 mean square of the output's 40-1000 Hz band 0.3-1.0 s after a lone BOW strike at velocity 0.9,
 before the output gain, measured by tools/cymbalis_trims --chain-ref with the plugin's engine; the
 other fields record the measurement. The bake is rewritten in place; nothing else in it changes.
-Re-baking drops the block, as it drops the trims.
+Re-baking drops the block, as it drops the trims. The block is the last step of a preset's bake
+pipeline: after its tuning block, trims and skip thresholds (the measurement plays the bake as
+it is). NOVA RIDE's is bake_preset.py, edge v2 (tools/apply_nova_edge_v2.py), the trims keeping
+EDGE's, the skip thresholds, then the chain block (docs/BUILDS.md).
 """
 import argparse
 import json
@@ -25,7 +28,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from bake_preset import dump_json  # noqa: E402
 
-CHAIN_PRESETS = ('stine_flat_ride', 'hammered_thin_ride', 'swish', 'raven', 'paperthin')
+CHAIN_PRESETS = ('nova_ride', 'stine_flat_ride', 'hammered_thin_ride', 'swish', 'raven', 'paperthin')
 
 
 def fnv1a64(text):

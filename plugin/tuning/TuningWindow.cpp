@@ -210,7 +210,7 @@ void ChainHeader::paint (juce::Graphics& g)
     const int cw = (int) laf.font (kTextSize).getStringWidthFloat (chain) + 12;
     g.drawText (chain, r.removeFromRight (cw), juce::Justification::centredRight);
     g.setColour (ui::palette::bronze);
-    g.drawText ("STINE, HAMMERED THIN, SWISH, RAVEN and EXTRA PAPER THIN only", r, juce::Justification::centredLeft, true);
+    g.drawText ("NOVA, STINE, HAMMERED THIN, SWISH, RAVEN and EXTRA PAPER THIN only", r, juce::Justification::centredLeft, true);
 }
 
 void ChainHeader::resized()

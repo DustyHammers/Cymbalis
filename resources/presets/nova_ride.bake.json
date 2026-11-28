@@ -1428,5 +1428,17 @@
     },
     "modes": "2270 -> 2304 (34 added)",
     "approved": "Kris, 2026-11-27, by ear (docs/PORT_MAP.md, \"NOVA RIDE edge v2\")"
+  },
+  "chain": {
+    "seed": 255694169591178,
+    "ref_ms": 0.000924255,
+    "measured_by": "tools/cymbalis_trims --chain-ref (FastEngine)",
+    "sample_rate": 44100,
+    "slot": "BOW",
+    "position": 0.5,
+    "velocity": 0.9,
+    "band_hz": [40,1000],
+    "window_s": [0.3,1],
+    "output_gain_db": -11.0
   }
 }

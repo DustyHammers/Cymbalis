@@ -42,8 +42,8 @@
 //   C  the chain's values changed with setTuning while off, during the playing -> bit-identical
 //   E1 chain on for X, the playing; to another chain preset Y and back; chain off; the playing
 //                                                          -> bit-identical from the switch to Y
-//   E2 chain on for X, the playing; to NOVA RIDE (no chain), the playing; back to X with the
-//      chain off; the playing                              -> bit-identical from the switch to NOVA
+//   E2 chain on for X, the playing; to KONSTAN CRASH 18" (no chain), the playing; back to X with
+//      the chain off; the playing                          -> bit-identical from the switch to KONSTAN
 //   F1 chain on, saved, restored into a new processor, switched off; the playing -> bit-identical
 //   F2 chain on, the playing; saved and restored into the same processor (ringing); off; until
 //      both outputs are silent for 1 s; the playing        -> bit-identical from the first strike
@@ -53,9 +53,9 @@
 // Preset switches go through prepareToPlay, which builds the new cymbal at once (as the loader
 // thread does, then the audio thread takes it); so they are deterministic in both processors.
 //
-// Without --full: STINE FLAT RIDE and HAMMERED THIN RIDE, 48 kHz, 512-sample blocks, HIT VARIATION
-// on (every pull request). --full: the five presets with a chain, 44.1, 48 and 96 kHz, 64- and
-// 512-sample blocks, HIT VARIATION on and off. Exit status 1 if any case fails.
+// Without --full: NOVA RIDE, STINE FLAT RIDE and HAMMERED THIN RIDE, 48 kHz, 512-sample blocks,
+// HIT VARIATION on (every pull request). --full: the six presets with a chain, 44.1, 48 and 96 kHz,
+// 64- and 512-sample blocks, HIT VARIATION on and off. Exit status 1 if any case fails.
 
 #include "PluginProcessor.h"
 #include "SlotTable.h"
@@ -942,7 +942,7 @@ struct Config
     bool hv;
 };
 
-ConfigOutput runConfig (const Config& c, int nova, bool quiet)
+ConfigOutput runConfig (const Config& c, int noChain, bool quiet)
 {
     juce::ScopedNoDenormals noDenormals; // as processBlock does, for the engine-level cases too
     ConfigOutput out;
@@ -965,7 +965,7 @@ ConfigOutput runConfig (const Config& c, int nova, bool quiet)
     results.push_back (procA (c.preset, c.sr, c.block, c.hv));
     results.push_back (procC (c.preset, c.sr, c.block, c.hv));
     results.push_back (procE (c.preset, c.other, c.sr, c.block, c.hv, "E1 (preset switch)"));
-    results.push_back (procE (c.preset, nova, c.sr, c.block, c.hv, "E2 (to NOVA RIDE and back)"));
+    results.push_back (procE (c.preset, noChain, c.sr, c.block, c.hv, "E2 (to KONSTAN and back)"));
     for (auto& f : procF (c.preset, c.sr, c.block, c.hv))
         results.push_back (f);
     const auto t2 = std::chrono::steady_clock::now();
@@ -1020,19 +1020,19 @@ int main (int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI gui;
     const auto started = std::chrono::steady_clock::now();
 
-    std::vector<const char*> presets { "stine_flat_ride", "hammered_thin_ride" };
+    std::vector<const char*> presets { "nova_ride", "stine_flat_ride", "hammered_thin_ride" };
     std::vector<double> rates { 48000.0 };
     std::vector<int> blocks { 512 };
     std::vector<bool> hvs { true };
     if (full)
     {
-        presets = { "stine_flat_ride", "hammered_thin_ride", "swish", "raven", "paperthin" };
+        presets = { "nova_ride", "stine_flat_ride", "hammered_thin_ride", "swish", "raven", "paperthin" };
         rates = { 44100.0, 48000.0, 96000.0 };
         blocks = { 64, 512 };
         hvs = { true, false };
     }
     CymbalisProcessor bakes; // the plugin's own compiled-in bakes
-    const int nova = presetIndex ("nova_ride");
+    const int noChain = presetIndex ("konstan"); // E2's preset without a chain
     int failures = 0, cases = 0;
     std::vector<Config> configs;
     for (const char* id : presets)
@@ -1064,7 +1064,7 @@ int main (int argc, char** argv)
         pool.emplace_back ([&] {
             for (size_t i; (i = next.fetch_add (1)) < configs.size();)
             {
-                outputs[i] = runConfig (configs[i], nova, quiet);
+                outputs[i] = runConfig (configs[i], noChain, quiet);
                 std::fprintf (stderr, "  %s %.0f Hz / %d, HIT VARIATION %s: %d of %d passed (%.0f s engine, %.0f s processor)\n", configs[i].id,
                               configs[i].sr, configs[i].block, configs[i].hv ? "on" : "off", outputs[i].cases - outputs[i].failures, outputs[i].cases,
                               outputs[i].engineS, outputs[i].processorS);

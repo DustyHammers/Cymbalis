@@ -1324,17 +1324,24 @@ int chain(const std::vector<std::string>& bakes)
             const auto refOnOff = chainRender(muted, slot, 0.9, 1.5, true, 1.0, false);
             const double before = maxStep(onOff, refOnOff, at - size_t(0.2 * 48000.0), at), during = maxStep(onOff, refOnOff, at, at + fade);
             // After the fade the sizzle adds nothing: the left channel bit for bit; the right one
-            // within float rounding (the right-channel high-pass's state still holds a trace of
-            // it, which decays with the filter's own response).
-            double leftAfter = 0.0, rightAfter = 0.0, peak = 0.0;
+            // only by the right-channel high-pass's memory of it, which dies away with the filter's
+            // own response (about 2 ms): within 3e-6 of the peak from 10 ms after the fade, and bit
+            // for bit from 50 ms after it. (From 128 samples after the fade, NOVA RIDE's is up to
+            // 8e-6 of the peak, the other five's up to 2e-6: NOVA's sizzle has 1119 resonators.)
+            const size_t r10 = at + fade + size_t(0.01 * 48000.0), r50 = at + fade + size_t(0.05 * 48000.0);
+            double leftAfter = 0.0, rightAfter = 0.0, right10 = 0.0, right50 = 0.0, peak = 0.0;
             for (size_t i = 0; i < onOff.L.size(); ++i)
             {
                 peak = std::max({ peak, std::fabs(double(refOnOff.L[i])), std::fabs(double(refOnOff.R[i])) });
-                if (i >= at + fade + 128)
-                {
+                const double r = std::fabs(double(onOff.R[i]) - refOnOff.R[i]);
+                if (i >= at + fade)
                     leftAfter = std::max(leftAfter, std::fabs(double(onOff.L[i]) - refOnOff.L[i]));
-                    rightAfter = std::max(rightAfter, std::fabs(double(onOff.R[i]) - refOnOff.R[i]));
-                }
+                if (i >= at + fade + 128)
+                    rightAfter = std::max(rightAfter, r);
+                if (i >= r10)
+                    right10 = std::max(right10, r);
+                if (i >= r50)
+                    right50 = std::max(right50, r);
             }
             // Off to on: against the muted render switched alike (the ringing hit takes the
             // damping at the switch): the sizzle fading in, at once (its drive was tracked while
@@ -1347,13 +1354,14 @@ int chain(const std::vector<std::string>& bakes)
                          after = maxStep(offOn, refOffOn, at + fade, at + fade + size_t(0.2 * 48000.0));
             const double levelIn = monoDb(offOn, &refOffOn, 1.1, 1.4), levelOn = monoDb(onFromStart, &ref, 1.1, 1.4);
             std::printf("Switching at 1 s (BOW at 0.9): on to off, largest step %.3g in the fade against %.3g before, largest "
-                        "difference after the fade %.3g left, %.3g right (%.0f dB re the peak); off to on, largest difference before "
-                        "%.3g, largest step %.3g in the fade against %.3g after, sizzle 1.1-1.4 s %.1f dB (on from the start: "
-                        "%.1f dB)\n",
-                        during, before, leftAfter, rightAfter, db(rightAfter / peak), early, into, after, levelIn, levelOn);
+                        "difference after the fade %.3g left, %.3g right (%.0f dB re the peak; from 10 ms after it %.0f dB, from 50 ms "
+                        "%.3g); off to on, largest difference before %.3g, largest step %.3g in the fade against %.3g after, sizzle "
+                        "1.1-1.4 s %.1f dB (on from the start: %.1f dB)\n",
+                        during, before, leftAfter, rightAfter, db(rightAfter / peak), db(right10 / peak), right50, early, into, after,
+                        levelIn, levelOn);
             if (!(during <= 1.2 * before))
                 fail("switching off steps more than the sizzle itself");
-            if (!(leftAfter == 0.0 && rightAfter <= 3e-6 * peak))
+            if (!(leftAfter == 0.0 && right10 <= 3e-6 * peak && right50 == 0.0))
                 fail("the sizzle goes on after switching off and its 50 ms fade");
             if (!(early == 0.0))
                 fail("the chain switched off changes the output");
